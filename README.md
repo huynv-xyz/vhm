@@ -1328,6 +1328,9 @@ version đang được session tham chiếu; thay đổi tạo version mới.
 | BR-040 | Review thiếu evidence bắt buộc ở trạng thái `EVIDENCE_REQUIRED`; chỉ chuyển `PENDING` và bắt đầu reviewer SLA sau khi evidence hợp lệ đã `AVAILABLE`. |
 | BR-041 | Manual evidence upload phải one-time, TTL ngắn, bind subject/session/review/sub-step/identityVersion; không lưu hoặc log presigned URL. |
 | BR-042 | Evidence hết TTL, sai loại, sai checksum hoặc thuộc identityVersion cũ không được đưa vào review; Platform yêu cầu capture lại hoặc whole-step retry theo policy. |
+| BR-043 | Trang kết quả của SDK phải được cấu hình `OFF` trên SDK Configuration Portal cho mọi profile Mobile/Web production. |
+| BR-044 | Khi SDK phát completion/close event, VHM Application chỉ gửi `submitted` và hiển thị trạng thái trung tính “Đang xử lý kết quả”; không hiển thị SDK result như quyết định cuối cùng. |
+| BR-045 | VHM Application chỉ hiển thị outcome/next action lấy từ Identity Verification Platform sau khi official result đã được xử lý. |
 
 ## 3.3. Ma trận trạng thái và hành động
 
@@ -1455,11 +1458,14 @@ Response khi channel đáp ứng journey:
   "sdkBootstrap": {
     "token": "opaque-short-lived-token",
     "tokenExpiresAt": "2026-08-06T10:55:00+07:00",
-    "configurationRef": "web-full-ekyc-v3",
-    "showResult": false
+    "configurationRef": "web-full-ekyc-v3"
   }
 }
 ```
+
+`configurationRef` là opaque reference tới profile đã publish trên SDK Configuration
+Portal. Profile production bắt buộc tắt trang kết quả SDK. VHM không truyền UI
+toggle trong runtime bootstrap khi field đó chưa thuộc SDK contract được phê duyệt.
 
 Response `422` khi capability bắt buộc thiếu nhưng cho phép handoff:
 
@@ -1511,13 +1517,16 @@ POST /internal/v1/identity-verifications/{verificationId}/submitted
 {
   "runId": "44a59fd2-c4ee-4b10-996a-68b880ce1ea8",
   "sdkCompletionStatus": "COMPLETED",
-  "sdkResultCode": "OPTIONAL_UNTRUSTED_CODE"
+  "sdkCompletionCode": "OPTIONAL_UNTRUSTED_CODE"
 }
 ```
 
 - Chuyển `SDK_STARTED → SUBMITTED` nếu chưa terminal.
 - Không nhận/lưu OCR fields từ client.
 - Không đánh dấu `VERIFIED`.
+- Sau completion/close event, Mobile/Web hiển thị “Đang xử lý kết quả” và query
+  trạng thái từ Identity Verification Platform; không hiển thị result page của SDK.
+- Chỉ render outcome/next action do API VHM trả về sau khi official result được xử lý.
 - Nếu callback đã final trước đó, giữ terminal state và audit late client event.
 
 ### 4.2.4. Lấy trạng thái
@@ -2118,10 +2127,14 @@ sequenceDiagram
     SDK->>PROVIDER: OCR data
     PROVIDER-->>SDK: Client completion
     SDK-->>WEB: COMPLETED (untrusted)
+    WEB->>WEB: Show "Đang xử lý kết quả"
     WEB->>IV: submitted
     PROVIDER->>IV: Official callback
     IV->>IV: Normalize document result
     IV->>DOMAIN: Event OCR completed
+    WEB->>IV: GET status/result
+    IV-->>WEB: VHM outcome/nextAction
+    WEB->>WEB: Render VHM-owned result
     DOMAIN->>IV: Get scoped identity fields
 ```
 
@@ -2183,6 +2196,12 @@ sequenceDiagram
         IV->>IV: Verify + normalize + decide
         IV->>DOMAIN: VERIFIED / other event
     end
+    SDK-->>APP: Completion/close event (untrusted)
+    APP->>APP: Show "Đang xử lý kết quả"
+    APP->>IV: submitted
+    APP->>IV: GET status/result
+    IV-->>APP: VHM outcome/nextAction
+    APP->>APP: Render VHM-owned result
 ```
 
 Nhánh manual evidence sử dụng VHM Secure Evidence Capture và không gọi provider SDK
@@ -2207,8 +2226,14 @@ sequenceDiagram
         User->>SDK: Captures / actions
         SDK->>PROVIDER: eKYC data
         PROVIDER-->>SDK: Client completion
-        SDK-->>WEB: COMPLETED
+        SDK-->>WEB: COMPLETED (untrusted)
+        WEB->>WEB: Show "Đang xử lý kết quả"
         WEB->>IV: submitted
+        PROVIDER->>IV: Official callback
+        IV->>IV: Normalize + decide
+        WEB->>IV: GET status/result
+        IV-->>WEB: VHM outcome/nextAction
+        WEB->>WEB: Render VHM-owned result
     else Missing mandatory capability
         IV-->>WEB: CHANNEL_CAPABILITY_REQUIRED
         WEB->>IV: Create Mobile handoff
@@ -2739,7 +2764,7 @@ identity-verification:
 | Device | Debug/root/jailbreak/emulator | Detect/block theo channel/env | ANBM/Mobile |
 | Web | Browser allowlist | Versioned compatibility matrix | Web/SDK Team |
 | Guidance | OCR/liveness guide/progress | ON | UX |
-| Result screen | SDK final result | OFF/trung tính | Product |
+| Result page | Hiển thị trang kết quả SDK | OFF trên SDK Configuration Portal; màn hình sau SDK do VHM Application sở hữu | Product/UX |
 | Session | Timeout | 30 phút, cùng policy version trên backend/SDK | Platform/SDK Team |
 | Callback | Auth/retry/timeout | Strong auth, ack nhanh | Backend/ANBM |
 | Retention | SDK Backend data | Ngắn nhất đáp ứng reconciliation | Privacy/Legal |
@@ -3260,6 +3285,8 @@ Các mục dưới đây không phải lựa chọn kiến trúc. Đây là inpu
 | Accessibility, localization, branding và device-security behavior | Mobile/Web/Product | Trước UAT |
 | Web iframe/script/connect origins | SDK Team/Web/ANBM | Trước CSP baseline |
 | Handoff UX, universal/app-link domain và association files | Mobile/Web Team | Trước handoff E2E test |
+| Profile SDK Configuration Portal theo environment/channel; trang kết quả SDK đặt `OFF` | Product/SDK Team | Trước Mobile/Web UAT |
+| Completion/close event vẫn được SDK phát khi trang kết quả đặt `OFF` | SDK Team | Trước client submitted integration test |
 
 ## A.3. SDK Backend Integration Inputs
 
