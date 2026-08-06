@@ -2706,19 +2706,22 @@ Không dùng verification ID, business ref, subject ref hoặc PII làm metric l
 
 ## 6.5. Tech Stack
 
-| **Layer** | **Technology baseline** | **Trạng thái** |
-| --- | --- | --- |
-| Backend | Java/Spring Boot theo VHM platform BOM | Version pin trong build manifest |
-| Mobile | Framework hiện hữu của VHM Mobile App | Module/platform version pin trong build manifest |
-| Web | Framework hiện hữu của VHM Web App + Web eKYC SDK | Version pin trong package lock/build manifest |
-| SDK | Native/Web eKYC SDK từ private artifact repository | Package/version pin theo deployment manifest |
-| Database | PostgreSQL Multi-AZ | Quyết định kiến trúc |
-| Event | Kafka + transactional outbox | Quyết định kiến trúc |
-| Storage | Private Object Storage cho manual evidence | Bắt buộc khi manual review bật |
-| Authentication | OIDC/JWT; internal workload identity | Theo IAM |
-| Secrets | Vault/Secrets Manager + KMS | Bắt buộc |
-| Resilience | Resilience4j theo VHM Java platform standard | Quyết định kiến trúc |
-| Observability | OpenTelemetry, metrics, dashboards, centralized logs | Bắt buộc |
+| **Layer** | **Technology** |
+| --- | --- |
+| Backend | Java 25, Spring Boot 4.0.4, Spring Data JPA, Maven |
+| Frontend | React (Web), Flutter (Mobile), Native/Web eKYC SDK được pin version |
+| Database | Amazon RDS PostgreSQL 17 (Multi-AZ) |
+| Cache | Amazon ElastiCache Redis 7.4 (Sentinel); chỉ dùng cho rate limit/replay/ephemeral cache, không phải source of truth của verification state |
+| Message Queue | Amazon MSK Kafka + Transactional Outbox |
+| File Storage | Amazon S3; chỉ lưu manual evidence đã được phê duyệt, mã hóa và có lifecycle TTL |
+| Authentication & Authorization | OIDC/JWT qua Core IAM, validate tại BFF; internal service-to-service dùng workload identity/JWT hoặc mTLS theo security baseline |
+| CI/CD | Azure DevOps (TFS) |
+| Container Orchestration | Amazon EKS (Kubernetes) + Nginx Ingress Controller |
+| DevSecOps Tools | SCA scan, container vulnerability scan, secret scan và IaC scan tích hợp trong Azure DevOps pipeline |
+| Secret Management | AWS Secrets Manager + KMS; Kubernetes ConfigMap chỉ chứa non-secret configuration |
+| Monitoring & Logging | Micrometer + Prometheus + Grafana + APM + Fluentd + Elasticsearch |
+| Circuit Breaker | Resilience4j |
+| Deployment Environment | AWS Singapore (`ap-southeast-1`) — V-App EKS Cluster |
 
 ## 6.6. Configuration Management
 
