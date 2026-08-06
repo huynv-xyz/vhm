@@ -428,10 +428,10 @@ gắn server credential trước khi gọi eKYC Backend.
 flowchart TB
     USER(["Người dùng"]):::entity
     BACKEND(["eKYC Backend"]):::entity
-    APP["P1 · VHM Application"]:::process
-    SDK["P2 · eKYC SDK"]:::process
-    BFF["P3 · VHM BFF<br/>auth · streaming route"]:::process
-    IVP["P4 · Identity Verification Platform<br/>session · integration · result"]:::process
+    APP(("P1 · VHM Application")):::process
+    SDK(("P2 · eKYC SDK")):::process
+    BFF(("P3 · VHM BFF<br/>auth · streaming route")):::process
+    IVP(("P4 · Identity Verification Platform<br/>session · integration · result")):::process
     DB[("D1 · Verification Data")]:::datastore
 
     USER -->|"1. consent và dữ liệu capture"| APP
@@ -977,9 +977,9 @@ Product/Risk/Architect phê duyệt, version hóa và contract-test.
 ```mermaid
 flowchart TB
     USER(["Người dùng"]):::entity
-    APP["P1 · VHM Application"]:::process
-    BFF["P2 · VHM BFF"]:::process
-    IVP["P3 · Identity Verification Platform"]:::process
+    APP(("P1 · VHM Application")):::process
+    BFF(("P2 · VHM BFF")):::process
+    IVP(("P3 · Identity Verification Platform")):::process
     DB[("D1 · Verification Data")]:::datastore
 
     USER -->|"1. consent và hành trình"| APP
@@ -1009,10 +1009,10 @@ flowchart TB
 flowchart TB
     USER(["Người dùng"]):::entity
     BACKEND(["eKYC Backend"]):::entity
-    APP["P1 · VHM Application<br/>Mobile / Web"]:::process
-    SDK["P2 · eKYC SDK"]:::process
-    BFF["P3 · VHM BFF<br/>auth / streaming route"]:::process
-    IVP["P4 · Identity Verification Platform<br/>proxy / callback processing"]:::process
+    APP(("P1 · VHM Application<br/>Mobile / Web")):::process
+    SDK(("P2 · eKYC SDK")):::process
+    BFF(("P3 · VHM BFF<br/>auth / streaming route")):::process
+    IVP(("P4 · Identity Verification Platform<br/>proxy / callback processing")):::process
     INBOX[("D1 · Encrypted Callback Inbox")]:::sensitive
 
     APP -->|"1. bootstrap và run context"| SDK
@@ -1854,27 +1854,25 @@ phê duyệt; mã hóa không làm dữ liệu mất tính chất dữ liệu c�
 
 ```mermaid
 flowchart TB
-    USER(["Người dùng"]):::entity
-    APP(["VHM Application"]):::entity
+    APP(["Người dùng qua<br/>VHM Application"]):::entity
     BACKEND(["eKYC Backend"]):::entity
-    CAPTURE["P1 · Mobile/Web SDK Capture"]:::process
-    BFF["P2 · VHM BFF<br/>auth / bounded stream"]:::process
-    IVP_PROXY["P3 · IVP SDK Proxy<br/>credential injection"]:::process
-    CALLBACK["P4 · IVP Callback Processing"]:::process
-    NORMALIZE["P5 · Result Normalization"]:::process
-    RESULT_API["P6 · Authorized Result API"]:::process
+    CAPTURE(("P1 · Mobile/Web SDK Capture")):::process
+    BFF(("P2 · VHM BFF<br/>auth / bounded stream")):::process
+    IVP_PROXY(("P3 · IVP SDK Proxy<br/>credential injection")):::process
+    RESULT_PROCESS(("P4 · IVP Callback &<br/>Result Processing")):::process
+    RESULT_API(("P5 · Authorized Result API")):::process
     INBOX[("D1 · Encrypted Inbox<br/>TTL ngắn")]:::sensitive
     RESULT[("D2 · Canonical Result<br/>fixed fields")]:::sensitive
 
-    USER -->|"1. consent-bound capture data"| CAPTURE
+    APP -->|"1. consent-bound capture data"| CAPTURE
     CAPTURE -->|"2. media stream"| BFF
     BFF -->|"3. authenticated bounded stream"| IVP_PROXY
     IVP_PROXY -->|"4. server credential + stream"| BACKEND
     BACKEND -->|"5. callback token + official result"| BFF
-    BFF -->|"6. callback ingress · body/headers không biến đổi"| CALLBACK
-    CALLBACK -->|"7. encrypted minimal payload"| INBOX
-    INBOX -->|"8. claimed provider result"| NORMALIZE
-    NORMALIZE -->|"9. canonical fixed fields"| RESULT
+    BFF -->|"6. callback ingress · body/headers không biến đổi"| RESULT_PROCESS
+    RESULT_PROCESS -->|"7. encrypted minimal payload"| INBOX
+    INBOX -->|"8. claimed official result"| RESULT_PROCESS
+    RESULT_PROCESS -->|"9. canonical fixed fields"| RESULT
     APP -->|"10. status/result query"| BFF
     BFF -->|"11. authorized result query"| RESULT_API
     RESULT -->|"12. scoped canonical fields"| RESULT_API
