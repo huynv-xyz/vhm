@@ -825,182 +825,66 @@ Không gọi eKYC Provider Backend hoặc dependency ngoài transaction boundary
 
 # **4. Integration Architecture**
 
-## 4.1. Danh sách Interfaces
+Mục này chỉ mô tả **quyết định kiến trúc tích hợp ở mức L2** để Architecture,
+Security, Data Privacy và Operations phê duyệt. Endpoint path, header, payload
+schema, HTTP status mapping, dedupe-key formula, provider field mapping và test
+fixture thuộc L3 API Specification/Provider Integration Contract.
 
-> Endpoint dưới đây là **contract nội bộ bắt buộc của VHM**. Chi tiết
-> API/auth/callback bên ngoài được cô lập trong Provider Adapter theo integration pack.
+## 4.1. Integration Landscape
 
-| **STT** | **Miêu tả** | **Endpoint** | **From** | **To** | **Mode** | **Data chính** |
-| --- | --- | --- | --- | --- | --- | --- |
-| 1 | Tạo session | `POST /internal/v1/identity-verifications` | BFF | Verification API | REST Sync | Business context, journey, channel, consent, client capability |
-| 2 | Cấp lại SDK bootstrap | `POST /internal/v1/identity-verifications/{id}/bootstrap` | BFF | Verification API | REST Sync | App/SDK version và capability |
-| 3 | Proxy SDK init session | `POST /internal/v1/identity-verifications/{id}/sdk/init` | BFF | SDK Proxy API | HTTP Stream | runId, Client UUID/proof và provider init payload |
-| 4 | Proxy SDK OCR | `POST /internal/v1/identity-verifications/{id}/sdk/ocr` | BFF | SDK Proxy API | Multipart Stream | Front/back document media transit |
-| 5 | Proxy SDK liveness | `POST /internal/v1/identity-verifications/{id}/sdk/liveness` | BFF | SDK Proxy API | Multipart Stream | Document reference + selfie/video/frame transit |
-| 6 | Lấy status | `GET /internal/v1/identity-verifications/{id}` | BFF | Verification API | REST Sync | Status, next action, retry và masked summary |
-| 7 | Ghi SDK started | `POST /internal/v1/identity-verifications/{id}/started` | BFF | Verification API | REST Sync | runId, appVersion, sdkVersion |
-| 8 | Ghi client submitted | `POST /internal/v1/identity-verifications/{id}/submitted` | BFF | Verification API | REST Sync | runId, untrusted completion code |
-| 9 | Ghi client cancel | `POST /internal/v1/identity-verifications/{id}/cancelled` | BFF | Verification API | REST Sync | runId, canonical reason |
-| 10 | Ghi SDK/client error | `POST /internal/v1/identity-verifications/{id}/sdk-error` | BFF | Verification API | REST Sync | runId, canonical error, masked SDK code |
-| 11 | Tạo retry | `POST /internal/v1/identity-verifications/{id}/retry` | BFF/Ops | Verification API | REST Sync | Whole-attempt retry reason |
-| 12 | Lấy Canonical Result | `GET /internal/v1/identity-verifications/{id}/result` | BFF | Result API | REST Sync | Fixed fields, outcome và reason codes |
-| 13 | Cấp callback access token | VHM IAM OAuth2 endpoint theo platform standard | eKYC Provider Backend | VHM IAM | REST Sync | Client Credentials, short-lived access token |
-| 14 | Callback eKYC Provider Backend | `POST /integration/v1/ekyc/callback` | eKYC Provider Backend qua BFF | Callback API | REST Async | Authenticated official result |
-| 15 | Lấy result chủ động | Provider-specific, internal adapter only | Reconciliation | eKYC Provider Backend | REST Sync | Client UUID/provider correlation ID |
-| 16 | Lấy history | `GET /internal/v1/identity-verifications/{id}/history` | Ops/Audit | Verification API | REST Sync | State/access history theo quyền |
+| **Luồng tích hợp** | **From → To** | **Mode** | **Mục đích và dữ liệu ở mức L2** | **Owner** |
+| --- | --- | --- | --- | --- |
+| Session lifecycle | VHM Application → VHM BFF → VHM eKYC Service | Synchronous control-plane | Tạo/đọc trạng thái session, bootstrap, retry và consent/business context | VHM eKYC Service |
+| SDK data-plane | eKYC SDK → VHM BFF → VHM eKYC Service → eKYC Provider Backend | Synchronous streaming | Init, OCR và liveness; media chỉ transit, không persist tại VHM | BFF/VHM eKYC Service |
+| Client lifecycle event | VHM Application → VHM BFF → VHM eKYC Service | Idempotent event/command | Started, submitted, cancelled và client error phục vụ lifecycle/UX; không phải official result | VHM eKYC Service |
+| Official result | eKYC Provider Backend → VHM BFF → VHM eKYC Service | Asynchronous callback | Kết quả OCR/eKYC server-to-server đã xác thực | VHM eKYC Service |
+| Result recovery | VHM eKYC Service → eKYC Provider Backend | Scheduled reconciliation | Get Result khi callback quá SLA hoặc session treo; không polling happy path | VHM eKYC Service |
+| Result delivery | VHM eKYC Service → VHM BFF → VHM Application | Synchronous query | Trạng thái, next action và Canonical Result được mask theo quyền | VHM eKYC Service/BFF |
 
+## 4.2. Integration Contract Decisions
 
-## 4.2. Callback eKYC Provider Backend
-
-### 4.2.1. Endpoint
-
-```http
-POST /integration/v1/ekyc/callback
-Content-Type: application/json
-Authorization: Bearer <short-lived-callback-token>
-```
-
-```json
-{
-  "eventId": "provider-event-id",
-  "eventTime": "2026-08-06T03:45:00Z",
-  "clientUuid": "f47ed948-600b-4cbb-8f72-1306ccae1cf1",
-  "providerSessionId": "external-session-reference",
-  "resultVersion": "1",
-  "status": "FINAL",
-  "result": {}
-}
-```
-
-Callback schema không nhận binary document/selfie/video. Resource URL nếu provider
-vẫn trả phải được redaction trước khi lưu inbox và không được tự động fetch.
-`clientUuid` bắt buộc và phải map đúng `verificationId`; `eventId` và
-`providerSessionId` có thể optional nếu provider contract không cung cấp, khi đó
-dedupe dùng Client UUID + result version/payload hash.
-
-
-### 4.2.2. Authentication và Idempotency
-
-| **Control** | **Yêu cầu** |
-| --- | --- |
-| Authentication | Dynamic Bearer Token ngắn hạn theo callback contract; Fixed Token cần ANBM risk acceptance |
-| Token control | Validate token endpoint contract/issuer, audience hoặc resource scope, expiry và environment binding |
-| Payload integrity | Callback payload hiện không có chữ ký số/JWS/HMAC; baseline là TLS + Dynamic Bearer Token + Client UUID/session/environment binding + replay/dedupe. ANBM phải chấp nhận residual risk nếu provider không hỗ trợ ký payload |
-| Replay | Event ID/nonce nếu provider có; fallback result version/payload hash theo contract |
-| Dedupe key 1 | `provider + providerEventId` |
-| Dedupe key 2 | `provider + clientUuid + resultVersion/payloadHash` theo contract |
-| Ack | Durable inbox trước 2xx |
-| Planned rotation | Cấp material mới, cho old/new cùng hợp lệ trong overlap, chuyển provider sang material mới, xác nhận callback thành công rồi mới revoke material cũ; không downtime |
-| Emergency rotation | Revoke/cô lập credential bị lộ và kích hoạt material dự phòng với RTO `<= 30 phút`; callback chưa nhận được khôi phục bằng provider retry/reconciliation |
-| Provider input | Token TTL, thời lượng overlap, giới hạn số credential đồng thời và khả năng ký JWS/HMAC phải có contract evidence trước security sign-off |
-
-Authentication failure không insert business result và không thay đổi session.
-Duplicate đã durable trả 2xx nhưng không normalize/finalize lần hai.
-
-### 4.2.3. Callback response
-
-| **HTTP** | **Khi dùng** | **Provider action kỳ vọng** |
+| **Decision** | **L2 requirement** | **Approval concern** |
 | --- | --- | --- |
-| 200/202 | Durable receive hoặc duplicate đã nhận | Dừng retry |
-| 400 | Schema/envelope không hợp lệ | Không retry cùng payload |
-| 401/403 | Callback token/scope/expiry sai | Sửa credential/config, security alert |
-| 429 | VHM rate limit theo contract | Retry backoff |
-| 500/503 | Chưa durable receive | Retry theo provider contract |
+| VHM ingress | Mobile/Web và eKYC SDK chỉ giao tiếp qua VHM BFF; VHM eKYC Service là integration point duy nhất tới provider | AuthN/AuthZ, rate/body limit và audit nằm trong VHM trust boundary |
+| Provider isolation | Provider-specific API và payload được cô lập trong Provider Adapter | Thay đổi provider contract không làm thay đổi contract của VHM Application |
+| Official result | Client/SDK event chỉ phục vụ UX; chỉ callback đã xác thực hoặc Get Result qua reconciliation được finalize kết quả | Ngăn client result giả mạo hoặc đảo state |
+| Callback acceptance | Callback phải được authenticate, bind đúng session/environment, chống replay, dedupe và durable receive trước acknowledgement | Callback lỗi xác thực không thay đổi business state; duplicate không finalize lần hai |
+| Callback payload | Không nhận binary media và không tự động tải resource URL trong callback | Giảm rủi ro data exfiltration, malware và lưu media ngoài kiểm soát |
+| Reconciliation | Chỉ kích hoạt khi callback quá SLA/session treo; bounded retry, quota guard và retention deadline | Không dùng polling liên tục; không vượt provider quota/retention |
+| Media handling | BFF và VHM eKYC Service chỉ stream media có giới hạn, không đọc/biến đổi/persist hoặc ghi log request body | Tuân thủ `MEDIA-01` và `DATA-01` |
+| Compatibility | Mobile/Web SDK version và provider contract được pin, contract-test và rollout có kiểm soát | Tránh breaking change theo channel/version |
 
+Chi tiết callback token/signing/rotation thuộc mục 7.1; timeout, retry và backlog
+recovery thuộc mục 6.8 và 8.2. API contract chỉ được triển khai sau khi L3 artefact
+và provider integration pack được phê duyệt.
 
-## 4.3. Canonical Result Contract
+## 4.3. Canonical Result Model
 
-```json
-{
-  "provider": "DEFAULT_EKYC",
-  "providerSessionId": "external-session-reference",
-  "schemaVersion": "1.0",
-  "journey": "FULL_EKYC",
-  "document": {
-    "type": "NATIONAL_ID_CHIP",
-    "status": "PASSED",
-    "fields": [
-      {
-        "name": "DOCUMENT_NUMBER",
-        "value": "<encrypted-value>",
-        "maskedValue": "******1234",
-        "confidence": 0.98,
-        "status": "VALID"
-      }
-    ],
-    "qualityWarnings": []
-  },
-  "liveness": {
-    "status": "PASSED"
-  },
-  "faceMatch": {
-    "status": "MATCHED"
-  },
-  "providerConclusion": {
-    "status": "PASSED",
-    "reasonCodes": []
-  },
-  "decision": {
-    "ocrOutcome": "PASSED",
-    "ekycOutcome": "VERIFIED",
-    "platformStatus": "VERIFIED",
-    "policyVersion": "identity-policy-1.0"
-  }
-}
-```
-
-### 4.3.1. Normalization rules
-
-- External session/environment phải khớp verification mapping.
-- Critical fields thiếu hoặc sai type phải quarantine/alert.
-- Optional/new fields được bỏ qua an toàn và không làm parser fail.
-- Date/boolean/score parse strict và validate range trước khi lưu.
-- Provider code chỉ lưu audit có kiểm soát; API trả canonical code.
-- Không tự động fetch resource URL.
-- Callback payload chỉ lưu mã hóa tạm thời trong inbox và purge theo TTL.
-- `ocrOutcome` và `ekycOutcome` luôn tách riêng.
-
-## 4.4. Decision Mapping
-
-### 4.4.1. Baseline
-
-| **Input/result condition** | **Platform status** | **Next action** |
+| **Nhóm thông tin** | **Nội dung ở mức L2** | **Nguyên tắc sử dụng** |
 | --- | --- | --- |
-| OCR_ONLY: document pass và đủ fixed required fields | `COMPLETED`, `ocrOutcome=PASSED`, `ekycOutcome=NOT_PERFORMED` | Continue OCR-based flow; không hiển thị identity verified |
-| FULL_EKYC: document/liveness/face pass | `VERIFIED` | Continue approved business flow |
-| Ảnh mờ/chói/mất góc và còn attempt | `NEED_RETRY` | Retry whole attempt với hướng dẫn cụ thể |
-| Camera permission hoặc SDK init lỗi | `NEED_RETRY` theo canonical error policy | User action/retry |
-| Provider timeout/429/5xx | Giữ `PROCESSING`; hết recovery budget mới `PROVIDER_ERROR` | Reconciliation trước retry |
-| Provider result không kết luận được nhưng không phải lỗi tích hợp | `NEED_RETRY` theo fixed mapping | Retry whole attempt nếu còn quota |
-| Definitive official identity/document failure | `REJECTED` | VHM Application hiển thị canonical outcome |
-| Callback schema/auth không hợp lệ | Không đổi business state | Operations/security xử lý |
-| Không có final result sau recovery budget nhưng provider còn giữ result | `PROVIDER_ERROR` | `CONTACT_SUPPORT` hoặc whole-attempt retry theo policy |
-| Callback thất lạc và Get Result không còn dữ liệu sau provider retention | `PROVIDER_ERROR` + `RESULT_UNRECOVERABLE_AFTER_RETENTION` | Không reuse media/result; `CONTACT_SUPPORT` hoặc whole-attempt retry, đồng thời mở incident nếu xảy ra theo cụm |
+| Verification metadata | Verification/run reference, journey, channel, schema/policy version và result source | Truy vết được source/version; không lộ provider credential |
+| Document outcome | Loại giấy tờ, trạng thái OCR, fixed approved fields và quality warnings | Field allowlist theo purpose; mã hóa khi lưu và mask khi trả |
+| eKYC outcome | Liveness và face-match outcome cho `FULL_EKYC` | Không có trong `OCR_ONLY`; biometric score không trả đại trà |
+| Platform decision | OCR outcome, eKYC outcome, platform status, canonical reason và next action | Không dùng trực tiếp raw provider code/score làm quyết định nghiệp vụ |
+| Audit evidence | Result source, received time, policy/config version và state transition | Không lưu media; raw callback chỉ tồn tại tạm thời theo retention policy |
 
-Similarity/score đơn lẻ không đủ tạo `REJECTED`. Fixed mapping phải được
-Product/Risk/Architect phê duyệt, version hóa và contract-test.
+Provider result phải được normalize về Canonical Result trước khi lưu hoặc cung cấp
+cho consumer. `ocrOutcome` và `ekycOutcome` luôn tách riêng; tập field, schema,
+masking và reason-code mapping chi tiết thuộc L3 Data/API Contract.
 
-### 4.4.2. Reason Code Catalogue
+## 4.4. Outcome Mapping Baseline
 
-| **Canonical reason** | **Ý nghĩa** | **Retryable** |
+| **Official condition** | **Platform outcome** | **Architectural behavior** |
 | --- | --- | --- |
-| `DOCUMENT_BLUR` | Ảnh mờ | Có |
-| `DOCUMENT_GLARE` | Ảnh chói | Có |
-| `DOCUMENT_CROPPED` | Mất góc | Có |
-| `DOCUMENT_SIDE_MISSING` | Thiếu front/back trong attempt | Có, whole attempt |
-| `DOCUMENT_UNSUPPORTED` | Sai loại giấy tờ | Không |
-| `DOCUMENT_EXPIRED` | Giấy tờ hết hạn | Theo policy |
-| `LIVENESS_FAILED` | Không đạt liveness | Theo policy |
-| `FACE_NOT_MATCHED` | Không khớp khuôn mặt | Theo policy |
-| `PROVIDER_TIMEOUT` | eKYC Provider Backend timeout | Có kỹ thuật |
-| `PROVIDER_UNAVAILABLE` | eKYC Provider Backend unavailable | Có kỹ thuật |
-| `PROVIDER_AUTH_FAILED` | Credential/config lỗi | Không tự retry |
-| `PROVIDER_SCHEMA_INVALID` | Payload sai contract | Không tự retry |
-| `CALLBACK_AUTH_FAILED` | Callback không xác thực | Không |
-| `CALLBACK_REPLAYED` | Callback replay | Không |
-| `RESULT_UNRECOVERABLE_AFTER_RETENTION` | Không thể khôi phục official result vì callback thất lạc và provider đã hết thời hạn lưu | Có, bằng whole attempt mới theo policy |
-| `CAMERA_PERMISSION_DENIED` | Client thiếu quyền camera | User action |
-| `UNSUPPORTED_CLIENT` | Mobile/Web SDK không tương thích | Upgrade VHM Application |
+| `OCR_ONLY` đạt yêu cầu và đủ fixed field | `COMPLETED` | Cho phép tiếp tục luồng dùng OCR; không thể hiện là đã xác minh danh tính |
+| `FULL_EKYC` đạt document, liveness và face match | `VERIFIED` | Cho phép tiếp tục use case đã được Product/Risk phê duyệt |
+| Lỗi chất lượng/user action có thể phục hồi | `NEED_RETRY` | Whole-attempt retry theo quota; không reuse media/result cũ |
+| Official hard fail theo policy đã phê duyệt | `REJECTED` | Trả canonical outcome; không suy diễn chỉ từ similarity/score |
+| Provider/transport/callback technical error | Giữ `PROCESSING`, sau recovery budget thành `PROVIDER_ERROR` | Không chuyển lỗi kỹ thuật thành `REJECTED`; reconciliation trước retry |
+| Callback mất và result hết provider retention | `PROVIDER_ERROR` với `RESULT_UNRECOVERABLE_AFTER_RETENTION` | Không reuse media/result; contact support hoặc whole-attempt retry; mở incident nếu theo cụm |
+
+Fixed decision mapping, threshold, canonical reason catalogue và UX message phải
+được Product/Risk/Architecture phê duyệt, version hóa và contract-test trong L3.
 
 # **5. Data Flow & Business Flow**
 
@@ -1714,7 +1598,8 @@ monitoring standard cần Architecture/Ops/Data Privacy phê duyệt.
 - Không dùng shared Basic Auth cho internal S2S.
 - Không đưa provider API key/app secret xuống BFF, Mobile/Web hoặc SDK.
 - VHM SDK session token TTL ngắn, bind session/run/journey/channel/environment.
-- Callback credential rotation tuân thủ mục 4.2.2: planned rotation không downtime;
+- Callback credential rotation tuân thủ quyết định tích hợp tại mục 4.2 và baseline
+  Security tại mục 7.1.3: planned rotation không downtime;
   emergency rotation có RTO `<=30 phút`. Token TTL/overlap chính xác phải được
   eKYC Provider Backend và ANBM xác nhận bằng contract/security test.
 
@@ -1768,8 +1653,8 @@ monitoring standard cần Architecture/Ops/Data Privacy phê duyệt.
 
 #### Callback Security
 
-- Áp `CALLBACK-01`; cơ chế token, replay key, durable-ack và rotation được định nghĩa
-  tại mục 4.2.2.
+- Áp `CALLBACK-01`; quyết định tích hợp ở mức L2 được nêu tại mục 4.2, còn cơ chế
+  token, replay, durable-ack và rotation được kiểm soát tại mục 7.1.2–7.1.3.
 - Callback payload hiện không được ký số. Control bù trừ bắt buộc gồm TLS, Dynamic
   Bearer Token, binding Client UUID/session/environment, schema validation và
   replay/dedupe. Nếu provider không hỗ trợ JWS/HMAC, ANBM phải phê duyệt residual
