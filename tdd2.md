@@ -15,7 +15,7 @@
 | **VERSION** | **DATE** | **CHANGES** | **UPDATED BY** |
 | --- | --- | --- | --- |
 | 0.1 | 06/08/2026 | Khởi tạo TDD nền tảng OCR & eKYC SDK dùng chung cho VHM | TBD |
-| 0.2 | 06/08/2026 | Chốt phạm vi Core Integration trên Mobile và external-input gates | TBD |
+| 0.2 | 06/08/2026 | Chốt phạm vi Core Integration trên Mobile/Web và external-input gates | TBD |
 | 1.0 | TBD | Bản được phê duyệt | TBD |
 
 > **Quy ước trong tài liệu**
@@ -104,7 +104,7 @@ Nếu từng domain tự tích hợp SDK, phát sinh thêm các rủi ro:
 - Cùng một thay đổi SDK phải sửa và kiểm thử ở nhiều hệ thống.
 - Callback retry có thể tạo side effect lặp nếu không idempotent.
 - Callback thất lạc làm phiên treo nếu không có reconciliation.
-- Dữ liệu OCR/sinh trắc bị sao chép vào DB, log, Kafka hoặc analytics ngoài kiểm soát.
+- Dữ liệu OCR/sinh trắc bị sao chép vào DB, log, message bus hoặc analytics ngoài kiểm soát.
 - Không có một nơi quản lý consent, quota, retention, audit và chi phí tập trung.
 
 ### **1.2.2. Mục đích**
@@ -202,7 +202,7 @@ Xây dựng một nền tảng xác minh danh tính dùng chung nhằm:
 | A-09 | SDK version và Mobile/Web compatibility matrix được pin theo implementation baseline | Implementation manifest input | Thiếu manifest thì không được tạo build để triển khai |
 | A-10 | Volume, peak TPS và dependency SLA phải được cung cấp | Capacity/SLO input | Thiếu input thì không qua production readiness review |
 | A-11 | Mỗi domain có owner chịu trách nhiệm business decision | Quyết định ownership | Platform không tự định nghĩa risk rule thay domain |
-| A-12 | Mặt trước và mặt sau phải hoàn tất trong cùng một SDK run/attempt | Quyết định Mobile flow | Lỗi ở bất kỳ mặt nào làm attempt thất bại và retry lại toàn bộ attempt |
+| A-12 | Mặt trước và mặt sau phải hoàn tất trong cùng một SDK run/attempt | Quyết định Mobile/Web flow | Lỗi ở bất kỳ mặt nào làm attempt thất bại và retry lại toàn bộ attempt |
 
 ## 1.3 Đối tượng sử dụng
 
@@ -226,10 +226,10 @@ Các nhóm dữ liệu dự kiến:
 - Ảnh mặt trước/mặt sau giấy tờ.
 - Ảnh chân dung hoặc video/frame phục vụ liveness.
 - Kết quả OCR và confidence theo field.
-- Kết quả liveness, spoof/deepfake signal nếu SDK cung cấp.
+- Kết quả liveness.
 - Kết quả face match và similarity score.
-- Warning chất lượng/rủi ro giấy tờ.
-- Thông tin thiết bị ở mức tối thiểu phục vụ compatibility và phòng chống gian lận.
+- Warning chất lượng giấy tờ.
+- Thông tin client ở mức tối thiểu phục vụ compatibility và vận hành.
 - Consent: chủ thể, purpose, version nội dung, channel và thời điểm đồng ý.
 
 Mục **7.2 Data Privacy** phải được APPROVED trước production.
@@ -477,7 +477,7 @@ stateDiagram-v2
 
     SDK_STARTED --> SUBMITTED: SDK completed
     SDK_STARTED --> CANCELLED: user exits
-    SDK_STARTED --> SDK_ERROR: SDK/client error
+    SDK_STARTED --> NEED_RETRY: SDK/client recoverable error
     SDK_STARTED --> EXPIRED: timeout
     SDK_STARTED --> PROCESSING: official result arrives early
 
@@ -493,8 +493,8 @@ stateDiagram-v2
     VERIFIED --> [*]
     REJECTED --> [*]
     NEED_RETRY --> [*]
+    PROVIDER_ERROR --> [*]
     CANCELLED --> [*]
-    SDK_ERROR --> [*]
     EXPIRED --> [*]
 ```
 
@@ -502,7 +502,7 @@ stateDiagram-v2
 
 | **From** | **To** | **Điều kiện** | **Tác động** |
 | --- | --- | --- | --- |
-| INITIATED | SDK_STARTED | Chưa expire; caller đúng owner; bootstrap hợp lệ | Ghi startedAt/platform/app/sdk version |
+| INITIATED | SDK_STARTED | Chưa expire; caller đúng owner; bootstrap hợp lệ | Ghi startedAt/channel/app/sdk version |
 | SDK_STARTED | SUBMITTED | Client báo SDK hoàn tất; external reference match | Ghi submittedAt; không cập nhật decision |
 | SUBMITTED | PROCESSING | Official result chưa final hoặc processing async | Lập reconciliation schedule |
 | INITIATED/SDK_STARTED/SUBMITTED/PROCESSING | COMPLETED | `OCR_ONLY` official result pass | Persist result/history; không diễn giải là đã xác minh danh tính |
@@ -539,7 +539,7 @@ flowchart TD
 
 ### 2.3.1. VerificationApplicationService
 
-- Kiểm tra consumer/domain/use case đã đăng ký.
+- Kiểm tra domain/use case đã được phê duyệt.
 - Kiểm tra business reference và quyền caller qua domain authorization contract.
 - Validate consent đúng subject, purpose và version.
 - Resolve journey, timeout, quota và decision policy version.
@@ -549,20 +549,20 @@ flowchart TD
 
 ### 2.3.2. CoreConfigurationService
 
-Consumer config tối thiểu:
+Core config tối thiểu:
 
 ```mermaid
 flowchart TB
     POLICY["CoreConfiguration"] --> IDENTITY["domain<br/>useCase<br/>purpose"]
-    POLICY --> JOURNEY["OCR_ONLY | FULL_EKYC<br/>NATIONAL_ID_CHIP<br/>MOBILE_APP"]
-    POLICY --> DATA["fixedResultFields[]"]
+    POLICY --> JOURNEY["OCR_ONLY | FULL_EKYC<br/>NATIONAL_ID_CHIP<br/>MOBILE_APP | WEB_APP"]
+    POLICY --> DATA["fixedResultSchemaVersion"]
     POLICY --> CONTROL["maxAttempts<br/>rateLimit<br/>decisionPolicyVersion"]
     POLICY --> OWNER["owner/PIC"]
 ```
 
 - Config versioned và environment-scoped.
 - Thay đổi bộ field cố định/decision policy cần Data Privacy/Risk approval tương ứng.
-- Secret không nằm trong consumer config.
+- Secret không nằm trong Core config.
 
 ### 2.3.3. CallbackAuthenticator
 
@@ -593,11 +593,11 @@ flowchart TB
     RESULT --> DOCUMENT["document"]
     DOCUMENT --> DOCUMENT_DATA["type<br/>status<br/>fields[]<br/>overallConfidence<br/>warnings[]"]
     RESULT --> LIVENESS["liveness"]
-    LIVENESS --> LIVENESS_DATA["status<br/>score<br/>signals[]"]
+    LIVENESS --> LIVENESS_DATA["status<br/>score"]
     RESULT --> FACE["faceMatch"]
     FACE --> FACE_DATA["status<br/>similarity"]
     RESULT --> CONCLUSION["providerConclusion"]
-    CONCLUSION --> CONCLUSION_DATA["status<br/>riskLevel<br/>ruleHits[]"]
+    CONCLUSION --> CONCLUSION_DATA["status<br/>reasonCodes[]"]
 ```
 
 Normalizer phải:
@@ -631,7 +631,7 @@ flowchart LR
 - Kiểm tra service identity, tenant, domain và business-object authorization.
 - Trả một Canonical Result schema với bộ field cố định đã được phê duyệt.
 - Mask mặc định; unmask cần elevated permission + reason + audit.
-- Không expose resource URL, raw warning hoặc threshold có thể hỗ trợ gian lận.
+- Không expose resource URL, raw warning hoặc internal threshold.
 
 ## 2.4. Data Model
 
@@ -649,6 +649,7 @@ erDiagram
         varchar purpose
         varchar journey
         varchar provider
+        varchar provider_environment
         varchar provider_session_id
         varchar status
         varchar decision
@@ -670,7 +671,7 @@ erDiagram
         varchar provider_code
         jsonb reason_codes
     }
-    VERIFIED_IDENTITY_FIELD {
+    IDENTITY_RESULT_FIELD {
         uuid field_id PK
         uuid verification_id FK
         varchar field_name
@@ -681,10 +682,12 @@ erDiagram
     }
     VERIFICATION_CALLBACK_INBOX {
         uuid inbox_id PK
+        uuid verification_id FK
         varchar provider
         varchar provider_event_id
         varchar provider_session_id
         varchar payload_hash
+        bytes encrypted_payload
         varchar status
     }
     IDENTITY_VERIFICATION_HISTORY {
@@ -696,7 +699,7 @@ erDiagram
         varchar actor_type
     }
     IDENTITY_VERIFICATION ||--o{ IDENTITY_VERIFICATION_CHECK : has
-    IDENTITY_VERIFICATION ||--o{ VERIFIED_IDENTITY_FIELD : extracts
+    IDENTITY_VERIFICATION ||--o{ IDENTITY_RESULT_FIELD : extracts
     IDENTITY_VERIFICATION ||--o{ IDENTITY_VERIFICATION_HISTORY : records
     IDENTITY_VERIFICATION ||--o{ VERIFICATION_CALLBACK_INBOX : correlates
 ```
@@ -713,28 +716,39 @@ CREATE TABLE identity_verification (
     subject_ref                  varchar(150) NOT NULL,
     purpose                      varchar(80)  NOT NULL,
     journey                      varchar(40)  NOT NULL,
-    document_type                varchar(40),
+    document_type                varchar(40)  NOT NULL,
+    channel                      varchar(30)  NOT NULL,
     provider                     varchar(40)  NOT NULL,
+    provider_environment         varchar(30)  NOT NULL,
     provider_session_id          varchar(150),
     status                       varchar(30)  NOT NULL,
     decision                     varchar(30),
     decision_reason_codes        jsonb        NOT NULL DEFAULT '[]',
     policy_version               varchar(80)  NOT NULL,
+    result_schema_version        varchar(30),
+    result_source                varchar(30),
+    consent_reference_id         varchar(150) NOT NULL,
     retry_of_verification_id     uuid,
     attempt_no                   integer      NOT NULL DEFAULT 1,
+    run_id                       uuid,
+    run_lease_expires_at         timestamptz,
     sdk_version                  varchar(50),
     app_version                  varchar(50),
     expires_at                   timestamptz  NOT NULL,
     started_at                   timestamptz,
     submitted_at                 timestamptz,
     completed_at                 timestamptz,
+    reconciliation_due_at       timestamptz,
     created_by                   varchar(150) NOT NULL,
     created_at                   timestamptz  NOT NULL,
     updated_at                   timestamptz  NOT NULL,
     row_version                  bigint       NOT NULL DEFAULT 0,
     CONSTRAINT fk_iv_retry_of FOREIGN KEY (retry_of_verification_id)
       REFERENCES identity_verification(verification_id),
-    CONSTRAINT uk_iv_provider_session UNIQUE (provider, provider_session_id)
+    CONSTRAINT uk_iv_run UNIQUE (run_id),
+    CONSTRAINT uk_iv_provider_session UNIQUE (
+      provider, provider_environment, provider_session_id
+    )
 );
 
 CREATE INDEX idx_iv_business_ref
@@ -744,7 +758,7 @@ CREATE INDEX idx_iv_subject_ref
   ON identity_verification(tenant_id, domain, subject_ref, created_at DESC);
 
 CREATE INDEX idx_iv_reconciliation
-  ON identity_verification(status, updated_at)
+  ON identity_verification(status, reconciliation_due_at)
   WHERE status IN ('SUBMITTED', 'PROCESSING');
 
 CREATE UNIQUE INDEX uk_iv_active_subject
@@ -786,10 +800,10 @@ CREATE TABLE identity_verification_check (
 - `FACE_MATCH`
 - `PROVIDER_CONCLUSION`
 
-### 2.4.4. Bảng `verified_identity_field`
+### 2.4.4. Bảng `identity_result_field`
 
 ```sql
-CREATE TABLE verified_identity_field (
+CREATE TABLE identity_result_field (
     field_id                  uuid PRIMARY KEY,
     verification_id           uuid         NOT NULL
       REFERENCES identity_verification(verification_id),
@@ -799,7 +813,7 @@ CREATE TABLE verified_identity_field (
     confidence                numeric(12,6),
     source                    varchar(30)   NOT NULL,
     created_at                timestamptz   NOT NULL,
-    CONSTRAINT uk_iv_field UNIQUE (verification_id, field_name)
+    CONSTRAINT uk_iv_result_field UNIQUE (verification_id, field_name)
 );
 ```
 
@@ -817,7 +831,7 @@ CREATE TABLE verification_callback_inbox (
     provider                 varchar(40)  NOT NULL,
     provider_event_id        varchar(150),
     provider_session_id      varchar(150) NOT NULL,
-    verification_id         uuid REFERENCES identity_verification(verification_id),
+    verification_id         uuid NOT NULL REFERENCES identity_verification(verification_id),
     result_version           varchar(80),
     payload_hash             varchar(128) NOT NULL,
     encrypted_payload        bytea        NOT NULL,
@@ -842,7 +856,7 @@ có TTL và purge job; không được sao chép sang result/history/log.
 
 ### 2.5.1. Tạo phiên đồng thời
 
-Rủi ro: double-click/mobile retry tạo hai session.
+Rủi ro: double-click/client retry tạo hai session.
 
 Kiểm soát:
 
@@ -944,7 +958,6 @@ Không gọi Domain System hoặc SDK Backend bên trong DB transaction.
 | NEED_RETRY | ✔️ | ❌ | Ignore | ✔️ nếu còn attempt/quota | Canonical outcome | ❌ |
 | PROVIDER_ERROR | ✔️ | ❌ | Ignore | Sau recovery/Ops gate | Canonical technical outcome | ❌ |
 | CANCELLED | ✔️ | ❌ | Ignore | ✔️ theo policy | ❌ | Grace check nếu provider đã final |
-| SDK_ERROR | ✔️ | ❌ | Ignore | ✔️ | ❌ | ❌ |
 | EXPIRED | ✔️ | ❌ | Ignore | ✔️ theo policy | ❌ | Grace reconcile theo policy |
 
 ## 3.4. Channel Rules
@@ -1389,8 +1402,9 @@ Không retry tự động cho 4xx business/schema. 401/403 phải alert Critical
 | OCR_ONLY: document pass và đủ fixed required fields | `COMPLETED`, `ocrOutcome=PASSED`, `ekycOutcome=NOT_PERFORMED` | Continue OCR-based flow; không hiển thị identity verified |
 | FULL_EKYC: document/liveness/face pass | `VERIFIED` | Continue approved business flow |
 | Ảnh mờ/chói/mất góc và còn attempt | `NEED_RETRY` | Retry whole attempt với hướng dẫn cụ thể |
-| Camera permission hoặc SDK init lỗi | `SDK_ERROR` hoặc `NEED_RETRY` theo policy | User action/retry |
+| Camera permission hoặc SDK init lỗi | `NEED_RETRY` theo canonical error policy | User action/retry |
 | Provider timeout/429/5xx | Giữ `PROCESSING`; hết recovery budget mới `PROVIDER_ERROR` | Reconciliation trước retry |
+| Provider result không kết luận được nhưng không phải lỗi tích hợp | `NEED_RETRY` theo fixed mapping | Retry whole attempt nếu còn quota |
 | Definitive official identity/document failure | `REJECTED` | Domain hiển thị canonical outcome |
 | Callback schema/auth không hợp lệ | Không đổi business state | Operations/security xử lý |
 | Không có final result sau recovery budget | `PROVIDER_ERROR` | `CONTACT_SUPPORT` hoặc retry theo policy |
@@ -1526,7 +1540,7 @@ sequenceDiagram
     alt Front fail
         SDK-->>APP: Completion/error - untrusted
         APP->>IV: submitted/error
-        Note over APP,IV: Whole attempt ends; no reuse of front image
+        Note right of APP: Whole attempt ends - front image is not reused
     else Front pass
         SDK->>User: Capture document back
         User->>SDK: Back image
@@ -1543,6 +1557,17 @@ sequenceDiagram
 
 Mobile và Web dùng cùng result/state contract. Khác biệt lifecycle chỉ nằm ở client
 integration; backend không thay đổi official-result rule.
+
+Two-side processing là hành vi cố định theo contract của SDK/provider và không
+được thay đổi động trong runtime:
+
+| **Provider capability** | **Cách Mobile/Web xử lý** | **Failure rule** |
+| --- | --- | --- |
+| Một lần gửi front + back | SDK thu đủ hai mặt rồi gửi trong cùng `runId` | Bất kỳ mặt nào fail thì whole attempt `NEED_RETRY` |
+| Một lần chỉ gửi một mặt | SDK xử lý front trước; front pass mới tiếp tục back trong cùng `runId` | Front fail thì dừng ngay; back không được capture/send. Back fail cũng đóng whole attempt |
+
+Attempt sau phải capture lại từ đầu; không giữ front/back đã pass để ghép với ảnh
+của attempt khác.
 
 ### **5.2.3. FULL_EKYC trên Mobile**
 
@@ -1697,10 +1722,10 @@ Attempt mới không reuse provider session, result, history, token hoặc ảnh
 
 | **Tình huống** | **Detection** | **Platform state** | **Recovery/User action** | **Ops** |
 | --- | --- | --- | --- | --- |
-| Camera permission denied | Client canonical error | `SDK_ERROR/NEED_RETRY` theo policy | Cấp quyền rồi whole-attempt retry | Metric/spike alert |
+| Camera permission denied | Client canonical error | `NEED_RETRY` theo policy | Cấp quyền rồi whole-attempt retry | Metric/spike alert |
 | Client/SDK unsupported | Compatibility policy | Không start SDK | Upgrade VHM Application | Metric |
 | Front hoặc back quality fail | Official result/client error | `NEED_RETRY` | Retry whole attempt; không reuse ảnh pass | Quality metric |
-| SDK init/crash | Client canonical error | `SDK_ERROR/NEED_RETRY` | Retry có giới hạn | Alert nếu spike |
+| SDK init/crash | Client canonical error | `NEED_RETRY` | Retry có giới hạn | Alert nếu spike |
 | Provider timeout/5xx | Adapter | Giữ `PROCESSING` trong recovery budget | Reconciliation/backoff | Dependency alert |
 | Provider 401/403 | Adapter | `PROVIDER_ERROR` | Không tự retry; Ops sửa credential/config | Critical alert |
 | Callback auth fail | CallbackAuthenticator | Không đổi business state | Provider sửa auth/retry | Security alert |
@@ -1731,159 +1756,156 @@ Attempt mới không reuse provider session, result, history, token hoặc ảnh
 
 ```mermaid
 flowchart LR
-    subgraph DEVICE["User Device"]
-        MOBILE["VHM Mobile App"]
-        WEB["VHM Web App"]
-        SDK["Native / Web eKYC SDK"]
+    subgraph CLIENTS["VHM Clients"]
+        MOBILE["VHM Mobile"]
+        WEB["VHM Web"]
+        SDK["eKYC SDK"]
     end
-    subgraph PROVIDERCLOUD["SDK Provider Cloud"]
-        PROVIDER["SDK Backend"]
-        PORTAL["Configuration Portal"]
-    end
-    subgraph VHM["VHM Cloud Region"]
-        WAF["CDN / WAF / API Gateway"] --> LB["Load Balancer / Ingress"]
-        subgraph K8S["Kubernetes - Private Subnets"]
-            BFF["VHM BFFs"] --> IV["Identity Verification API"]
-            WORKER["Inbox / Step / Reconciliation / Outbox Workers"]
+
+    subgraph AWS["AWS Singapore - VHM Trust Boundary"]
+        WAF["CDN / WAF / API Gateway"]
+        INGRESS["Nginx Ingress"]
+        subgraph EKS["V-App Amazon EKS"]
+            API["Verification API"]
+            CALLBACK["Callback API"]
+            WORKER["Inbox / Reconciliation Workers"]
         end
-        RDS[(PostgreSQL Multi-AZ)]
-        KAFKA[[Kafka]]
-        S3["Private Object Storage<br/>optional evidence"]
-        SM["Secrets Manager / KMS"]
-        OBS[Observability]
-        NAT["Controlled Egress"]
-        LB --> BFF
-        IV --> RDS
+        RDS[("RDS PostgreSQL Multi-AZ")]
+        REDIS[("ElastiCache Redis")]
+        SECRET["Secrets Manager / KMS"]
+        OBS["Metrics / Logs / APM"]
+        WAF --> INGRESS
+        INGRESS --> API
+        INGRESS --> CALLBACK
+        API --> RDS
+        CALLBACK --> RDS
         WORKER --> RDS
-        WORKER --> KAFKA
-        IV --> S3
-        IV --> SM
-        IV --> OBS
-        IV --> NAT
+        API --> REDIS
+        API --> SECRET
+        WORKER --> SECRET
+        API --> OBS
+        CALLBACK --> OBS
+        WORKER --> OBS
     end
-    MOBILE -->|VHM APIs| WAF
-    WEB -->|VHM APIs| WAF
+
+    PROVIDER["SDK Backend"]
+    MOBILE -->|VHM API| WAF
+    WEB -->|VHM API| WAF
     MOBILE --> SDK
     WEB --> SDK
-    SDK -->|SDK data-plane| PROVIDER
-    PROVIDER -->|Callback only| WAF
-    NAT -->|Control-plane / result API| PROVIDER
-    PORTAL --> PROVIDER
+    SDK -->|OCR / Liveness / Face data| PROVIDER
+    PROVIDER -->|Authenticated callback| WAF
+    WORKER -->|Get Result - reconciliation only| PROVIDER
 ```
 
 ### 6.1.1. Network topology
 
-- Mobile/Web API đi qua CDN/WAF/API Gateway hiện hữu.
-- Callback expose path riêng; không route tới toàn bộ internal API.
-- Identity Platform chạy private subnet, không public IP.
-- Outbound SDK Backend qua controlled egress.
-- DB/Kafka/Object Storage/Secret qua private endpoint/network control.
-- Web SDK script/artifact chỉ tải từ origin được duyệt; CSP/SRI áp dụng khi SDK hỗ trợ.
-- Nếu có IP allowlist ổn định, dùng như lớp bổ sung, không thay callback auth.
+- VHM API và callback ingress đi qua WAF/API Gateway/Nginx Ingress.
+- Verification API, Callback API và worker chạy private trong EKS namespace riêng.
+- RDS, Redis và Secrets/KMS chỉ truy cập qua private network control.
+- Mobile/Web SDK data-plane kết nối trực tiếp SDK Backend bằng TLS.
+- Chỉ callback route được public cho SDK Backend và phải có strong authentication.
+- Egress tới SDK Backend dùng allowlist, timeout, circuit breaker và audit.
 
 ### 6.1.2. Network Flow Matrix
 
-| **From** | **To** | **Protocol** | **Purpose** | **Control** |
+| **Source** | **Destination** | **Protocol** | **Data** | **Control** |
 | --- | --- | --- | --- | --- |
-| Mobile/Web | API Gateway/BFF | HTTPS 443 | Session/status/retry/handoff | JWT, WAF, rate limit |
-| Native/Web SDK | SDK Backend | HTTPS 443 | OCR/NFC/liveness/face data | TLS, SDK bootstrap/integrity |
-| SDK Backend | Callback Gateway | HTTPS 443 | Official result | Auth/signature, WAF, replay guard |
-| Platform | SDK Backend | HTTPS 443 | Create/get/cancel result | Secret, egress, timeout/circuit |
-| Platform/Worker | PostgreSQL | TLS | Session/result/audit/outbox | SG/network policy, DB role |
-| Worker | Kafka | TLS/SASL | Domain event | ACL/workload identity |
-| Platform | Object Storage | HTTPS | Manual evidence | IAM, SSE-KMS, private bucket |
-| Platform | Secret Manager | HTTPS/private | Credential/key | Workload identity |
+| Mobile/Web | API Gateway/BFF | HTTPS 443 | Session/status/retry/result | JWT, WAF, rate limit |
+| Mobile/Web SDK | SDK Backend | HTTPS 443 | OCR/liveness/face data | TLS, short-lived bootstrap, SDK integrity |
+| SDK Backend | Callback API | HTTPS 443 | Official result | JWS/JWT, replay guard, WAF, dedupe |
+| Platform | SDK Backend | HTTPS 443 | Create session/Get Result | Secret Manager, allowlist, timeout, circuit breaker |
+| Platform/Worker | PostgreSQL | TLS | Session/result/inbox/audit | Security group, DB role, KMS |
+| Platform | Redis | TLS | Rate limit/replay/ephemeral cache | Private endpoint, auth, TTL |
+| Services | Monitoring/Logging | TLS | Masked telemetry | No PII/secret, access control |
 
 ## 6.2. Thành phần lưu trữ dữ liệu
 
-| **Thành phần** | **Công nghệ baseline** | **Lưu trữ** | **Kiểm soát** |
+| **Thành phần** | **Công nghệ** | **Dữ liệu** | **Control** |
 | --- | --- | --- | --- |
-| Verification DB | PostgreSQL Multi-AZ | Session, checks, fields, history, inbox, outbox | TLS, at-rest encryption, PITR, RBAC |
-| Kafka | Platform Kafka | Event routing/outcome | Replication, ACL, no raw PII |
-| Object Storage | Private Object Storage | Manual evidence sau fail-fast | Block public, SSE-KMS, lifecycle, audited access |
-| SDK Backend | External | Media/result theo contract retention | DPA, residency, deletion evidence |
-| Secrets | Vault/Secrets Manager | Credential, callback key, encryption key refs | Rotation, least privilege, no ConfigMap |
-| Browser storage | Không dùng cho PII/token dài hạn | Chỉ ephemeral state tối thiểu | Clear on completion/expiry, XSS controls |
+| Verification DB | PostgreSQL Multi-AZ | Session, run, checks, fixed fields, result, history, callback inbox | TLS, KMS, PITR, RBAC |
+| Redis | Redis | Rate limit, replay cache và ephemeral state | TTL, private network; không source of truth |
+| Secret storage | AWS Secrets Manager/KMS | Provider credential, callback/public key refs, encryption keys | Rotation, workload identity, audit |
+| Application memory | Process memory | Short-lived bootstrap/access token | Clear sau completion/cancel/expiry |
+| SDK-flow media | Không lưu tại VHM | Document image, selfie, liveness video/frame | SDK Backend retention theo approved contract |
 
 ## 6.3. Capacity & Scaling
 
 ### 6.3.1. Capacity inputs bắt buộc trước production
 
-- Sessions/ngày theo domain/journey/channel.
-- Peak create/status/callback requests/phút.
-- Concurrent SDK sessions Mobile/Web.
-- Callback payload p50/p95/max và burst behavior.
-- Retry rate OCR/NFC/liveness và handoff conversion.
-- Provider quota/rate limit và cost unit.
-- Number of consumer domains và event throughput.
+- Daily/peak concurrent session cho Mobile và Web.
+- Peak create/status/result TPS.
+- Callback burst TPS và payload size p95/p99.
+- Tỷ lệ `OCR_ONLY/FULL_EKYC`, retry và reconciliation.
+- Provider quota, rate limit, SLA và maintenance window.
+- Canonical result/inbox retention và DB growth.
+- Mục tiêu p95/p99 theo từng interface.
 
 ### 6.3.2. Scaling design
 
-| **Component** | **Scaling** | **Metric** |
+| **Component** | **Scale** | **Signal** |
 | --- | --- | --- |
-| Verification API | HPA | CPU, RPS, p95 latency, in-flight |
-| Callback worker | HPA/queue based | Inbox backlog/age, processing rate |
-| Step outbox worker | HPA/queue based | Due outbox count/age, retry rate, lock wait |
-| Reconciliation | Bounded concurrency | Due sessions, provider rate limit |
-| Outbox publisher | Worker scale | Pending count/oldest age |
-| PostgreSQL | Multi-AZ + bounded pool | CPU, IOPS, connections, lock wait |
-| Web delivery | CDN/cache static artifacts | Error rate, SDK load latency, CSP violation |
+| Verification API | HPA | CPU, request rate, p95 latency |
+| Callback API | HPA độc lập | Callback TPS, ack latency, 5xx |
+| Inbox Worker | Horizontal worker | Pending count, oldest age, processing latency |
+| Reconciliation Worker | Horizontal + bounded lease | Due count/age, provider quota, lock wait |
+| PostgreSQL | Multi-AZ + connection pool | CPU, IOPS, connection, lock wait, table/index growth |
+| Redis | Managed scale | Memory, eviction, connection, command latency |
 
-Không dùng verification ID, business ref, subject ref hoặc PII làm metric label.
+Worker claim batch bằng row lock/`SKIP LOCKED` hoặc lease tương đương. Mọi batch
+phải bounded và tôn trọng provider quota; không dùng unbounded polling.
 
 ## 6.4. CI/CD Architecture
 
 ### 6.4.1. DevSecOps gates
 
-- SAST, SCA, secret scan, container/IaC scan.
-- SBOM backend, Mobile và Web.
-- License/distribution check cho native/Web SDK artifact.
-- SDK binary/package lưu repository private theo license; không commit tùy tiện.
-- Web dependency integrity, CSP review và dependency lock.
+- Compile/unit test và dependency lock validation.
+- SCA/license scan cho backend, Mobile, Web và SDK artifact.
+- Secret scan, SAST và IaC scan.
+- Container vulnerability scan.
+- DB migration compatibility/integration test.
+- API/provider contract test.
+- Mobile/Web client E2E evidence.
+- Security/privacy approval gates.
+- Immutable artifact promotion; không rebuild giữa environment.
 
 ### 6.4.2. Quality gates
 
 | **Layer** | **Nội dung** | **Gate** |
 | --- | --- | --- |
-| Unit | State machine, policy, mapping, masking, handoff, idempotency | Critical branch >= 80% |
-| Pipeline | first/next step, version guard, retry snapshot, ANY/STRICT fan-out, manual aggregate | Bắt buộc pass |
-| DB Integration | Constraint/index/locking/inbox/outbox | Bắt buộc pass |
-| Provider Contract | Callback primary, Get Result reconciliation và create-session fixtures | Bắt buộc pass |
-| Mobile SDK | Permission, lifecycle, deep link, real-device matrix | Bắt buộc |
-| Web SDK | Browser/camera, refresh/multi-tab, CSP, responsive | Bắt buộc |
-| E2E | Mobile/Web ↔ SDK Backend staging ↔ VHM | Happy + failure paths |
-| Performance | Create/status/callback burst/reconciliation | Đạt threshold |
-| Security | Auth/replay/IDOR/PII/SSRF/XSS/CSP | Không High/Critical |
-| Resilience | Provider/DB/Kafka errors/duplicate callbacks | Bắt buộc |
+| Unit | State guard, idempotency, mapping, masking, retry rules | Critical branches `>=80%` |
+| DB Integration | Constraint, index, locking, inbox, history, reconciliation query | Bắt buộc pass |
+| Provider Contract | Create session, callback, Get Result và error fixtures | Bắt buộc pass |
+| Mobile SDK | Permission, lifecycle, front/back, result page OFF, compatibility matrix | Bắt buộc pass |
+| Web SDK | Camera permission, refresh/reopen/multi-tab, front/back, result page OFF | Bắt buộc pass |
+| API Security | Authn/authz, tenant/object scope, masking, rate limit | Bắt buộc pass |
+| E2E | Mobile/Web ↔ SDK Backend staging ↔ VHM Platform ↔ Domain | Happy + failure paths |
+| Performance | Create/status/result/callback burst/reconciliation | Đạt NFR |
+| Recovery | DB/provider outage, callback lost, worker restart, PITR | Bắt buộc pass |
 
 ### 6.4.3. Deployment strategy
 
-- Backend rolling/canary theo platform.
-- Callback schema backward-compatible tối thiểu một version.
-- Mobile SDK phased rollout theo app version/device/OS.
-- Web SDK rollout theo feature flag/cohort/browser; rollback static bundle nhanh.
-- Feature flag tắt **create session mới** khi incident nhưng giữ callback/reconciliation.
-- Promote immutable artifact qua environments; không rebuild.
-- Migration forward-compatible với rolling deployment.
+- Backend canary/rolling deployment với readiness, liveness và startup probe.
+- Mobile/Web SDK/profile rollout theo controlled cohort và compatibility matrix.
+- DB migration backward-compatible trước khi deploy code sử dụng schema mới.
+- Provider config/key rotation có overlap và rollback runbook.
+- Dừng create session khi incident nhưng vẫn giữ callback/reconciliation nếu an toàn.
 
 ## 6.5. Tech Stack
 
 | **Layer** | **Technology** |
 | --- | --- |
 | Backend | Java 25, Spring Boot 4.0.4, Spring Data JPA, Maven |
-| Frontend | React (Web), Flutter (Mobile), Native/Web eKYC SDK được pin version |
+| Client | VHM Mobile, VHM Web và eKYC SDK được pin version |
 | Database | Amazon RDS PostgreSQL 17 (Multi-AZ) |
-| Cache | Amazon ElastiCache Redis 7.4 (Sentinel); chỉ dùng cho rate limit/replay/ephemeral cache, không phải source of truth của verification state |
-| Message Queue | Amazon MSK Kafka + Transactional Outbox |
-| File Storage | Amazon S3; chỉ lưu manual evidence đã được phê duyệt, mã hóa và có lifecycle TTL |
-| Authentication & Authorization | OIDC/JWT qua Core IAM, validate tại BFF; internal service-to-service dùng workload identity/JWT hoặc mTLS theo security baseline |
+| Cache | Amazon ElastiCache Redis 7.4; chỉ dùng rate-limit/replay/ephemeral cache |
 | CI/CD | Azure DevOps (TFS) |
-| Container Orchestration | Amazon EKS (Kubernetes) + Nginx Ingress Controller |
-| DevSecOps Tools | SCA scan, container vulnerability scan, secret scan và IaC scan tích hợp trong Azure DevOps pipeline |
-| Secret Management | AWS Secrets Manager + KMS; Kubernetes ConfigMap chỉ chứa non-secret configuration |
-| Monitoring & Logging | Micrometer + Prometheus + Grafana + APM + Fluentd + Elasticsearch |
+| Container Orchestration | Amazon EKS + Nginx Ingress Controller |
+| DevSecOps | SCA, container vulnerability, secret và IaC scan trong pipeline |
+| Secret Management | AWS Secrets Manager + KMS; ConfigMap chỉ chứa non-secret config |
+| Monitoring/Logging | Micrometer, Prometheus, Grafana, APM, Fluentd, Elasticsearch |
 | Circuit Breaker | Resilience4j |
-| Deployment Environment | AWS Singapore (`ap-southeast-1`) — V-App EKS Cluster |
+| Environment | AWS Singapore (`ap-southeast-1`) — V-App EKS Cluster |
 
 ## 6.6. Configuration Management
 
@@ -1892,59 +1914,52 @@ Không dùng verification ID, business ref, subject ref hoặc PII làm metric l
 ```yaml
 identity-verification:
   provider: DEFAULT_EKYC
-  session:
-    timeout: 30m
-    reconciliation-initial-delay: 3m
-    reconciliation-max-attempts: 5
-  retry:
-    max-attempts-default: 3
-  handoff:
-    token-ttl: 5m
-  provider-client:
-    base-url: ${EKYC_BASE_URL}
-    credential-secret-ref: ${EKYC_CREDENTIAL_SECRET_REF}
-    connect-timeout: 2s
-    read-timeout: 10s
+  document-type: NATIONAL_ID_CHIP
+  allowed-channels:
+    - MOBILE_APP
+    - WEB_APP
+  allowed-journeys:
+    - OCR_ONLY
+    - FULL_EKYC
+  session-timeout: 30m
   callback:
-    max-payload-bytes: 2097152
     processing-mode: ASYNC_INBOX
-  decision:
-    default-policy-version: identity-policy-1.0
+    replay-window: 5m
+    encrypted-payload-ttl: 24h
+  reconciliation:
+    initial-delay: 2m
+    interval: 1m
+    max-attempts: 5
+  retry:
+    max-whole-attempts: 3
 ```
 
-- Không đặt secret value trong YAML/ConfigMap.
-- Startup validate production secret refs và critical config.
-- Sensitive threshold/rule không public qua actuator.
-- Consumer policy/config có schema validation và version.
+Configuration nằm trong versioned repository, không chứa secret, có schema
+validation, owner, approval, before/after evidence và rollback.
 
 ### 6.6.2. SDK configuration baseline
 
-| **Nhóm** | **Cấu hình** | **Baseline** | **Owner** |
-| --- | --- | --- | --- |
-| Journey | OCR/FULL eKYC flow | Theo use case + channel policy | Product/Risk |
-| Liveness | Disable/skip | OFF cho FULL_EKYC production | ANBM/Risk |
-| NFC | Retry/mandatory/fallback | Tối đa 3 lần; không silent skip | Product/UX/Risk |
-| Capture | Automatic SDK/manual evidence | SDK automatic capture; VHM manual capture chỉ sau fail-fast | UX/Mobile |
-| Screenshot | Block | ON production nơi SDK hỗ trợ | ANBM |
-| Device | Debug/root/jailbreak/emulator | Detect/block theo channel/env | ANBM/Mobile |
-| Web | Browser allowlist | Versioned compatibility matrix | Web/SDK Team |
-| Guidance | OCR/liveness guide/progress | ON | UX |
-| Result page | Hiển thị trang kết quả SDK | OFF trên SDK Configuration Portal; màn hình sau SDK do VHM Application sở hữu | Product/UX |
-| Session | Timeout | 30 phút, cùng policy version trên backend/SDK | Platform/SDK Team |
-| Callback | Auth/retry/timeout | Strong auth, ack nhanh | Backend/ANBM |
-| Retention | SDK Backend data | Ngắn nhất đáp ứng reconciliation | Privacy/Legal |
+| **Nhóm** | **Baseline** | **Owner** |
+| --- | --- | --- |
+| Channels | Mobile và Web | Product/Client Teams |
+| Journeys | `OCR_ONLY`, `FULL_EKYC` | Product/Risk |
+| Document | `NATIONAL_ID_CHIP`, front/back | Product/SDK Team |
+| Result page | `OFF`; VHM Application sở hữu post-SDK screen | Product/UX |
+| Guidance/progress | `ON` | Product/UX |
+| Liveness | Bắt buộc trong `FULL_EKYC` | Product/Risk/Security |
+| Screenshot/capture security | Block/detect nơi SDK hỗ trợ | Security/Client Teams |
+| Session timeout | 30 phút, đồng bộ backend | Backend/SDK Team |
+| Client compatibility | Mobile/Web/SDK matrix được pin version | Client/SDK Teams |
 
 ### 6.6.3. Change governance
 
-Mọi production change cần:
-
-1. Ticket và owner.
-2. Before/after value.
-3. Mục đích, risk assessment và approver.
-4. SIT/UAT evidence trên Mobile/Web liên quan.
-5. Compatibility/impact analysis.
-6. Rollback value/plan.
-7. KPI/error monitoring sau thay đổi.
+1. Tạo change ticket và mô tả business/security/privacy impact.
+2. Update versioned config/schema/contract fixture.
+3. Review Product/Risk/Architect/Security/Privacy theo loại thay đổi.
+4. Test sandbox/SIT/UAT trên Mobile và Web liên quan.
+5. Canary/controlled rollout và theo dõi metric.
+6. Rollback về config/artifact version trước nếu breach threshold.
+7. Lưu approval, evidence và effective time.
 
 ## 6.7. Observability
 
@@ -1952,315 +1967,263 @@ Mọi production change cần:
 
 | **Metric** | **Type** | **Labels cho phép** |
 | --- | --- | --- |
-| `identity_verification_sessions_total` | Counter | provider, journey, channel, status, domain |
-| `identity_verification_duration_seconds` | Histogram | provider, journey, channel, final_status |
-| `identity_verification_step_total` | Counter | step, outcome, channel |
+| `identity_verification_sessions_total` | Counter | journey, channel, status, domain |
+| `identity_verification_duration_seconds` | Histogram | journey, channel, final_status |
+| `identity_verification_sdk_event_total` | Counter | channel, event, outcome, app_version, sdk_version |
 | `identity_verification_callback_total` | Counter | auth_result, processing_result |
 | `identity_verification_callback_latency_seconds` | Histogram | provider |
 | `identity_verification_callback_duplicate_total` | Counter | provider |
 | `identity_verification_provider_request_total` | Counter | operation, outcome |
 | `identity_verification_provider_latency_seconds` | Histogram | operation |
 | `identity_verification_reconciliation_due` | Gauge | provider |
-| `identity_verification_need_retry_total` | Counter | reason_category, journey, channel |
-| `identity_verification_handoff_total` | Counter | source_channel, outcome |
-| `identity_verification_step_total` | Counter | step_code, status, execution_mode |
-| `identity_verification_step_duration_seconds` | Histogram | step_code, outcome |
-| `identity_verification_step_outbox_due` | Gauge | step_code |
-| `identity_verification_step_retry_total` | Counter | step_code, reason_category |
-| `identity_verification_step_superseded_total` | Counter | step_code |
-| `identity_verification_manual_review_total` | Counter | step_code, status, term |
-| `identity_verification_manual_review_age_seconds` | Histogram | step_code, status |
-| `identity_verification_browser_unsupported_total` | Counter | browser_family, reason |
-| `identity_verification_outbox_pending` | Gauge | event_type |
+| `identity_verification_retry_total` | Counter | journey, channel, reason_category |
 | `identity_verification_inbox_failed` | Gauge | failure_category |
+
+Không dùng verification ID, business/subject reference hoặc PII làm metric label.
 
 ### 6.7.2. Logging
 
-Cho phép: timestamp, service/env/version, trace/correlation, internal verification ID
-theo access policy, operation, canonical error code, provider HTTP status, duration,
-channel, app/browser/SDK version.
-
-Không cho phép: credential/token, raw callback, OCR fields, CCCD, ảnh/video/resource
-URL, consent text đầy đủ, business PII hoặc biometric score gắn với danh tính.
+Log cho phép: timestamp, service/environment/version, internal verification ID theo
+access policy, trace ID, operation, canonical error, provider HTTP status/duration,
+channel và app/SDK version. Không log credential, token, CCCD, normalized fields,
+media, raw callback, resource URL hoặc biometric score gắn với danh tính.
 
 ### 6.7.3. Alerts
 
 | **Alert** | **Trigger** | **Severity** |
 | --- | --- | --- |
-| Callback auth/replay failure | Bất kỳ production hoặc tăng đột biến | Critical/High |
-| Provider auth failure | 401/403 liên tục | Critical |
-| Provider availability | Error rate vượt threshold 5 phút | High |
-| Mapping/schema error | >0 kéo dài/sau provider change | High |
-| Inbox/reconciliation backlog | Oldest age vượt SLA | High |
-| Outbox backlog | Event age vượt SLA | High |
-| Unsupported browser spike | Tăng sau Web deployment | Medium |
-| SDK crash/init error spike | Theo app/sdk/browser version | High/Medium |
-| Handoff conversion drop | So với baseline | Medium |
-| Step outbox backlog | Oldest due age vượt SLA | High |
-| Manual review backlog | Oldest PENDING vượt domain SLA | Medium/High |
-| Superseded step spike | Tăng bất thường theo domain/version | Medium |
-| Liveness/face mismatch spike | Theo journey/channel/version | Security review |
-
----
+| Callback authentication/replay failure | Bất kỳ production hoặc tăng đột biến | Critical/High |
+| Provider authentication failure | 401/403 liên tục | Critical |
+| Provider availability | Error rate vượt threshold trong 5 phút | High |
+| Callback schema/mapping error | Có lỗi kéo dài hoặc sau provider change | High |
+| Callback Inbox backlog | Oldest age vượt SLA | High |
+| Reconciliation backlog | Oldest due age vượt SLA | High |
+| SDK init/crash spike | Tăng theo channel/app/sdk version | High/Medium |
+| Retry/error spike | Vượt journey/channel baseline | Medium/High |
+| DB connection/lock saturation | Vượt infrastructure threshold | High |
 
 # **7. Security**
 
-Yêu cầu tuân thủ tiêu chuẩn ANBM, bảo vệ dữ liệu cá nhân và secure SDLC nội bộ
-hiện hành tại thời điểm phê duyệt.
+> Security và Data Privacy là go-live gate. Tài liệu chỉ xác định baseline kỹ thuật;
+> ANBM, Data Privacy và Legal phải phê duyệt control/evidence tương ứng.
 
 ## 7.1. Security Layers
 
 ### 7.1.1. Infrastructure & Network Security
 
-- Callback đi qua WAF/API Gateway/integration gateway được phê duyệt.
-- Chỉ expose callback/token path cần thiết; deny mặc định path khác.
-- TLS 1.2+, ưu tiên TLS 1.3 khi hai bên hỗ trợ.
-- Identity Platform, DB, Kafka, Object Storage và Secret không public.
-- Network Policy/Security Group theo least privilege.
-- Controlled egress chỉ tới SDK Backend endpoint cần thiết khi khả thi.
-- IP allowlist chỉ là lớp bổ sung, không thay authentication.
-- Rate limit riêng cho create/status/retry/handoff/callback.
-- Request body size, JSON depth, content type và timeout limit.
-- Production data không dùng ở DEV/SIT; dùng synthetic/approved test data.
-- DDoS/bot protection theo risk của hành trình public Web/Mobile.
+- Mobile/Web API và callback ingress đi qua WAF/API Gateway.
+- EKS workload, RDS, Redis và Secret Manager không public.
+- Network policy/security group theo least privilege.
+- Callback route tách rate/body limit với business API.
+- Egress tới SDK Backend theo destination allowlist, TLS và timeout.
+- DDoS/bot protection áp dụng theo risk của hành trình public.
+- Production không cho debug endpoint, directory listing hoặc default credential.
 
 ### 7.1.2. Identity & Access Management
 
 #### Authentication
 
-**User → VHM:**
+| **Luồng** | **Cơ chế** |
+| --- | --- |
+| Mobile/Web → BFF | OIDC/JWT qua VHM Core IAM |
+| BFF/Domain → Platform | Workload identity/JWT hoặc mTLS |
+| SDK Backend → Callback | JWS/JWT bất đối xứng; mTLS bổ sung theo hạ tầng |
+| Platform → SDK Backend | Secret Manager credential/workload identity theo contract |
+| Platform → RDS/Redis/Secrets | Workload role, private network và least privilege |
 
-- OIDC/JWT theo IAM hiện hữu.
-- BFF validate issuer, audience, signature, expiry và token type.
-- Không tin `userId`, `tenantId`, `domain` từ header/body nếu không đối chiếu principal.
-
-**Internal S2S:**
-
-- Workload identity, service JWT hoặc mTLS theo platform standard.
-- Credential riêng theo service/environment; không shared key rộng.
-- Kafka ACL theo producer/consumer group/topic.
-
-**SDK Backend → Callback:**
-
-- JWS/JWT bất đối xứng là cơ chế xác thực bắt buộc; key rotation hỗ trợ overlap.
-- Validate key ID, issuer, audience, expiry, timestamp và nonce/event ID.
-- mTLS là lớp bổ sung khi provider hỗ trợ. Fixed token chỉ được dùng khi có ANBM
-  exception ghi rõ compensating controls, rotation và thời hạn loại bỏ.
-
-**VHM → SDK Backend:**
-
-- Credential lấy từ Secret Manager bằng workload identity.
-- Không đưa API key/app secret xuống Mobile/Web.
-- Rotation hỗ trợ overlap/version để không làm hỏng session active.
+- Validate issuer, audience, expiry, signature, token type và clock skew.
+- Không dùng shared Basic Auth cho internal S2S.
+- Không đưa provider API key/app secret xuống Mobile/Web.
+- Bootstrap token TTL ngắn, bind session/run/journey/channel/environment.
+- Callback key rotation phải overlap old/new key và có rollback runbook.
 
 #### Authorization
 
-| **Role/Service** | Create | Get status | Retry | Scoped fields | Full audit | Config |
-| --- | --- | --- | --- | --- | --- | --- |
-| End User | Qua BFF, own business object | Own only | Policy | UX fields, masked | ❌ | ❌ |
-| Domain Service | Approved use case | Domain scope | Authorized | Approved scopes | Limited | ❌ |
-| Reviewer | ❌ | Assigned cases | Theo quyền | Review-required only | Limited | ❌ |
-| Operation Support | ❌ | Search có reason | Controlled | Masked default | Operational | ❌ |
-| Security Auditor | ❌ | Audit scope | ❌ | Không cần PII mặc định | Read-only | Read baseline |
-| Config Admin | ❌ | ❌ | ❌ | ❌ | Config audit | Dual control |
-| Callback Principal | ❌ | ❌ | ❌ | Chỉ callback write | ❌ | ❌ |
+- Caller phải đúng tenant/domain và có quyền với `businessRef/subjectRef`.
+- BFF không được tin tenant/subject từ body; lấy từ security principal/context.
+- Result/status/history API enforce object-level authorization chống IDOR.
+- Fixed result fields và mask policy áp thống nhất cho caller đã được phê duyệt.
+- Unmask yêu cầu elevated scope, reason và access audit.
+- Ops reprocess/retry cần role riêng và reason; không được sửa official result.
 
 ### 7.1.3. Application Security & Data Protection
 
 #### Zero Trust cho client result
 
-- Mobile/Web `COMPLETED` chỉ báo UX, không phải official result.
-- Không nhận OCR fields/decision do client gửi để apply nghiệp vụ.
-- Official result phải bind đúng provider session/internal session/environment.
-- Late/duplicate/out-of-order result xử lý theo version/timestamp/state guard.
+- Mobile/Web completion chỉ phục vụ UX và không phải official result.
+- Không nhận OCR field, decision, provider score, resource URL hoặc media từ client event.
+- Chỉ callback đã xác thực hoặc Get Result từ Reconciliation Job được finalize session.
+- Client event tới sau terminal chỉ ghi audit và không đảo state.
 
 #### Callback Security
 
-- Authenticate trước khi parse sâu.
+- JWS/JWT, `keyId`, issuer, audience, timestamp, event ID/nonce.
 - Timestamp/replay window và event/payload dedupe.
-- Canonicalize trước khi hash; reject ambiguous duplicate critical JSON keys.
-- Validate external session tồn tại, provider/environment match.
-- Payload lớn hoặc schema critical sai đưa quarantine/alert.
+- Verify signature trước parse sâu; giới hạn body size/depth/content type.
+- Bind provider session, environment và result version với internal mapping.
+- Redact media/resource reference; mã hóa payload tối thiểu trước durable inbox.
+- Auth failure không insert business result và không thay đổi session.
+- Duplicate durable trả 2xx nhưng không finalize lần hai.
 
 #### Mobile Security
 
-- Screenshot blocking nếu SDK/platform hỗ trợ và ANBM phê duyệt.
-- Detect debugger/emulator/root/jailbreak theo environment policy.
-- App hardening/obfuscation theo Mobile standard.
-- Không lưu media vào gallery/cache không mã hóa.
-- Xóa temporary files sau flow.
-- Certificate pinning chỉ khi có rotation/emergency bypass an toàn.
-- Deep link/app link dùng verified domain và one-time token.
+- SDK/package/profile pin version và integrity theo Mobile release process.
+- Camera permission chỉ yêu cầu khi user bắt đầu journey.
+- Bootstrap token chỉ giữ memory; clear khi completion/cancel/expiry.
+- Device-security signal theo approved baseline; không dùng client signal làm identity decision duy nhất.
+- Không log SDK payload, OCR field, token, media reference hoặc biometric score.
+- Result screen của SDK đặt `OFF`; Mobile hiển thị VHM outcome.
+
+#### Web Security
+
+- SDK artifact/origin được allowlist và pin version theo Web release process.
+- Áp CSP, output encoding, dependency integrity và anti-XSS controls theo platform standard.
+- Không lưu bootstrap/result token trong localStorage hoặc storage dài hạn.
+- Refresh/reopen/multi-tab phải query backend status và tuân thủ run lease.
+- Camera permission chỉ yêu cầu trong active journey; frame/media không đi qua VHM backend.
+- CSRF protection áp dụng theo auth model; CORS chỉ cho origin được duyệt.
+- Result screen của SDK đặt `OFF`; Web hiển thị VHM outcome.
 
 #### Transmission & Storage Encryption
 
-- TLS in transit; DB/Object Storage/backup mã hóa at rest bằng KMS.
-- Field-level/application encryption cho normalized identity fields theo classification.
-- HMAC-SHA256 với secret riêng cho exact-match index; không hash plain CCCD.
-- Không log ciphertext/key envelope không cần thiết.
-- Key rotation có version và re-encryption/dual-read plan.
+- TLS cho mọi network flow.
+- RDS, Redis backup và encrypted callback inbox dùng KMS-backed encryption.
+- Sensitive normalized fields dùng application/column-level encryption khi cần.
+- Credential/key ở Secret Manager, không ở repo/image/ConfigMap/log.
+- SDK-flow media không lưu tại VHM.
 
 #### Data Masking
 
-- Document number mask theo role/use case.
-- Họ tên/địa chỉ chỉ trả khi purpose thật sự cần.
-- Support screen mặc định masked; unmask yêu cầu elevated permission, reason và audit.
-- Domain event không chứa PII.
-- Presigned/resource URL không log và TTL ngắn.
+- Document number mask mặc định, ví dụ `******1234`.
+- Họ tên/ngày sinh/địa chỉ mask theo Result API contract và caller purpose.
+- Provider code/warning chỉ trả canonical reason cần cho UX/business.
+- Internal threshold, raw score và provider payload không expose.
+- Support screen chỉ hiển thị dữ liệu tối thiểu và theo object scope.
 
 #### Input/Output Security
 
-- Allowlist enum/length/range; parser limit depth/array size.
-- Không phản chiếu raw provider message/code nhạy cảm ra UI.
-- Không server-side fetch URL do payload cung cấp; Provider Adapter chỉ gọi
-  allowlisted authenticated endpoint đã cấu hình.
-- Nếu tải evidence: allowlist host/scheme, chặn private IP/redirect, size/type limit,
-  malware scan và lưu private.
-- Response projection omit field không có scope, không trả null schema hint.
+- JSON schema, enum/range/length/depth/content-type validation.
+- Reject unknown critical field; optional provider field được bỏ qua an toàn.
+- Output encode theo context; `Cache-Control: no-store` cho sensitive response.
+- Không tự động fetch provider resource URL.
+- File/media upload không thuộc VHM Core Integration contract này.
+- Error response không chứa stack trace, secret, raw payload hoặc PII.
 
 #### Logging & Audit
 
-- Application log kỹ thuật tách khỏi audit log.
-- Audit append-only gồm Who/What/When/Where/Result/Purpose.
-- Audit state transition, result source, policy/config version, handoff, unmask,
-  manual decision, reprocess và secret/config rotation.
-- Không log raw PII, media, token, raw callback hoặc resource URL.
-- Đồng bộ thời gian NTP; log/audit retention theo security policy.
+- Audit create/start/submit/cancel/retry, callback auth/dedupe, state transition,
+  result source, config/policy version, Result API access/unmask và secret rotation.
+- Audit append-only/tamper-evident theo platform standard.
+- Log/APM/analytics/crash report không chứa PII, credential, token, media hoặc raw result.
+- Internal verification ID chỉ được log theo approved access policy.
 
 ### 7.1.4. Governance & Compliance
 
-- Xác định controller/processor role giữa VHM và SDK provider trong DPA.
-- Xác nhận data residency, subprocessor, transfer mechanism và breach notification.
-- DPIA/PIA bắt buộc nếu policy nội bộ yêu cầu cho dữ liệu sinh trắc.
-- Consent tách theo purpose OCR_ONLY/FULL_EKYC nếu mức xử lý khác nhau.
-- Thay flow/liveness/NFC/retention/field scope phải qua governance.
-- Không dùng dữ liệu cho model training, analytics hoặc purpose mới khi chưa có legal basis/consent.
-- Có quy trình quyền chủ thể dữ liệu và xóa dữ liệu ở cả VHM/SDK Backend.
+- Consent phải purpose-bound, versioned và kiểm tra trước create session.
+- DPA/DPIA, data location, subprocessor, retention và deletion evidence là go-live gates.
+- SDK/config/decision/retention thay đổi phải version hóa, approval và rollback.
+- Provider incident/breach notification SLA và contact matrix phải có trong contract/runbook.
+- Không sử dụng OCR/eKYC data ngoài purpose đã consent.
 
 ## **7.2. Data Privacy**
 
 ### 7.2.1. Data inventory
 
-| **Data Type** | **Nguồn** | **Purpose** | **VHM Persist** | **SDK Backend Persist** | **Retention** |
+| **Data** | **Nguồn** | **Purpose** | **VHM persistence** | **Provider** | **Retention** |
 | --- | --- | --- | --- | --- | --- |
-| Session metadata | VHM/SDK Backend | Correlation/operation | Có | Metadata theo contract | Audit/business policy |
-| Consent | VHM | Legal basis/purpose proof | Có/reference | Không cần | Legal policy |
-| OCR normalized fields | Official result | Auto-fill/compare | Approved fields only | Theo provider retention | Theo domain purpose |
-| Raw OCR payload | SDK Backend | Mapping/troubleshoot | Không persist tại VHM | Theo provider | Ngắn nhất có thể |
-| ID images | SDK | OCR/verification | Không persist automatic-flow media tại VHM | Theo provider | Ngắn nhất có thể |
-| NFC raw/DG2 | SDK | Chip verification | Không | Theo provider/contract | Ngắn nhất có thể |
-| Selfie/video/frame | SDK | Liveness/face match | Không persist tại VHM | Theo provider | Ngắn nhất có thể |
-| Liveness/face status | Official result | Decision/audit | Tối thiểu | Theo provider | Verification record policy |
-| Warning/rule hit | Official result | Quality/risk decision | Canonical only | Theo provider | Verification record policy |
-| Resource URL | SDK Backend | Optional evidence | Không dài hạn | Trong provider result | Không log/expire nhanh |
-| Device/browser metadata | Client | Compatibility/fraud | Tối thiểu | SDK-dependent | Ops/security policy |
-| Audit/access log | VHM | Traceability | Có | Portal audit riêng | Security policy |
-| Manual review | VHM | Hậu kiểm/exception | Decision, reason, scoped evidence refs | Không cần | Domain/audit policy |
-| Manual evidence bổ sung | Mobile secure capture | Hoàn thiện bộ evidence sau automatic fail-fast | Private Object Storage, object key mã hóa; không DB binary | Không gửi provider | TTL ngắn theo review purpose; purge sau resolve/expiry |
-| Step execution/outbox | VHM | Durable pipeline/retry | Metadata, snapshot, errors đã mask | Không | Operational retention |
+| Business/subject opaque ref | Domain | Correlation/authorization | Có | External ref nếu cần | Business/audit policy |
+| Consent ref/version/time | Consent/Domain | Legal basis/audit | Có | Theo contract | Legal/privacy policy |
+| Document fields | SDK Backend | OCR/autofill/verification | Fixed fields, encrypted/masked | Có xử lý | Purpose-bound |
+| Document image front/back | SDK | OCR/verification | Không | Có xử lý | Provider contract, ngắn nhất |
+| Selfie/video/frame | SDK | Liveness/face matching | Không | Có xử lý | Provider contract, ngắn nhất |
+| Liveness/face status | SDK Backend | Identity decision | Canonical status tối thiểu | Có xử lý | Purpose/audit policy |
+| Provider session/event refs | SDK Backend | Correlation/dedupe | Có | Có | Operational retention |
+| Callback payload | SDK Backend | Async normalization | Encrypted inbox TTL ngắn; purge sau processing | N/A | Operational minimum |
+| App/SDK/channel metadata | Client | Compatibility/operations | Tối thiểu | SDK-dependent | Ops/security policy |
+| Audit/history | VHM | Traceability/compliance | Có | Không cần | Audit policy |
 
 ### 7.2.2. Data lifecycle
 
 ```mermaid
-flowchart TD
-    CONSENT["Consent"] --> SESSION["Create session metadata"]
-    SESSION --> COLLECT["SDK collects document/biometric data"]
-    COLLECT --> PROCESS["SDK Backend processes"]
-    PROCESS --> RESULT["VHM receives official result"]
-    RESULT --> NORMALIZE["Normalize + minimize + encrypt"]
-    NORMALIZE --> MISSING{"Fail-fast còn thiếu review evidence?"}
-    MISSING -->|Có| CAPTURE["Secure capture"]
-    CAPTURE --> STORAGE["Short-lived object storage"]
-    STORAGE --> DOMAIN["Domain consumes approved result"]
-    MISSING -->|Không| DOMAIN
-    DOMAIN --> DELETE["Delete temporary/raw data"]
-    DELETE --> RETAIN["Retain approved business/audit record"]
-    RETAIN --> END["Archive/anonymize/delete<br/>at end of retention"]
+flowchart LR
+    CONSENT["Consent"] --> CREATE["Create verification session"]
+    CREATE --> SDK["Mobile/Web SDK capture"]
+    SDK --> BACKEND["SDK Backend processing"]
+    BACKEND --> CALLBACK["Authenticated callback"]
+    CALLBACK --> INBOX["Encrypted Callback Inbox<br/>TTL"]
+    INBOX --> RESULT["Canonical Result<br/>fixed fields"]
+    RESULT --> API["Authorized Result API<br/>masked by default"]
+    API --> DOMAIN["Approved Domain use"]
+    INBOX --> PURGE["Purge after processing/TTL"]
+    RESULT --> RETENTION["Purpose-bound retention/deletion"]
 ```
+
+- Media SDK flow không đi qua hoặc lưu tại VHM backend.
+- Provider retention phải đủ cho reconciliation nhưng ngắn nhất theo contract.
+- Callback payload chỉ lưu mã hóa tạm thời để async process.
+- Canonical sensitive field chỉ lưu nếu nằm trong fixed approved result set.
 
 ### 7.2.3. Retention principles
 
-- SDK Backend retention đủ cho callback recovery nhưng ngắn nhất có thể.
-- VHM không lưu raw payload/media của automatic SDK flow.
-- Manual evidence là ngoại lệ có purpose rõ ràng: chỉ thu đúng loại còn thiếu, mã hóa,
-  TTL ngắn, xóa sau review/expiry và lưu deletion audit; không tái sử dụng cho purpose khác.
-- Normalized field retention theo purpose/domain record và có expiry bắt buộc.
-- Session metadata/check/audit có retention riêng, không đồng nhất với identity field.
-- Quarantine raw payload bị tắt trong vận hành bình thường. Chỉ incident ticket đã
-  phê duyệt mới được bật tạm thời với encryption, TTL rất ngắn và audited access.
-- Backup expiry phải bảo đảm dữ liệu đã hết retention không tồn tại vô thời hạn.
-
-Giá trị ngày cụ thể là **TBD**, cần PO/Data Privacy/Legal/System Owner phê duyệt.
+- Session/history retention theo approved business/audit purpose.
+- Canonical sensitive fields có retention ngắn nhất theo Domain purpose.
+- Callback inbox encrypted payload purge sớm sau processing; metadata/hash theo operational TTL.
+- Provider result/media retention theo DPA, reconciliation window và deletion SLA.
+- Backup retention không được làm dữ liệu sống lại ngoài policy; deletion có tombstone/evidence.
+- Không kéo dài retention chỉ vì mục đích debug/analytics.
 
 ### 7.2.4. Data subject request
 
-Runbook phải bao gồm:
-
-1. Tiếp nhận và xác minh chủ thể.
-2. Tìm verification chain theo internal/business references an toàn.
-3. Tổng hợp dữ liệu VHM đang giữ.
-4. Gửi yêu cầu provider export/delete nếu dữ liệu còn retention.
-5. Kiểm tra legal hold/nghĩa vụ lưu trữ.
-6. Export định dạng mã hóa/watermark/TTL.
-7. Xóa/anonymize và ghi audit đầy đủ.
+- Xác minh requester và scope trước export/delete.
+- Tìm theo opaque subject mapping qua authorized Domain contract.
+- Export chỉ field được phép, đã mask theo legal/privacy rule.
+- Delete/anonymize session/result theo retention/legal hold và ghi audit.
+- Gửi provider deletion request khi contract/purpose yêu cầu.
+- Backup deletion xử lý theo backup expiry/tombstone policy đã phê duyệt.
 
 ### 7.2.5. Access controls
 
-- Production DB không phải công cụ tra cứu PII cho Support.
-- Evidence/normalized field truy cập qua API có authorization/masking/audit.
-- Break-glass access có approval, TTL và post-review.
-- Export có encryption, watermark, expiry và download audit.
-- Không chia sẻ production sample qua chat/ticket/email không được phê duyệt.
+- Service access theo least privilege và business-object scope.
+- DBA không mặc định đọc plaintext sensitive fields.
+- Unmask và bulk export cần elevated role, reason, approval/audit theo policy.
+- Production support không được xem raw callback/media.
+- Periodic access review và key/secret rotation evidence bắt buộc.
 
 ## 7.3. Threat Model
 
-| **Threat** | **Kịch bản** | **Mitigation** |
+| **Threat** | **Vector** | **Mitigation** |
 | --- | --- | --- |
-| Client giả VERIFIED | App/Web bị sửa gửi result giả | Server-to-server official result only |
-| Lộ credential | Secret trong mobile/web/repo/log | Secret Manager; bootstrap short-lived; scanning/rotation |
-| Callback giả | Attacker gọi callback | Strong auth, WAF, timestamp, correlation |
-| Replay callback | Payload hợp lệ gửi nhiều lần | Inbox dedupe, replay window, terminal guard |
-| IDOR | User A đọc session user B | Object authorization, tenant/domain binding |
-| Handoff theft/replay | QR/token bị chụp và claim | TTL, one-time, subject binding, atomic consume |
-| XSS lấy Web token/camera flow | Script độc hại trên Web | CSP, output encoding, dependency security, no long-lived storage |
-| Clickjacking | Nhúng eKYC page vào iframe độc hại | CSP frame-ancestors/X-Frame-Options |
-| Open redirect/deep link abuse | Handoff chuyển sang app/site giả | Allowlist verified links, opaque token |
-| Multi-tab race | Hai tab start cùng session | Run lease/nonce + server guard |
-| Stale async step | Task cũ apply lên giấy tờ mới | Identity-version snapshot guard + SKIPPED |
-| Review privilege abuse | Reviewer ngoài scope approve/reject | Data scope, assignment, reason, audit, maker-checker |
-| Config race | Task dùng retry/term mới ngoài dự kiến | Snapshot config/version at enqueue |
-| PII trong log/APM | DTO/raw callback bị log | Log filter, DTO toString control, PII scan tests |
-| SSRF resource URL | Backend fetch URL attacker kiểm soát | No auto fetch; host/IP/redirect controls |
-| JSON bomb/oversize | Callback làm cạn CPU/memory | WAF/body/depth/timeout limits |
-| Provider schema drift | Type/field đổi hàng loạt | Tolerant parser, contract monitor, quarantine/alert |
-| Insider access | Support unmask không cần thiết | RBAC, reason, audit, dual control |
-| Compromised device | Root/debugger/emulator | SDK checks, app hardening, server policy |
-| Config drift | Flow/retention bị đổi ngoài change process | Baseline, change audit, periodic reconciliation |
-| Over-retention | Media/PII giữ quá purpose | Lifecycle, deletion verification, DPIA |
+| Client giả kết quả | Mobile/Web bị sửa gửi result giả | Server-to-server official result only |
+| Lộ credential | Secret trong client/repo/log | Secret Manager, short-lived bootstrap, scanning/rotation |
+| Callback spoof | Gọi public callback giả | JWS/JWT, audience, key rotation, WAF |
+| Callback replay/duplicate | Gửi lại event/result | Timestamp, nonce/event dedupe, unique inbox |
+| IDOR/cross-tenant | Đổi verificationId/businessRef | Object/tenant/domain authorization |
+| Web XSS lấy token | Script độc hại | CSP, encoding, dependency security, memory-only token |
+| Multi-tab/run race | Hai client run cho một session | Server-issued runId, lease, idempotency, state guard |
+| Mobile tamper | Modified client/device | SDK integrity/security signal; server official result |
+| PII leakage | Log/APM/analytics/crash report | Redaction, allowlist logging, DLP/PII scan |
+| Media leakage | Client/backend lưu media ngoài scope | Direct SDK data-plane, no VHM media persistence |
+| Provider compromise | Payload/resource độc hại | Schema validation, no URL fetch, fixed mapping, incident runbook |
+| Insider unmask | Lạm dụng quyền support | Elevated scope, reason, access audit, periodic review |
+| DB restore duplicate | Inbox/result xử lý lại | Unique keys, terminal guard, idempotent worker |
+| Dependency outage | Provider/DB unavailable | Circuit breaker, reconciliation, Multi-AZ, backup/recovery |
 
 ## 7.4. Security Test Cases tối thiểu
 
-- Callback thiếu/sai/hết hạn credential hoặc signature.
-- Callback replay cùng event/payload và cùng external session payload khác.
-- Callback external session không tồn tại hoặc thuộc environment khác.
-- JSON quá size/depth, duplicate critical keys, invalid numeric/boolean/date.
-- API create/get/retry IDOR và tenant/domain spoofing.
-- Concurrent create/retry bypass attempt limit.
-- Multi-tab Web start conflict và stale lease.
-- Web XSS/CSP/clickjacking/CSRF theo auth model.
-- Handoff expired, reused, wrong subject, open redirect/deep link spoof.
-- Mobile root/jailbreak/emulator/debugger và screenshot behavior.
-- SDK token/credential scan trong mobile binary, JS bundle, source map và logs.
-- PII scan log/APM/browser analytics/crash report.
-- Resource URL SSRF/private IP/redirect/oversize/malware.
-- Key/credential rotation khi có active sessions.
-- Outbox/inbox duplicate/replay và DB restore behavior.
-- Identity-version superseded step không apply result.
-- After-commit dispatch mất nhưng scheduler vẫn xử lý outbox.
-- `ANY/STRICT` manual-review fan-out và concurrent resolve.
-- Unauthorized reviewer/org scope và terminal override controls.
-
----
+- Callback invalid signature, issuer, audience, key ID, timestamp và replay.
+- Duplicate/out-of-order callback và cùng event ID khác payload.
+- Callback body quá size/depth, wrong content type và malicious resource URL.
+- Cross-tenant/domain/business-object create/status/result/retry access.
+- Client gửi OCR fields/decision/score/media/token trong submitted/error event.
+- Concurrent create/run/retry và stale client event.
+- Mobile token persistence, telemetry leakage và SDK integrity evidence.
+- Web XSS/CSP/CSRF/CORS, storage leakage và multi-tab run conflict.
+- Result API mask/unmask, cache-control và access audit.
+- PII/secret scan repo/image/ConfigMap/log/APM/analytics/crash report.
+- Callback inbox encryption, TTL, purge và backup behavior.
+- Key/secret rotation overlap và revoked-key rejection.
+- DB/provider outage, callback lost và worker restart.
+- Restore test không finalize terminal result lần hai.
 
 # **8. Backup & Recovery**
 
@@ -2268,232 +2231,206 @@ Runbook phải bao gồm:
 
 Backup:
 
-- `identity_verification`.
-- `identity_verification_check`.
-- `verified_identity_field` trong thời hạn retention.
-- `verification_callback_inbox` metadata.
-- `identity_verification_step`.
-- `identity_verification_step_outbox` chưa hết operational retention.
-- `identity_verification_manual_review`.
-- `identity_verification_history`.
-- `identity_verification_outbox` chưa hết retention.
-- Consent reference/data tại hệ thống sở hữu.
-- Optional evidence được phê duyệt.
-- Configuration repository, policy versions và deployment manifests.
+- `identity_verification` và retry links.
+- Verification run, checks, fixed normalized fields và Canonical Result.
+- Callback inbox metadata/encrypted payload còn trong TTL.
+- State/access history và reconciliation schedule.
+- Versioned non-secret configuration/policy metadata.
+- Secret/key references và rotation metadata theo Secret Manager/KMS strategy.
 
-Không backup như business data:
+Không backup như business source:
 
-- SDK bootstrap/access token.
-- Presigned/resource URL.
-- Secret plaintext.
-- Temporary Mobile/Web/SDK cache.
-- Raw/quarantine payload đã hết TTL.
+- Mobile/Web/SDK cache.
+- Redis ephemeral rate-limit/replay entries.
+- Bootstrap/access token.
+- Document image, selfie, video/frame liveness của SDK flow.
+- Raw provider payload ngoài encrypted Callback Inbox TTL.
 
 ## 8.2. Backup strategy
 
-- PostgreSQL automated backup + PITR theo platform standard.
-- Multi-AZ phục vụ availability, không thay backup.
-- Backup mã hóa bằng KMS; key access tách biệt.
-- Object Storage lifecycle/versioning phù hợp retention và quyền xóa.
-- Cross-region DR theo Tier/SLA được phê duyệt.
-- Restore test định kỳ, không chỉ kiểm tra backup job thành công.
-- Secret khôi phục qua Secret Manager/PKI, không export plaintext vào DB backup.
+- RDS Multi-AZ, automated backup và PITR.
+- Backup encryption bằng KMS và access role riêng.
+- Cross-account/cross-region copy theo VHM DR policy nếu được phê duyệt.
+- Retention backup phù hợp Data Privacy; không giữ sensitive data vô hạn.
+- Restore test định kỳ trên isolated environment với masked/synthetic validation.
+- Config versioned repository và immutable artifact registry là nguồn phục hồi deployment.
+- Secret/key recovery theo Secrets Manager/KMS runbook; không export plaintext key.
 
 ## 8.3. Recovery Flow
 
 ```mermaid
 sequenceDiagram
-    participant Operation
-    participant BACKUP as DB Backup / PITR
-    participant DB as Restored DB
-    participant IV as Identity Platform
-    participant PROVIDER as SDK Backend
-    participant OUTBOX as Outbox Worker
-    Operation->>BACKUP: Select approved restore point
-    BACKUP->>DB: Restore / PITR
-    Operation->>IV: Deploy / connect restored environment
-    IV->>DB: Validate schema / constraints / integrity
-    IV->>DB: Find non-terminal sessions
-    loop Eligible session within provider retention
-        IV->>PROVIDER: Get official result
-        PROVIDER-->>IV: Final / pending / not found
-        IV->>DB: Reconcile idempotently
-    end
-    OUTBOX->>DB: Resume unpublished events
-    OUTBOX->>OUTBOX: Publish with event idempotency
-    Operation->>Operation: Domain reconciliation + evidence
+    participant OPS as Operations
+    participant RDS as RDS Backup/PITR
+    participant DB as Restored PostgreSQL
+    participant API as Verification API
+    participant INBOX as Inbox Worker
+    participant RECON as Reconciliation Worker
+    participant BACKEND as SDK Backend
+    OPS->>RDS: Chọn restore point đã phê duyệt
+    RDS->>DB: Restore isolated instance
+    OPS->>DB: Validate schema/index/constraint/data integrity
+    OPS->>API: Deploy approved artifact/config + bind secrets
+    OPS->>API: Smoke test auth/create/status/result
+    OPS->>INBOX: Resume pending/failed inbox bounded
+    INBOX->>DB: Process idempotently
+    OPS->>RECON: Resume due non-terminal sessions
+    RECON->>BACKEND: Get Result trong provider retention window
+    RECON->>DB: Finalize idempotently
+    OPS->>OPS: Verify dashboards/alerts and close recovery
 ```
+
+Trong recovery có thể tạm dừng create session trong khi callback ingress/inbox và
+reconciliation tiếp tục để bảo toàn result đang bay.
 
 ## 8.4. RTO & RPO
 
-| **Chỉ số** | **Baseline** | **Ghi chú** |
+| **Hạng mục** | **Baseline** | **Ghi chú** |
 | --- | --- | --- |
-| RTO | <= 4 giờ | Tier 2 baseline; System Owner phê duyệt |
-| RPO | <= 15 phút/PITR | Session/result nhạy với mất dữ liệu |
-| Provider result recovery | Trong provider retention window | Retention phải lớn hơn recovery/reconcile window |
-| Event recovery | Outbox + consumer idempotency | Không mất/nhân đôi side effect |
-| Configuration recovery | Versioned repo + approved baseline | Bao gồm Mobile/Web SDK compatibility |
+| RTO | `<= 4 giờ` | Bao gồm DB restore, service deploy, validation và worker resume |
+| RPO | `<= 15 phút` | Theo PITR/backup configuration được Ops phê duyệt |
+| Provider result recovery | Trong provider retention window | Get Result chỉ qua Reconciliation Job |
+| Configuration recovery | Versioned repository + approved baseline | Bao gồm Mobile/Web SDK compatibility |
+| Secret/key recovery | Secrets Manager/KMS runbook | Rotation/revocation evidence bắt buộc |
+
+RTO/RPO cuối cùng phải được System Owner và Operations xác nhận bằng restore drill.
 
 ## 8.5. Recovery verification checklist
 
-- DB schema/version/index/constraint đúng.
-- Encryption/secret/key version đúng environment.
-- Callback route/auth hoạt động.
-- Create session có thể vẫn bị disable trong khi recovery.
-- Non-terminal sessions được reconcile bounded.
-- Terminal event không publish trùng.
-- Outbox/inbox backlog giảm theo SLA.
-- Domain state và verification state được đối soát.
-- Handoff token cũ/hết hạn không sống lại sau restore.
-- Retention/deletion jobs được resume đúng.
+- Schema/version/index/constraint đúng.
+- Callback route/auth/key hoạt động.
+- Create/status/result authorization và masking hoạt động.
+- Có thể dừng create trong khi callback/reconciliation vẫn chạy.
+- Pending/failed inbox được xử lý bounded và không finalize trùng.
+- Non-terminal session được reconcile trong provider retention window.
+- Terminal state không bị đảo bởi callback/client event trễ.
+- Retry chain, idempotency và active-session constraint còn đúng.
+- Callback encrypted payload TTL/purge job resume đúng.
+- Dashboard/alerts/incident routing hoạt động.
 - Restore log không chứa PII/secret.
-
----
+- Data retention/deletion job tiếp tục đúng policy.
+- Đạt RTO/RPO trong evidence của restore drill.
 
 # **Glossary**
 
-| **Term** | **Definition** |
+| **Thuật ngữ** | **Định nghĩa** |
 | --- | --- |
-| OCR | Optical Character Recognition - trích xuất dữ liệu từ ảnh giấy tờ. |
-| eKYC | Electronic Know Your Customer - xác minh danh tính điện tử. |
-| OCR_ONLY | Journey đọc giấy tờ, không xác minh người thao tác là chủ giấy tờ. |
-| FULL_EKYC | Journey gồm document verification, liveness và face matching; NFC tùy policy. |
-| Liveness | Kiểm tra người thực hiện là người thật đang hiện diện. |
-| Face Matching | So khớp khuôn mặt người thao tác với ảnh giấy tờ/NFC. |
-| NFC | Near Field Communication - đọc chip giấy tờ trên thiết bị hỗ trợ. |
-| Verification ID | Correlation ID nội bộ do VHM sinh cho một attempt xác minh. |
-| Provider Session ID | External reference của SDK Backend. |
-| Canonical Result | Mô hình kết quả chuẩn nội bộ, không phụ thuộc SDK/provider. |
-| Provider Adapter | Lớp cô lập SDK API/auth/payload/error. |
-| Business Reference | Opaque ID của aggregate/giao dịch do Domain System sở hữu. |
-| Subject Reference | Opaque ID của chủ thể cần xác minh trong business context. |
-| Result Projection | Cơ chế chỉ trả field domain được cấp scope. |
-| Reconciliation | Cơ chế fallback chủ động gọi Get Result khi callback quá SLA hoặc session treo; không phải happy path. |
-| Callback Inbox | Durable record chống trùng và hỗ trợ reprocess callback. |
-| Transactional Outbox | Lưu event cùng DB transaction rồi publish async. |
-| Handoff | Chuyển journey giữa Web và Mobile bằng token one-time có binding. |
-| Decision Policy | Rule versioned ánh xạ canonical checks thành quyết định VHM. |
-| Verification Pipeline | Chuỗi step có thứ tự được resolve theo domain/use case/journey. |
-| Step Outbox | Durable work item để xử lý verification step bất đồng bộ. |
-| Identity Version | Version của bộ giấy tờ/chủ thể dùng để loại task superseded. |
-| Sub-step Term | `ANY/STRICT` xác định phạm vi fan-out manual review khi step fail. |
-| Manual Review | Hậu kiểm có assignment, evidence, decision, reason và audit. |
-| PII | Dữ liệu định danh cá nhân. |
-| Data Minimization | Chỉ xử lý/lưu dữ liệu tối thiểu cho purpose xác định. |
+| OCR | Optical Character Recognition - đọc và chuẩn hóa dữ liệu từ ảnh giấy tờ. |
+| eKYC | Xác minh danh tính điện tử bằng document verification, liveness và face matching. |
+| OCR_ONLY | Journey chỉ đọc front/back; kết thúc `COMPLETED`, `ekycOutcome=NOT_PERFORMED`. |
+| FULL_EKYC | Journey OCR front/back → liveness → face matching; pass mới thành `VERIFIED`. |
+| VHM Application | Ứng dụng Mobile và Web của VHM tích hợp eKYC SDK. |
+| eKYC SDK | SDK chạy trên Mobile/Web để điều khiển capture và gửi data-plane tới SDK Backend. |
+| SDK Backend | Hệ thống xử lý OCR, liveness và face matching; gửi callback/cung cấp Get Result. |
+| Identity Verification Platform | Backend VHM quản lý session, callback, result, retry và reconciliation. |
+| Domain System | Hệ thống nghiệp vụ được phê duyệt tạo session và sử dụng Canonical Result. |
+| Provider Adapter | Lớp cô lập API/auth/payload/error của SDK Backend khỏi VHM contract. |
+| Official Result | Kết quả server-to-server từ callback đã xác thực hoặc Get Result qua reconciliation. |
+| Canonical Result | Mô hình kết quả chuẩn VHM, không phụ thuộc raw provider payload. |
+| Callback Inbox | Bảng durable receive/dedupe, lưu payload tối thiểu đã mã hóa theo TTL. |
+| Reconciliation | Job khôi phục callback quá SLA hoặc session treo bằng Provider Get Result. |
+| Whole-attempt Retry | Tạo verification/provider session mới; không tái sử dụng result/media của attempt trước. |
+| Idempotency Key | Khóa chống tạo trùng khi request được gửi lại. |
+| Replay Guard | Timestamp + event ID/nonce ngăn callback bị phát lại. |
+| Fixed Result Fields | Bộ field Canonical Result cố định đã được Product/Privacy phê duyệt. |
+| Terminal State | `COMPLETED`, `VERIFIED`, `REJECTED`, `NEED_RETRY`, `PROVIDER_ERROR`, `CANCELLED`, `EXPIRED`. |
 
 ---
 
 # **Appendix A. External Inputs & Confirmations**
 
-Các mục dưới đây không phải lựa chọn kiến trúc. Đây là input bắt buộc từ owner tương
-ứng để cấu hình, kiểm thử và phê duyệt production theo baseline đã quyết định trong TDD.
+> Các mục dưới đây là input/evidence bắt buộc để hoàn tất implementation và
+> approval. Đây không phải lựa chọn kiến trúc còn để ngỏ; thiếu input tương ứng thì
+> không được qua gate được ghi trong cột cuối.
 
 ## A.1. Business & Scope Inputs
 
-| **Input bắt buộc** | **Owner** | **Gate** |
+| **Input cần xác nhận** | **Owner** | **Gate/Deadline** |
 | --- | --- | --- |
-| Danh sách domain/use case được phê duyệt và owner của từng use case | Product/System Owner | Trước implementation scope freeze |
-| Journey `OCR_ONLY/FULL_EKYC`, enforcement và channel cho từng use case | Product/Risk | Trước config baseline |
-| Subject types: customer, partner, employee, legal representative hoặc related party | Product/Domain | Trước API mapping |
-| Document types được phép theo domain/use case | Product/Risk | Trước SDK flow config |
-| NFC requirement theo use case/channel | Risk/Product | Trước UAT |
-| Attempt quota theo subject/business/day/device | Product/Risk | Trước performance/security test |
-| Manual review owner, UI, assignment scope, SLA và escalation | Operations/Product | Trước manual-review UAT |
-| Incident bypass policy, approver, expiry và audit; mặc định không bypass | System Owner/ANBM | Trước go-live |
-| Field projection scope và retention theo domain/purpose | Data Privacy/Domain | Trước result API UAT |
-| Use case khởi chạy async và use case chờ user start SDK | Product/Domain | Trước pipeline config |
-| Step sequence, active flag, sub-step mode và term theo use case | Product/Risk/Architect | Trước config baseline |
-| Domain hook cần identity lock/notification tại từng outcome | Domain Owner | Trước event integration test |
+| Domain/use case/business object được phép tạo session | Product/Domain Owner | Trước API contract sign-off |
+| Hai journey `OCR_ONLY`, `FULL_EKYC` và channel áp dụng | Product/Risk | Trước SDK profile configuration |
+| Document type `NATIONAL_ID_CHIP`, front/back và validation rules | Product/Risk/SDK Team | Trước OCR integration test |
+| Fixed result field set và masking cho Domain System | Product/Domain/Data Privacy | Trước Result API contract test |
+| Consent text/version/purpose/withdrawal behavior | Product/Legal/Data Privacy | Trước UAT |
+| Fixed decision mapping, threshold và reason code UX | Product/Risk/Architect | Trước decision contract test |
+| Whole-attempt retry cap, user message và support action | Product/Risk/Ops | Trước failure-path UAT |
+| Business owner chịu trách nhiệm sử dụng result | Domain Owner | Trước production readiness |
 
 ## A.2. Mobile & Web SDK Inputs
 
-| **Input bắt buộc** | **Owner** | **Gate** |
+| **Input cần xác nhận** | **Owner** | **Gate/Deadline** |
 | --- | --- | --- |
-| Mobile framework/platform và SDK package/version | Mobile/SDK Team | Trước integration build |
-| Web framework, browser allowlist và Web SDK package/version | Web/SDK Team | Trước integration build |
-| SDK license, distribution rule và private artifact repository | Procurement/SDK Team | Trước CI/CD |
-| Camera/webcam requirement và permission behavior theo SDK version | SDK Team | Trước UX implementation |
-| NFC capability matrix theo device/OS | Mobile/SDK Team | Trước device test matrix |
-| Client callback/error catalogue và PII classification từng field | SDK Team/Data Privacy | Trước adapter/logging implementation |
-| Resume behavior sau force-close, refresh, tab close và browser crash | SDK Team | Trước lifecycle implementation |
-| SDK cache, analytics và crash-log behavior | SDK Team/ANBM | Trước security approval |
-| Accessibility, localization, branding và device-security behavior | Mobile/Web/Product | Trước UAT |
-| Web iframe/script/connect origins | SDK Team/Web/ANBM | Trước CSP baseline |
-| Handoff UX, universal/app-link domain và association files | Mobile/Web Team | Trước handoff E2E test |
-| Profile SDK Configuration Portal theo environment/channel; trang kết quả SDK đặt `OFF` | Product/SDK Team | Trước Mobile/Web UAT |
-| Completion/close event vẫn được SDK phát khi trang kết quả đặt `OFF` | SDK Team | Trước client submitted integration test |
+| SDK package/version cho Mobile và Web | SDK/Client Teams | Trước integration build |
+| Mobile/Web client compatibility matrix | SDK/Client Teams | Trước build/UAT |
+| Camera permission, capture UX và quality guidance | SDK/Product/UX | Trước journey UAT |
+| Front/back gửi cùng call hay lần lượt; fail-fast semantics | SDK Technical Team | Trước two-side implementation |
+| Completion/close/error event và payload contract | SDK Technical Team | Trước client lifecycle integration |
+| Result page `OFF` nhưng completion/close event vẫn phát | SDK Technical Team | Trước submitted integration test |
+| Liveness/face behavior trong `FULL_EKYC` | SDK/Product/Risk | Trước FULL_EKYC E2E |
+| Mobile background/force-close/reopen behavior | Mobile/SDK Team | Trước lifecycle test |
+| Web refresh/reopen/multi-tab behavior | Web/SDK Team | Trước lifecycle test |
+| Branding, localization, accessibility và security behavior | Product/UX/Client Teams | Trước UAT |
 
 ## A.3. SDK Backend Integration Inputs
 
-| **Input bắt buộc** | **Owner** | **Gate** |
+| **Input cần xác nhận** | **Owner** | **Gate/Deadline** |
 | --- | --- | --- |
-| Chính thức create-session, Get Result reconciliation và cancel contracts | SDK Backend Team | Trước Provider Adapter implementation |
-| Callback JWS/JWT fields, key distribution, event ID, result version và timestamp | SDK Backend/ANBM | Trước callback implementation |
-| Callback acknowledgement, retry, timeout và ordering semantics | SDK Backend Team | Trước inbox/load test |
-| Rate limit/quota từng operation | SDK Backend Team | Trước resilience/capacity config |
-| Callback/result API SLA và incident escalation | Vendor Management/Ops | Trước go-live |
-| Error/warning catalogue, versioning và change-notification process | SDK Backend Team | Trước normalization contract test |
-| Data location, subprocessors, retention và deletion evidence | Provider/Data Privacy | Trước privacy approval |
-| Encryption, key ownership và rotation procedure | Provider/ANBM | Trước security approval |
-| Resource-reference authentication, TTL và host allowlist | SDK Backend/ANBM | Trước adapter security test |
-| Staging fixtures, document samples và fraud/failure scenarios | SDK Backend/QA | Trước SIT/UAT |
+| Create-session API/auth/error contract | SDK Backend/Backend Team | Trước Provider Adapter build |
+| Callback JWS/JWT fields, key distribution, event ID/version/timestamp | SDK Backend/ANBM | Trước callback implementation |
+| Callback retry/backoff/ordering/duplicate semantics | SDK Backend/Backend Team | Trước callback contract test |
+| Get Result final/pending/not-found/error/quota contract | SDK Backend/Ops | Trước reconciliation test |
+| Provider result retention window | SDK Backend/Data Privacy | Trước recovery sign-off |
+| Canonical mapping fixtures cho success/failure/quality/technical errors | SDK Backend/QA | Trước contract test |
+| Staging credentials/endpoints/allowlist và certificate chain | SDK Backend/DevOps/ANBM | Trước SIT |
+| SLA, maintenance, incident contacts và escalation | SDK Backend/Ops | Trước production readiness |
 
 ## A.4. Security & Privacy Inputs
 
-| **Input bắt buộc** | **Owner** | **Gate** |
+| **Input cần xác nhận** | **Owner** | **Gate/Deadline** |
 | --- | --- | --- |
-| Data classification cho từng biometric-related field | Data Privacy/ANBM | Trước schema approval |
-| Consent text, version và legal basis cho từng journey/purpose | Legal/Product | Trước UAT |
-| Provider retention và VHM retention theo domain | Data Privacy/System Owner | Trước production config |
-| Manual evidence TTL và approved use cases | Data Privacy/ANBM/Product | Trước manual evidence UAT |
-| Field-encryption/keyed-hash key owner và rotation | ANBM/Platform | Trước production deployment |
-| Audit retention, unmask role và break-glass workflow | ANBM/Audit | Trước operations UAT |
-| DPIA/DPA, data residency và subprocessors approval | Data Privacy/Legal | Go-live blocker |
-| Provider data-subject export/delete API and runbook | Provider/Data Privacy | Go-live blocker |
+| DPA/DPIA, data location và subprocessor list | Data Privacy/Legal | Go-live blocker |
+| Consent lawful basis và approved purpose | Data Privacy/Legal/Product | Trước UAT |
+| Provider media/result retention và deletion SLA/evidence | Data Privacy/Legal/SDK Backend | Go-live blocker |
+| Callback authentication/replay/key-rotation baseline | ANBM/SDK Backend | Trước security test |
+| Fixed field encryption/masking/unmask access | ANBM/Data Privacy/Domain | Trước Result API UAT |
+| Log/APM/analytics/crash-report data allowlist | ANBM/Data Privacy/Ops | Trước SIT |
+| Mobile/Web security baseline và SDK integrity evidence | ANBM/Client Teams | Trước security sign-off |
+| Data-subject export/delete và provider coordination | Data Privacy/Domain/SDK Backend | Trước go-live |
 
 ## A.5. NFR & Operations Inputs
 
-| **Input bắt buộc** | **Owner** | **Gate** |
+| **Input cần xác nhận** | **Owner** | **Gate/Deadline** |
 | --- | --- | --- |
-| Volume/ngày và peak TPS theo channel/domain | Product/Capacity | Trước load test |
-| SDK Backend SLA dùng cho dependency SLO/error budget | Vendor Management/Ops | Trước SLO dashboard |
-| Callback payload p50/p95/max và burst pattern | SDK Backend Team | Trước callback load test |
-| Dashboard, alert và runbook owner | Operations | Trước production readiness review |
-| Reconciliation interval phù hợp provider quota/retention | Backend/Ops | Trước resilience test |
-| Cost model và abuse-control thresholds | Product/FinOps/Risk | Trước quota config |
-| Step-outbox retry cap, backoff và processing SLA theo step | Architect/Ops/Product | Trước pipeline config |
-| Manual-review queue capacity, assignment, SLA và escalation | Operations/Product | Trước manual-review UAT |
-| `RE_RUN` maker-checker roles và reason catalogue | Risk/Operations | Trước reviewer UAT |
+| Daily volume, peak create/status/result TPS | Product/Ops | Trước capacity test |
+| Callback burst TPS/payload size và provider quota | SDK Backend/Ops | Trước load test |
+| p95/p99 target theo interface và availability SLA | System Owner/Ops | Trước NFR sign-off |
+| Reconciliation delay/interval/batch/max attempts | Architect/Ops/SDK Backend | Trước recovery test |
+| Callback inbox TTL/purge và operational retention | Ops/Data Privacy | Trước DB migration sign-off |
+| RTO/RPO, PITR, restore frequency và DR owner | System Owner/Ops | Trước production readiness |
+| Dashboard/alert threshold, routing và on-call owner | Ops/Service Owners | Trước go-live |
+| Cost quota/alert và stop-create rule khi incident | Product/Ops | Trước go-live |
 
 ---
 
 # **Appendix B. Design Decisions**
 
-| **ID** | **Decision** | **Lý do** | **Hệ quả/Trade-off** | **Status** |
+| **ID** | **Decision** | **Rationale** | **Impact** | **Status** |
 | --- | --- | --- | --- | --- |
-| ADR-001 | Dùng eKYC SDK, không tự xây OCR/liveness | Time-to-market, model expertise | External dependency | Accepted |
-| ADR-002 | Identity Platform dùng chung, domain không tích hợp trực tiếp | Central policy/security/audit | Thêm platform dependency | Accepted |
-| ADR-003 | Server-to-server là official result | Chống giả mạo client | Cần callback inbox và reconciliation fallback | Accepted |
-| ADR-004 | VHM sinh Verification ID, external ID chỉ reference | Correlation và provider portability | Cần mapping table | Accepted |
-| ADR-005 | Provider Adapter + Canonical Result | Domain không lock vào SDK payload | Thêm mapping/contract tests | Accepted |
-| ADR-006 | Callback Inbox idempotent | Callback retry/duplicate/schema lỗi | Thêm table/worker | Accepted |
-| ADR-007 | Callback là luồng chính; Get Result chỉ dùng cho reconciliation | Realtime và recovery | Cần provider retention/quota | Accepted |
-| ADR-008 | Không lưu raw payload/media automatic flow tại VHM | Privacy/minimization | Troubleshooting dựa canonical data/audit | Accepted |
-| ADR-009 | Transactional Outbox cho domain event | Không mất event | Thêm worker/Kafka ops | Accepted |
-| ADR-010 | OCR_ONLY và FULL_EKYC là journey khác nhau | Tránh hiểu sai OCR là verified identity | Domain phải chọn đúng journey | Accepted |
-| ADR-011 | Web/Mobile là channel hạng nhất | Hỗ trợ đầy đủ hai kênh | Tăng compatibility/test matrix | Accepted |
-| ADR-012 | Không silent downgrade khi thiếu capability | Giữ đúng risk assurance | Cần handoff/UX fallback | Accepted |
-| ADR-013 | One-time Web→Mobile handoff | Hỗ trợ NFC/mobile-only securely | Thêm token lifecycle/deep link | Accepted |
-| ADR-014 | Result field projection theo consumer scope | Data minimization | Thêm authorization/audit complexity | Accepted |
-| ADR-015 | Configurable ordered verification pipeline | Dùng chung cho use case nhiều step | Thêm orchestrator/config governance | Accepted |
-| ADR-016 | Step outbox + after-commit fast path + scheduler fallback | Durable async và phản hồi business nhanh | Thêm worker/outbox operations | Accepted |
-| ADR-017 | Identity-version guard | Không apply task cũ lên document mới | Domain phải tăng version atomically | Accepted |
-| ADR-018 | Snapshot retry/term/sub-step config lúc enqueue | Deterministic execution | Config mới chỉ áp task/session mới | Accepted |
-| ADR-019 | Manual fan-out `ANY/STRICT` | Review linh hoạt theo sub-step | Tăng aggregate/assignment complexity | Accepted |
-| ADR-020 | Domain hook cho identity lock/notification | Giữ core domain-neutral | Domain consumer phải idempotent | Accepted |
-| ADR-021 | Mobile dùng VHM Secure Evidence Capture sau OCR fail-fast | Không phụ thuộc capture lifecycle của provider SDK | VHM lưu manual evidence TTL ngắn | Accepted |
-| ADR-022 | Web không capture manual evidence; handoff sang Mobile | Giảm Web media/storage risk | Thêm cross-channel UX | Accepted |
-| ADR-023 | Callback dùng JWS/JWT bất đối xứng; mTLS là lớp bổ sung | Auth mạnh và hỗ trợ rotation | Provider không đáp ứng cần ANBM exception | Accepted |
+| ADR-001 | Identity Verification Platform là capability dùng chung VHM | Tránh domain tích hợp SDK Backend riêng | Cần ownership và governance tập trung | Accepted |
+| ADR-002 | Sử dụng một SDK/provider | Giữ integration và operations rõ ràng | Provider contract là dependency chính | Accepted |
+| ADR-003 | Hỗ trợ Mobile và Web | Đáp ứng hai kênh VHM đã chốt | Cần compatibility/E2E matrix cho cả hai | Accepted |
+| ADR-004 | Chỉ document `NATIONAL_ID_CHIP`, front/back | Thu hẹp mapping, test và data scope | Loại giấy tờ khác cần cập nhật TDD | Accepted |
+| ADR-005 | Hai journey `OCR_ONLY` và `FULL_EKYC` | Tách đọc giấy tờ khỏi xác minh danh tính | State/result phải tách OCR/eKYC outcome | Accepted |
+| ADR-006 | Client completion không phải official result | Chống giả mạo client result | Mobile/Web phải có processing UX | Accepted |
+| ADR-007 | Callback đã xác thực là official-result ingress chính | Server-to-server trust | Cần callback auth/dedupe/durable inbox | Accepted |
+| ADR-008 | Get Result chỉ dùng cho reconciliation | Khôi phục callback lost/session stuck | Không polling mọi session | Accepted |
+| ADR-009 | Provider Adapter + Canonical Result | Cô lập provider payload | Domain contract ổn định và fixed schema | Accepted |
+| ADR-010 | OCR_ONLY pass thành `COMPLETED`, không `VERIFIED` | Tránh khẳng định sai về danh tính | UX/API phải tách outcome | Accepted |
+| ADR-011 | Retry whole attempt | Giữ history và front/back correlation rõ ràng | Không reuse ảnh/result attempt cũ | Accepted |
+| ADR-012 | Không lưu SDK-flow media tại VHM | Data minimization | Provider retention/deletion là go-live gate | Accepted |
+| ADR-013 | Callback payload mã hóa tạm thời trong inbox | Async durable processing cần payload | TTL/purge/encryption bắt buộc | Accepted |
+| ADR-014 | Result API dùng bộ field cố định | Đủ Core Integration, dễ phê duyệt | Thay field cần Product/Privacy approval | Accepted |
+| ADR-015 | PostgreSQL là source of truth | Transaction, locking, dedupe và PITR | Cần index/retention/restore test | Accepted |
 
 ---
 
@@ -2501,94 +2438,72 @@ Các mục dưới đây không phải lựa chọn kiến trúc. Đây là inpu
 
 ## C.1. Functional
 
-- [ ] OCR_ONLY Mobile pass/retry/cancel/expire.
-- [ ] OCR_ONLY Web pass/retry/refresh/tab-close.
-- [ ] FULL_EKYC Mobile document/NFC/liveness/face pass.
-- [ ] FULL_EKYC Web camera/liveness pass trên browser matrix.
-- [ ] NFC mandatory và Web→Mobile handoff.
-- [ ] Handoff expire/replay/wrong subject.
-- [ ] Browser/device unsupported UX.
-- [ ] Multi-tab/multi-device run conflict.
-- [ ] Callback trước client submitted.
-- [ ] Duplicate/out-of-order callback.
-- [ ] Callback lost + reconciliation.
-- [ ] Provider timeout/auth/schema error.
-- [ ] Retry chain/attempt limit.
-- [ ] Domain event/projection idempotency.
-- [ ] OCR pass nhưng eKYC fail được hiển thị đúng.
-- [ ] Pipeline 0 step/first step/next step/final VERIFIED.
-- [ ] Outbox after-commit fast path và scheduler recovery.
-- [ ] Identity-version task superseded → SKIPPED.
-- [ ] Combined và sequential fail-fast sub-step mode.
-- [ ] Sequential front fail → back `EVIDENCE_REQUIRED` → Mobile capture → review `PENDING`.
-- [ ] Web gặp missing manual evidence → `HANDOFF_TO_MOBILE`, không upload trực tiếp.
-- [ ] Manual evidence upload expired/checksum mismatch/duplicate complete/app-kill resume.
-- [ ] Manual evidence thuộc identityVersion cũ bị reject.
-- [ ] Reviewer không nhận/approve task trước khi đủ evidence bắt buộc.
-- [ ] Retry technical-only, cap/backoff snapshot.
-- [ ] Manual fan-out ANY/STRICT và aggregate approve.
-- [ ] Manual reject/re-run/duplicate resolve.
-- [ ] Domain step hooks/notification/identity-lock idempotency.
+- [ ] Create session idempotent và active-session concurrency.
+- [ ] Bootstrap TTL/binding/lease và expired-token reissue.
+- [ ] Mobile `OCR_ONLY` front/back pass/fail/whole-attempt retry.
+- [ ] Web `OCR_ONLY` front/back pass/fail/whole-attempt retry.
+- [ ] Mobile `FULL_EKYC` document/liveness/face pass và failure paths.
+- [ ] Web `FULL_EKYC` document/liveness/face pass và failure paths.
+- [ ] SDK result page `OFF`; completion/close event vẫn phát.
+- [ ] Started/submitted/error/cancel idempotency và late-event handling.
+- [ ] Callback trước/sau submitted, duplicate và out-of-order.
+- [ ] Callback lost → reconciliation final/pending/not-found/error.
+- [ ] `OCR_ONLY → COMPLETED`, `FULL_EKYC → VERIFIED` đúng contract.
+- [ ] Definitive failure, recoverable quality và technical error mapping đúng.
+- [ ] Result API fixed fields, `RESULT_NOT_READY` và authorization.
+- [ ] Whole-attempt retry link/history/cap và không reuse media/result.
+- [ ] Mobile background/force-close/reopen.
+- [ ] Web refresh/reopen/multi-tab/run lease.
 
 ## C.2. Security
 
-- [ ] Không secret trong Mobile binary/Web bundle/source map/repo/image/ConfigMap/log.
-- [ ] Callback auth/signature/replay controls tested.
-- [ ] WAF rate/body/depth/content-type limits.
-- [ ] Object authorization/IDOR/tenant isolation.
-- [ ] Mobile device security baseline approved.
-- [ ] Web CSP/XSS/CSRF/clickjacking controls approved.
-- [ ] Deep link/app link/handoff threat tests.
-- [ ] PII scan clean trên log/APM/analytics/crash report.
-- [ ] Resource URL SSRF controls.
-- [ ] Manual evidence one-time upload, MIME/size/checksum/version binding tested.
-- [ ] Credential/encryption key rotation runbook tested.
-- [ ] ANBM approval.
+- [ ] Không secret trong Mobile/Web/repo/image/ConfigMap/log.
+- [ ] Callback JWS/JWT, audience/timestamp/replay/dedupe test pass.
+- [ ] Callback key/secret rotation và revoked-key test pass.
+- [ ] Tenant/domain/object IDOR tests pass.
+- [ ] Result API mask/unmask/cache-control/access audit pass.
+- [ ] Mobile SDK integrity/token/telemetry controls approved.
+- [ ] Web CSP/XSS/CSRF/CORS/storage/multi-tab controls approved.
+- [ ] Encrypted Callback Inbox, TTL, purge và backup behavior tested.
+- [ ] PII/secret scan sạch trên log/APM/analytics/crash report.
+- [ ] Không High/Critical security defect còn mở.
 
 ## C.3. Data Privacy
 
-- [ ] Consent text/version/purpose approved cho cả OCR_ONLY/FULL_EKYC.
-- [ ] Data inventory và field scopes từng domain approved.
-- [ ] Provider/VHM retention configured.
-- [ ] DPA, data location, subprocessor confirmed.
-- [ ] Media/evidence storage decision documented.
-- [ ] Manual evidence TTL, purge và deletion audit tested.
-- [ ] Data subject request/delete runbook tested.
-- [ ] DPIA/PIA hoàn tất nếu yêu cầu.
-- [ ] Data Privacy/Legal approval.
+- [ ] Consent purpose/version/withdrawal approved và tested.
+- [ ] Fixed result field set và retention được phê duyệt.
+- [ ] VHM không lưu document/selfie/video/frame của SDK flow.
+- [ ] Provider data location/subprocessor/DPA/DPIA approved.
+- [ ] Provider retention/deletion SLA và evidence approved.
+- [ ] Data-subject export/delete và backup behavior tested.
+- [ ] Callback payload TTL/purge evidence đầy đủ.
 
 ## C.4. Operations
 
 - [ ] Mobile/Web/SDK compatibility matrix published.
-- [ ] Step outbox/manual-review dashboards và alerts.
-- [ ] Manual review assignment/SLA/escalation runbook.
-- [ ] Dashboard và alerts routed đúng owner.
-- [ ] SDK/provider escalation contact và SLA documented.
-- [ ] Reconciliation/inbox/outbox/DLQ workers healthy.
-- [ ] Runbook callback failure/provider outage/config rollback.
-- [ ] Feature flag stop-create giữ callback/reconcile hoạt động.
-- [ ] Backup/restore/PITR tested.
-- [ ] Capacity/load/burst/cost test hoàn tất.
-- [ ] Rollback Mobile/Web/backend/config tested.
-- [ ] Production configuration baseline captured.
+- [ ] Provider quota/SLA/maintenance/incident contacts confirmed.
+- [ ] Dashboard/alerts có owner và routing.
+- [ ] Capacity/load/callback burst/reconciliation test đạt baseline.
+- [ ] Inbox/Reconciliation workers healthy và backlog dưới SLA.
+- [ ] Stop-create/rollback/provider incident runbook đã diễn tập.
+- [ ] Backup/PITR/restore test đạt RTO/RPO.
+- [ ] Key/secret/config rotation runbook đã diễn tập.
+- [ ] Retention/purge jobs hoạt động và có alert.
+- [ ] Tất cả approval/evidence được lưu theo governance.
 
 ---
 
 # **Appendix D. Tài liệu tham chiếu**
 
-1. Mẫu TDD kiến trúc nội bộ VHM.
-2. eKYC SDK Integration Pack: **TBD**.
-3. Mobile SDK API/Compatibility Guide: **TBD**.
-4. Web SDK API/Browser Compatibility Guide: **TBD**.
-5. Callback/Auth Contract và Get Result Reconciliation Contract: **TBD**.
-6. VHM IAM/S2S/Kafka/Observability platform standards: **TBD**.
-7. VHM ANBM, Data Privacy, retention và secure SDLC standards: **TBD**.
-8. Activity overview cho pipeline OCR → Liveness → Manual Review.
-9. OCR step activity: async outbox, version guard, sub-step mode và retry semantics.
-10. Liveness step activity: provider capability, pose sub-step, advance và manual route.
-11. Manual-review activity: scoped list, approve/reject, advance và notification hook.
+1. SDK package/API/configuration guide cho Mobile và Web: **TBD**.
+2. SDK Backend callback/Get Result/error integration pack: **TBD**.
+3. Mobile/Web compatibility matrix và lifecycle behavior: **TBD**.
+4. VHM Core IAM, S2S, EKS, RDS, Secrets/KMS và observability standards: **TBD**.
+5. ANBM secure SDLC, callback authentication và data-protection standards: **TBD**.
+6. Data Privacy consent, field scope, DPA/DPIA, retention và deletion standards: **TBD**.
+7. Product/Risk fixed decision mapping và reason-code UX: **TBD**.
+8. Operations capacity, SLA, RTO/RPO và incident runbooks: **TBD**.
 
-> Tài liệu không tự điền SDK/provider endpoint, threshold, version, SLA, retention
-> pháp lý hoặc volume khi chưa có nguồn đã phê duyệt. Các nội dung đó được đánh dấu
-> TBD và phải được chốt trong workshop Product - Mobile - Web - Backend - Architect -
-> Risk - ANBM - Data Privacy - Operations - SDK Technical Team.
+> Các artefact **TBD** là approval/input gate đã xác định owner tại Appendix A.
+> TDD không được chuyển `APPROVED` và hệ thống không được go-live khi gate bắt buộc
+> chưa có evidence.
