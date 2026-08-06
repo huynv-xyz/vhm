@@ -32,6 +32,7 @@
 | 0.2 | 06/08/2026 | Chốt phạm vi Core Integration trên Mobile/Web và external-input gates | TBD |
 | 0.3 | 06/08/2026 | Chuẩn hóa L1/L2/L3 diagram theo STD-DIAG và bổ sung artifact phê duyệt L2 | TBD |
 | 0.4 | 06/08/2026 | Chốt data-plane `SDK → VHM BFF → IVP → eKYC Backend`, media transit không persist và callback token authentication | TBD |
+| 0.5 | 06/08/2026 | Bỏ actor/component nghiệp vụ trung gian; BFF trực tiếp authenticate/authorize business context trước khi gọi IVP | TBD |
 | 1.0 | TBD | Bản được phê duyệt | TBD |
 
 ## Mục lục
@@ -82,13 +83,11 @@
 >   record bên trong VHM Backend; quản lý session, policy, state, callback,
 >   reconciliation và Canonical Result; đồng thời là integration/proxy point stream
 >   request init/OCR/liveness tới eKYC Backend mà không persist media.
-> - **Domain System**: hệ thống nghiệp vụ VHM đã được phê
->   duyệt sử dụng OCR/eKYC cho purpose cụ thể.
 > - **eKYC SDK**: SDK chạy trên Mobile/Web, điều khiển camera, hỗ trợ kiểm tra chất
 >   lượng đầu vào, thu thập dữ liệu và gọi endpoint eKYC qua VHM BFF.
 > - **eKYC Backend**: hệ thống ngoài VHM khởi tạo/xử lý phiên SDK, OCR, liveness và
 >   face matching; gửi official result về VHM Backend.
-> - **Provider Adapter**: lớp cô lập chi tiết SDK/API/payload/error khỏi Domain System.
+> - **Provider Adapter**: lớp cô lập chi tiết SDK/API/payload/error khỏi contract nội bộ VHM.
 > - **Canonical Result**: mô hình kết quả chuẩn nội bộ, không phụ thuộc SDK/provider cụ thể.
 > - Nội dung đánh dấu **TBD** phải được xác nhận trước khi tài liệu được APPROVED.
 > - Các quyết định kỹ thuật trong bản DRAFT là baseline triển khai. Mọi thay đổi
@@ -111,7 +110,7 @@ với `Identity Verification Platform`. Giải pháp gồm các thành phần lo
    - Gọi backend VHM để tạo phiên và nhận SDK bootstrap.
    - Khởi chạy eKYC SDK và hiển thị hành trình cho người dùng.
    - Gửi các trạng thái phía client về backend phục vụ UX và vận hành.
-2. **VHM Application Backend/BFF**
+2. **VHM BFF**
    - Xác thực người dùng/service và authorize business object.
    - Chuyển create/bootstrap/status/result/retry tới Identity Verification Platform.
    - Xác thực request SDK và stream data-plane tới Identity Verification Platform;
@@ -125,7 +124,7 @@ với `Identity Verification Platform`. Giải pháp gồm các thành phần lo
    - Chủ động gọi Get Result chỉ khi reconciliation phát hiện callback quá SLA hoặc session treo.
    - Chuẩn hóa kết quả thành Canonical Result.
    - Ánh xạ kết quả kỹ thuật thành quyết định xác minh nội bộ.
-   - Cung cấp Canonical Result cho Domain System qua Result API.
+   - Cung cấp Canonical Result cho VHM Application qua Result API và VHM BFF.
    - Ghi audit, cung cấp reconciliation và khả năng truy vết.
 4. **eKYC SDK**
    - Điều khiển camera và hướng dẫn người dùng chụp giấy tờ.
@@ -137,15 +136,10 @@ với `Identity Verification Platform`. Giải pháp gồm các thành phần lo
    - Gửi official result qua callback tới VHM BFF để route xuống IVP.
    - Cung cấp Get Result API cho reconciliation khi callback quá SLA hoặc thất lạc;
      polling không phải happy path.
-6. **Domain System**
-   - Sở hữu business object và trạng thái nghiệp vụ.
-   - Quyết định cách sử dụng kết quả: auto-fill, chấp nhận, yêu cầu thử lại hoặc
-     từ chối theo policy đã được phê duyệt.
-
 > **Quyết định kiến trúc:** Identity Verification Platform là capability dùng chung
 > và là control-plane bắt buộc trước khi SDK được khởi chạy. Cả control-plane và
 > data-plane đều đi theo chuỗi `VHM Application/eKYC SDK → VHM BFF → Identity
-> Verification Platform → eKYC Backend`. Domain System không tích hợp trực tiếp
+> Verification Platform → eKYC Backend`. VHM Application không tích hợp trực tiếp
 > eKYC Backend và không lưu credential/payload đặc thù của SDK.
 
 ## 1.2 Vấn đề giải quyết/Mục đích của hệ thống
@@ -188,7 +182,7 @@ Xây dựng một nền tảng xác minh danh tính dùng chung nhằm:
   - **FULL_EKYC**: OCR mặt trước/sau → liveness → face matching.
 - Quản lý vòng đời phiên từ khởi tạo đến quyết định cuối cùng.
 - Chỉ sử dụng kết quả server-to-server làm nguồn tin cậy.
-- Chuẩn hóa payload SDK thành Canonical Result trước khi Domain System sử dụng.
+- Chuẩn hóa payload SDK thành Canonical Result trước khi VHM Application sử dụng.
 - Cung cấp một Result API với bộ field cố định đã được phê duyệt.
 - Bảo đảm callback, retry và reconciliation là idempotent.
 - Phân biệt lỗi kỹ thuật với kết quả người dùng không đạt.
@@ -214,12 +208,14 @@ Xây dựng một nền tảng xác minh danh tính dùng chung nhằm:
    Provider Adapter phải ánh xạ payload sang Canonical Result trước khi áp policy.
 
 5. **Mỗi phiên có correlation ID do VHM sở hữu**  
-   `verificationId` do VHM Backend sinh và được dùng làm Client UUID khi khởi tạo
+   `verificationId` do Identity Verification Platform sinh và được dùng làm Client UUID khi khởi tạo
    SDK. `providerSessionId`, nếu eKYC Backend trả về, chỉ là external reference.
 
-6. **Domain-agnostic core**  
+6. **Capability dùng chung**  
    Platform sử dụng `domain + useCase + businessRef + subjectRef + purpose`, không
    đặt foreign key tới bảng nghiệp vụ của domain.
+   `domain` ở đây chỉ là mã phân loại business scope trong request/session, không
+   đại diện cho một application component độc lập.
 
 7. **Idempotent by design**  
    Create, callback, retry và reconciliation không được tạo side effect lặp.
@@ -264,7 +260,7 @@ Xây dựng một nền tảng xác minh danh tính dùng chung nhằm:
 - Huấn luyện/tinh chỉnh model OCR, liveness hoặc face matching.
 - Xây dựng kho dữ liệu sinh trắc học dài hạn.
 - Xây dựng hệ thống nhận diện khuôn mặt dùng ngoài purpose eKYC đã phê duyệt.
-- Cho Domain System truy cập raw provider payload.
+- Cho VHM Application hoặc caller truy cập raw provider payload.
 - Tự động áp một decision policy duy nhất cho mọi domain.
 - Đồng bộ/sửa dữ liệu master của domain ngoài contract đã thống nhất.
 
@@ -279,10 +275,10 @@ Xây dựng một nền tảng xác minh danh tính dùng chung nhằm:
 | A-05 | FULL_EKYC production luôn có liveness | Quyết định thiết kế/Security gate | Tắt liveness phải đổi journey và có risk acceptance riêng |
 | A-06 | eKYC Backend giữ kết quả đủ lâu để reconciliation | Provider/Privacy contract input | Retention quá ngắn làm mất khả năng phục hồi callback |
 | A-07 | VHM không lưu video liveness/face template | Quyết định Data Minimization | Thay đổi yêu cầu DPIA, encryption, access và retention riêng |
-| A-08 | Domain System sử dụng opaque `businessRef/subjectRef` | Quyết định thiết kế | Tránh coupling DB giữa platform và domain |
+| A-08 | VHM BFF sử dụng opaque `businessRef/subjectRef` | Quyết định thiết kế | Tránh coupling DB giữa IVP và dữ liệu nghiệp vụ |
 | A-09 | SDK version và Mobile/Web compatibility matrix được pin theo implementation baseline | Implementation manifest input | Thiếu manifest thì không được tạo build để triển khai |
 | A-10 | Volume, peak TPS và dependency SLA phải được cung cấp | Capacity/SLO input | Thiếu input thì không qua production readiness review |
-| A-11 | Mỗi domain có owner chịu trách nhiệm business decision | Quyết định ownership | Platform không tự định nghĩa risk rule thay domain |
+| A-11 | Mỗi use case có Business Owner chịu trách nhiệm business decision | Quyết định ownership | Platform không tự định nghĩa risk rule thay Business Owner |
 | A-12 | Mặt trước và mặt sau phải hoàn tất trong cùng một SDK run/attempt | Quyết định Mobile/Web flow | Lỗi ở bất kỳ mặt nào làm attempt thất bại và retry lại toàn bộ attempt |
 
 ## 1.3 Đối tượng sử dụng
@@ -291,7 +287,6 @@ Xây dựng một nền tảng xác minh danh tính dùng chung nhằm:
 - **Người dùng/đối tác/đại diện pháp lý**: thực hiện định danh cho onboarding hoặc hồ sơ được phân quyền.
 - **Business Operator/Reviewer**: tra cứu kết quả đã mask và xử lý hậu kiểm theo assignment.
 - **Customer Support/Operation**: tra cứu phiên, hỗ trợ lỗi và kích hoạt tác vụ retry/reprocess có kiểm soát.
-- **Domain System**: tạo phiên, nhận event, query field theo scope và áp business rule.
 - **Platform Administrator**: quản lý consumer, policy, cấu hình và vận hành nền tảng.
 - **Security/Data Privacy/Auditor**: kiểm soát consent, retention, access và audit.
 - **eKYC Backend**: hệ thống ngoài trust boundary gửi callback/cung cấp result API.
@@ -340,7 +335,7 @@ Mục **7.2 Data Privacy** phải được APPROVED trước production.
 | Observability | Metrics, structured log đã mask, trace/correlation | Bắt buộc |
 | Recovery | Reconcile non-terminal session; không phụ thuộc callback duy nhất | Bắt buộc |
 | Compatibility | Mobile/Web client/SDK matrix và phased rollout | Implementation manifest bắt buộc trước build |
-| Maintainability | Domain contract không phụ thuộc SDK payload; policy versioned | Bắt buộc |
+| Maintainability | VHM contract không phụ thuộc SDK payload; policy versioned | Bắt buộc |
 
 ---
 
@@ -355,7 +350,6 @@ flowchart LR
     USER(["Người dùng Mobile / Web"]):::entity
     OPS(["Business / Platform Operator"]):::entity
     APP["VHM Application<br/>Mobile / Web"]:::owned
-    DOMAIN["VHM Domain Systems"]:::owned
     IAM["VHM IAM / Consent"]:::owned
     OBS["VHM Audit / Monitoring"]:::owned
     PROVIDER(["eKYC Backend<br/>external processing service"]):::entity
@@ -367,7 +361,6 @@ flowchart LR
     USER -->|thực hiện OCR/eKYC| APP
     OPS -->|vận hành và kiểm soát| CORE
     APP -->|create/bootstrap/status/result + SDK data-plane| CORE
-    DOMAIN -->|yêu cầu và nhận kết quả| CORE
     CORE -->|xác thực và consent| IAM
     CORE -->|forward init/OCR/liveness + Get Result| PROVIDER
     PROVIDER -->|SDK response + official callback| CORE
@@ -389,7 +382,6 @@ nét đứt = event/telemetry bất đồng bộ.
 | Business/Platform Operator | Actor |  | ✓ | Theo dõi, hỗ trợ và kiểm soát vận hành theo quyền. |
 | VHM Backend — OCR/eKYC | Software System | ✓ |  | Ranh giới backend gồm VHM BFF và IVP; kiểm soát cả control-plane và data-plane. |
 | VHM Application | Software System | ✓ |  | Kênh Mobile/Web khởi chạy SDK và hiển thị kết quả VHM. |
-| VHM Domain Systems | Software System | ✓ |  | Cung cấp context nghiệp vụ và sử dụng kết quả theo purpose được duyệt. |
 | VHM IAM/Consent | Software System | ✓ |  | Xác thực principal và cung cấp bằng chứng consent. |
 | VHM Audit/Monitoring | Software System | ✓ |  | Nhận audit và telemetry đã loại bỏ dữ liệu nhạy cảm. |
 | eKYC Backend | External System |  | ✓ | Nhận data-plane từ IVP, xử lý OCR/liveness/face và trả official result. |
@@ -401,7 +393,6 @@ flowchart LR
     USER(["Người dùng"]):::entity
     SDK(["eKYC SDK runtime (ext)"]):::entity
     BACKEND(["eKYC Backend (ext)"]):::entity
-    DOMAIN["VHM Domain Systems"]:::owned
     IAM["VHM IAM / Consent"]:::owned
     OBS["VHM Audit / Monitoring"]:::owned
 
@@ -415,7 +406,6 @@ flowchart LR
 
     USER -->|bắt đầu hành trình| APP
     APP -->|create/bootstrap/status/result · HTTPS| BFF
-    DOMAIN -->|create/result · S2S| BFF
     BFF -->|authorized command/query| IVP
     IVP -->|Client UUID/proof/run context| BFF
     BFF -->|SDK bootstrap| APP
@@ -455,8 +445,19 @@ eKYC Backend. Cấu trúc module bên trong IVP được mô tả riêng tại m
 | 10 | **Decision Mapper** | Ánh xạ canonical checks theo fixed policy version | Decision, outcome, reason và policy version | IVP domain policy | PostgreSQL check/result/history | Không | Không hard-code threshold chưa phê duyệt |
 | 11 | **Reconciliation Job** | Khôi phục callback thất lạc/session treo bằng bounded polling | Due schedule, recovery attempt và official result | IVP scheduler/worker, Resilience4j | PostgreSQL | Có — outbound Get Result | Không polling mọi session liên tục |
 | 12 | **Result API** | Trả fixed Canonical Result với authorization, masking và audit | Authorized masked result projection | IVP module | PostgreSQL | Không; qua BFF | Không trả raw provider response/resource URL |
-| 13 | **Domain System** | Sở hữu business object và áp rule sử dụng result | Business object, subject mapping và domain decision | Domain-owned stack | Domain-owned storage | Có — VHM internal integration | Không tích hợp trực tiếp eKYC Backend |
-| 14 | **PostgreSQL** | System of record cho Identity Verification Platform | Session, run, check, field, inbox, result và history | Amazon RDS PostgreSQL 17 Multi-AZ | Encrypted RDS/PITR | Không — private data subnet | Không lưu binary media SDK flow |
+| 13 | **PostgreSQL** | System of record cho Identity Verification Platform | Session, run, check, field, inbox, result và history | Amazon RDS PostgreSQL 17 Multi-AZ | Encrypted RDS/PITR | Không — private data subnet | Không lưu binary media SDK flow |
+
+**Phân công các trách nhiệm nhạy cảm**
+
+| **Trách nhiệm** | **Có cần?** | **Chủ sở hữu/Quyết định** |
+| --- | --- | --- |
+| Điều khiển camera, hướng dẫn capture và kiểm tra chất lượng đầu vào | Có | eKYC SDK trên Mobile/Web. |
+| Đọc/biến đổi ảnh, trích frame, OCR, liveness và face matching | VHM không cần tự thực hiện | eKYC Backend thực hiện thuật toán; SDK chỉ thực hiện phần client-side theo SDK contract. BFF và IVP không decode/transform media. |
+| Buffer toàn bộ media request trong memory hoặc spool xuống disk | Không | Bị cấm tại BFF/IVP; hai thành phần phải bounded-stream với backpressure. |
+| Ghi request/response body media vào access log, APM hoặc tracing | Không | Bị cấm; chỉ log metadata allowlist và correlation ID. |
+| Lưu và inject provider credential | Có | Secret Manager lưu secret; chỉ IVP eKYC Backend Adapter được đọc/inject. BFF, Mobile/Web và SDK không nhận credential. |
+| Xử lý official result phía VHM | Có | IVP xác thực callback, dedupe, normalize Canonical Result, áp state transition và lưu audit. BFF chỉ áp ingress policy và route body/header không biến đổi. |
+| Sử dụng Canonical Result trong hành trình | Có | VHM Application hiển thị outcome/next action do IVP trả qua BFF; business policy phải được Product/Risk phê duyệt. |
 
 ### 2.1.4. Luồng dữ liệu OCR/eKYC
 
@@ -467,7 +468,6 @@ gắn server credential trước khi gọi eKYC Backend.
 ```mermaid
 flowchart TB
     USER(["Người dùng"]):::entity
-    DOMAIN(["VHM Domain System"]):::entity
     BACKEND(["eKYC Backend"]):::entity
     APP["P1 · VHM Application"]:::process
     SDK["P2 · eKYC SDK"]:::process
@@ -488,10 +488,10 @@ flowchart TB
     BACKEND -->|"11. official callback"| BFF
     BFF -->|"12. callback ingress · body/headers không biến đổi"| IVP
     IVP -->|"13. canonical result/history"| DB
-    DOMAIN -->|"14. result query"| BFF
+    APP -->|"14. status/result query"| BFF
     BFF -->|"15. authorized query"| IVP
     IVP -->|"16. masked canonical result"| BFF
-    BFF -->|"17. masked canonical result"| DOMAIN
+    BFF -->|"17. outcome/next action"| APP
 
     classDef entity fill:#3a3320,stroke:#d9b84a,color:#fff;
     classDef process fill:#1f3a5f,stroke:#4a90d9,color:#fff;
@@ -524,18 +524,18 @@ Ràng buộc triển khai bắt buộc:
 
 | **Boundary** | **Luồng** | **Mức tin cậy** | **Kiểm soát bắt buộc** |
 | --- | --- | --- | --- |
-| Device/Domain → VHM BFF | Create/bootstrap/status/result/start/submit/retry và SDK data-plane | Untrusted ingress | JWT/session token, object authorization, rate/body-size limit, idempotency, no body log |
+| Mobile/Web/eKYC SDK → VHM BFF | Create/bootstrap/status/result/start/submit/retry và SDK data-plane | Untrusted ingress | JWT/session token, object authorization, rate/body-size limit, idempotency, no body log |
 | VHM BFF → IVP | Authorized control request hoặc bounded media stream | Internal Zero Trust | Workload identity, verification/run binding, timeout, backpressure, no disk spool |
 | IVP → eKYC Backend | Init/OCR/liveness stream và Get Result reconciliation | External dependency | Server credential từ Secret Manager, TLS, allowlist, timeout, circuit breaker, audit metadata |
 | eKYC Backend → VHM BFF → IVP | Official callback | External server | BFF áp WAF/size/rate/no-body-log và route; IVP xác thực callback token, expiry/scope, replay/dedupe và schema |
-| IVP → Domain qua BFF | Internal Result API | Zero Trust internal | Workload identity, domain/object scope, fixed schema, masking |
+| IVP → VHM Application qua BFF | Result API | Zero Trust | User/session identity, object scope, fixed schema, masking |
 | IVP → PostgreSQL | Restricted storage | Restricted | Private subnet, IAM, encryption, least privilege; cấm media |
 
 #### Security / Zero-Trust Architecture (L2)
 
 ```mermaid
 flowchart TB
-    CALLER(["Mobile / Web / Domain / eKYC SDK"]):::entity
+    CALLER(["Mobile / Web / eKYC SDK"]):::entity
     BACKEND(["eKYC Backend (ext)"]):::entity
 
     subgraph CP["CONTROL PLANE — identity và policy"]
@@ -712,8 +712,8 @@ flowchart TD
             PROCESSOR["Result Processing Use Cases"]:::ap
             PORTS["Provider / Persistence Ports"]:::ap
         end
-        subgraph DOMAIN["domain"]
-            SESSION["Verification Session Domain"]:::dm
+        subgraph CORE_DOMAIN["core domain"]
+            SESSION["Verification Session Core"]:::dm
             POLICY["Canonical Decision Policy"]:::dm
         end
         subgraph ADOUT["adapter.out"]
@@ -747,7 +747,7 @@ domain; nét đứt `implements` = adapter hiện thực port do application s�
 ### 2.3.1. VerificationApplicationService
 
 - Kiểm tra domain/use case đã được phê duyệt.
-- Kiểm tra business reference và quyền caller qua domain authorization contract.
+- Kiểm tra business reference và quyền caller theo BFF-authorized context.
 - Validate consent đúng subject, purpose và version.
 - Resolve journey, timeout, quota và decision policy version.
 - Bảo đảm unique active session và create idempotent.
@@ -824,7 +824,7 @@ Normalizer phải:
 - Chịu được optional field, null, `N/A` và provider thêm field mới.
 - Parse score/boolean/date an toàn, validate range.
 - Quarantine khi thiếu/không khớp Client UUID, schema không hỗ trợ hoặc payload sai type nghiêm trọng.
-- Giữ provider code phục vụ audit nhưng chỉ trả canonical code cho domain.
+- Giữ provider code phục vụ audit nhưng chỉ trả canonical code cho BFF/VHM Application.
 - Không fetch resource URL tự động.
 
 ### 2.3.7. VerificationDecisionPolicy
@@ -857,14 +857,11 @@ Decision model:
 
 ```mermaid
 flowchart TB
-    subgraph DOMAIN["VHM Domain Systems"]
-        BUSINESS["Business Object<br/>Subject Mapping"]:::owned
-    end
     subgraph CONSENT["VHM Consent System"]
         CONSENT_DATA["Consent Evidence"]:::owned
     end
     subgraph IVP["Identity Verification Platform — System of Record"]
-        SESSION["Verification Session<br/>Run / State"]:::owned
+        SESSION["Verification Session<br/>Run / State · opaque business/subject refs"]:::owned
         RESULT["Canonical Result<br/>Fixed Fields"]:::sensitive
         INBOX["Encrypted Callback Inbox<br/>TTL"]:::sensitive
         HISTORY["State / Access History"]:::owned
@@ -873,7 +870,6 @@ flowchart TB
         PROVIDER_DATA["Document / Selfie / Liveness Media<br/>Raw Provider Result"]:::sensitive
     end
 
-    SESSION -.->|"businessRef / subjectRef"| BUSINESS
     SESSION -.->|"consentRef"| CONSENT_DATA
     RESULT -.->|"verificationId"| SESSION
     INBOX -.->|"verificationId"| SESSION
@@ -886,13 +882,13 @@ flowchart TB
 
 | **Chủ sở hữu/System of Record** | **Dữ liệu sở hữu** | **Năng lực lưu trữ** | **Đặc tính bắt buộc** |
 | --- | --- | --- | --- |
-| VHM Domain Systems | Business object và subject mapping | Domain-owned storage | Platform chỉ giữ opaque reference, không sở hữu hồ sơ nghiệp vụ. |
 | VHM Consent System | Consent evidence | Consent-owned storage | Platform lưu reference/version/time phục vụ audit. |
 | Identity Verification Platform | Session, run, state, Canonical Result, inbox và history | PostgreSQL + encrypted inbox TTL | Transactional, idempotent, masking, retention và audit. |
 | eKYC Backend | Media SDK flow và raw provider result | Provider-managed storage | Không lưu media tại VHM; retention/deletion theo hợp đồng được duyệt. |
 
+`businessRef/subjectRef` là opaque context đã được BFF authorize trước khi gửi IVP;
+IVP chỉ lưu reference trong session và không tạo FK vật lý tới dữ liệu nghiệp vụ.
 Các cạnh nét đứt là tham chiếu logic bằng ID, không phải FK vật lý xuyên system.
-Mỗi khối dữ liệu có đúng một system of record.
 
 ### 2.4.2. Physical ERD (L3 supporting)
 
@@ -1145,7 +1141,7 @@ Trong một local transaction:
 3. Chuyển session state/decision.
 4. Append history.
 
-Không gọi Domain System hoặc eKYC Backend bên trong DB transaction.
+Không gọi eKYC Backend hoặc dependency ngoài transaction boundary bên trong DB transaction.
 
 # **3. Functional Requirements**
 
@@ -1186,8 +1182,8 @@ Không gọi Domain System hoặc eKYC Backend bên trong DB transaction.
 | BR-008 | Callback trùng không được cập nhật state, result, history hoặc side effect lần hai. |
 | BR-009 | Timeout/network/eKYC Backend unavailable giữ `PROCESSING` trong recovery budget; hết budget mới thành `PROVIDER_ERROR`, không phải `REJECTED`. |
 | BR-010 | Lỗi ảnh, permission hoặc thao tác recoverable có thể chuyển `NEED_RETRY`. |
-| BR-011 | Domain chỉ nhận bộ normalized fields cố định đã được Product/Privacy phê duyệt. |
-| BR-012 | Auto-fill chỉ ghi field trống; overwrite field đã xác nhận cần explicit confirmation/rule của Domain System. |
+| BR-011 | VHM Application chỉ nhận bộ normalized fields cố định đã được Product/Privacy phê duyệt. |
+| BR-012 | Auto-fill chỉ ghi field trống; overwrite field đã xác nhận cần explicit confirmation hoặc business rule được phê duyệt. |
 | BR-013 | Retry tạo session/provider transaction mới và không ghi đè lịch sử attempt trước. |
 | BR-014 | Mặt trước và mặt sau phải thuộc cùng một `runId`; lỗi một mặt làm whole attempt thất bại. |
 | BR-015 | Không tái sử dụng ảnh mặt đã pass để ghép với attempt mới. |
@@ -1196,7 +1192,7 @@ Không gọi Domain System hoặc eKYC Backend bên trong DB transaction.
 | BR-018 | Client không được gọi external Get Result; chỉ Reconciliation Job được phép gọi khi callback quá SLA hoặc session treo. |
 | BR-019 | Mọi threshold/decision/config thay đổi phải version hóa và có change ticket. |
 | BR-020 | Mobile/Web capability là untrusted hint; backend đối chiếu compatibility policy. |
-| BR-021 | Domain không được dùng OCR/eKYC result cho purpose khác purpose đã consent. |
+| BR-021 | OCR/eKYC result không được sử dụng cho purpose khác purpose đã consent. |
 | BR-022 | Chỉ lỗi kỹ thuật/transient phù hợp mới retry tự động; validation fail/mismatch không retry kỹ thuật. |
 | BR-023 | Trang kết quả của SDK phải đặt `OFF`; VHM Application sở hữu processing/result screen. |
 | BR-024 | Khi SDK phát completion/close event, Mobile/Web chỉ gửi `submitted` và hiển thị “Đang xử lý kết quả”. |
@@ -1246,18 +1242,18 @@ Không gọi Domain System hoặc eKYC Backend bên trong DB transaction.
 
 | **STT** | **Miêu tả** | **Endpoint** | **From** | **To** | **Mode** | **Data chính** |
 | --- | --- | --- | --- | --- | --- | --- |
-| 1 | Tạo session | `POST /internal/v1/identity-verifications` | BFF/Domain | Verification API | REST Sync | Domain context, journey, channel, consent, client capability |
+| 1 | Tạo session | `POST /internal/v1/identity-verifications` | BFF | Verification API | REST Sync | Business context, journey, channel, consent, client capability |
 | 2 | Cấp lại SDK bootstrap | `POST /internal/v1/identity-verifications/{id}/bootstrap` | BFF | Verification API | REST Sync | App/SDK version và capability |
 | 3 | Proxy SDK init session | `POST /internal/v1/identity-verifications/{id}/sdk/init` | BFF | SDK Proxy API | HTTP Stream | runId, Client UUID/proof và provider init payload |
 | 4 | Proxy SDK OCR | `POST /internal/v1/identity-verifications/{id}/sdk/ocr` | BFF | SDK Proxy API | Multipart Stream | Front/back document media transit |
 | 5 | Proxy SDK liveness | `POST /internal/v1/identity-verifications/{id}/sdk/liveness` | BFF | SDK Proxy API | Multipart Stream | Document reference + selfie/video/frame transit |
-| 6 | Lấy status | `GET /internal/v1/identity-verifications/{id}` | BFF/Domain | Verification API | REST Sync | Status, next action, retry và masked summary |
+| 6 | Lấy status | `GET /internal/v1/identity-verifications/{id}` | BFF | Verification API | REST Sync | Status, next action, retry và masked summary |
 | 7 | Ghi SDK started | `POST /internal/v1/identity-verifications/{id}/started` | BFF | Verification API | REST Sync | runId, appVersion, sdkVersion |
 | 8 | Ghi client submitted | `POST /internal/v1/identity-verifications/{id}/submitted` | BFF | Verification API | REST Sync | runId, untrusted completion code |
 | 9 | Ghi client cancel | `POST /internal/v1/identity-verifications/{id}/cancelled` | BFF | Verification API | REST Sync | runId, canonical reason |
 | 10 | Ghi SDK/client error | `POST /internal/v1/identity-verifications/{id}/sdk-error` | BFF | Verification API | REST Sync | runId, canonical error, masked SDK code |
 | 11 | Tạo retry | `POST /internal/v1/identity-verifications/{id}/retry` | BFF/Ops | Verification API | REST Sync | Whole-attempt retry reason |
-| 12 | Lấy Canonical Result | `GET /internal/v1/identity-verifications/{id}/result` | BFF/Domain | Result API | REST Sync | Fixed fields, outcome và reason codes |
+| 12 | Lấy Canonical Result | `GET /internal/v1/identity-verifications/{id}/result` | BFF | Result API | REST Sync | Fixed fields, outcome và reason codes |
 | 13 | Cấp callback access token | VHM IAM OAuth2 endpoint theo platform standard | eKYC Backend | VHM IAM | REST Sync | Client Credentials, short-lived access token |
 | 14 | Callback eKYC Backend | `POST /integration/v1/ekyc/callback` | eKYC Backend qua BFF | Callback API | REST Async | Authenticated official result |
 | 15 | Lấy result chủ động | Provider-specific, internal adapter only | Reconciliation | eKYC Backend | REST Sync | Client UUID/provider correlation ID |
@@ -1299,7 +1295,7 @@ Content-Type: application/json
 
 Validation:
 
-- Domain/use case đã được phê duyệt cho `OCR_ONLY` hoặc `FULL_EKYC`.
+- Domain code/use case đã được phê duyệt cho `OCR_ONLY` hoặc `FULL_EKYC`.
 - Business/subject reference tồn tại và caller được quyền.
 - Consent đúng subject/purpose/version và chưa bị rút.
 - `documentType=NATIONAL_ID_CHIP`, `channel` thuộc `MOBILE_APP` hoặc `WEB_APP`.
@@ -1615,7 +1611,7 @@ Provider Adapter phải:
 
 - Cô lập endpoint, credential, timeout, payload và error code.
 - Chỉ tích hợp một SDK/provider đã được phê duyệt.
-- Không để DTO provider đi vào controller/domain contract.
+- Không để DTO provider đi vào controller hoặc VHM internal contract.
 - Không log request/response raw.
 - Dùng streaming/backpressure, timeout, bounded retry phù hợp, circuit breaker và metrics.
 - Không tự retry init/OCR/liveness sau khi đã bắt đầu gửi body; retry media là whole
@@ -1697,7 +1693,7 @@ Không retry tự động cho 4xx business/schema. 401/403 phải alert Critical
 | Camera permission hoặc SDK init lỗi | `NEED_RETRY` theo canonical error policy | User action/retry |
 | Provider timeout/429/5xx | Giữ `PROCESSING`; hết recovery budget mới `PROVIDER_ERROR` | Reconciliation trước retry |
 | Provider result không kết luận được nhưng không phải lỗi tích hợp | `NEED_RETRY` theo fixed mapping | Retry whole attempt nếu còn quota |
-| Definitive official identity/document failure | `REJECTED` | Domain hiển thị canonical outcome |
+| Definitive official identity/document failure | `REJECTED` | VHM Application hiển thị canonical outcome |
 | Callback schema/auth không hợp lệ | Không đổi business state | Operations/security xử lý |
 | Không có final result sau recovery budget | `PROVIDER_ERROR` | `CONTACT_SUPPORT` hoặc retry theo policy |
 
@@ -1734,7 +1730,6 @@ Product/Risk/Architect phê duyệt, version hóa và contract-test.
 ```mermaid
 flowchart TB
     USER(["Người dùng"]):::entity
-    DOMAIN(["Domain System"]):::entity
     APP["P1 · VHM Application"]:::process
     BFF["P2 · VHM BFF"]:::process
     IVP["P3 · Identity Verification Platform"]:::process
@@ -1746,10 +1741,10 @@ flowchart TB
     IVP -->|"4. session/state/result"| DB
     IVP -->|"5. Client UUID/proof/run context"| BFF
     BFF -->|"6. SDK bootstrap"| APP
-    DOMAIN -->|"7. canonical result query"| BFF
+    APP -->|"7. status/result query"| BFF
     BFF -->|"8. authorized query"| IVP
     IVP -->|"9. masked canonical result"| BFF
-    BFF -->|"10. masked canonical result"| DOMAIN
+    BFF -->|"10. outcome/next action"| APP
 
     classDef entity fill:#3a3320,stroke:#d9b84a,color:#fff;
     classDef process fill:#1f3a5f,stroke:#4a90d9,color:#fff;
@@ -1808,9 +1803,9 @@ sequenceDiagram
     participant PROCESSOR as Result Processor
     participant STORE as Verification Store
     participant RESULT as IVP Result API
-    participant DOMAIN as Domain System (ext)
+    participant APP as VHM Application
     BACKEND->>BFF: Callback token + official result
-    BFF->>CALLBACK: Ingress policy + authenticated route
+    BFF->>CALLBACK: Ingress policy + routed body/headers
     CALLBACK->>CALLBACK: Auth + dedupe + schema + bind
     CALLBACK->>INBOX: Encrypt minimal payload + durable insert
     CALLBACK-->>BFF: 2xx durable acknowledgement
@@ -1819,12 +1814,12 @@ sequenceDiagram
     INBOX-->>PROCESSOR: Encrypted minimal payload
     PROCESSOR->>PROCESSOR: Normalize + fixed decision mapping
     PROCESSOR->>STORE: Persist result + state + history
-    DOMAIN->>BFF: Query Canonical Result
+    APP->>BFF: Query status/result
     BFF->>RESULT: Authorized query
     RESULT->>STORE: Read authorized result
     STORE-->>RESULT: Canonical Result
     RESULT-->>BFF: Authorized masked result
-    BFF-->>DOMAIN: Authorized masked result
+    BFF-->>APP: Authorized outcome/next action
 ```
 
 ## 5.2. Data Flow quan trọng
@@ -1837,7 +1832,7 @@ sequenceDiagram
 | eKYC SDK | Gửi init/OCR/liveness | VHM BFF → Identity Verification Platform | BFF xác thực/stream; IVP validate session/run, inject credential và stream tới eKYC Backend. |
 | eKYC Backend | Xử lý OCR/eKYC | eKYC Backend | Xử lý data-plane và gửi token-authenticated official result. |
 | Identity Verification Platform | Chuẩn hóa và hoàn tất kết quả | Callback/Result Processing | Authenticate, dedupe, normalize, áp fixed policy và persist idempotently. |
-| VHM Application/Domain | Tra cứu và sử dụng kết quả | Result API | Nhận fixed, authorized, masked Canonical Result theo purpose. |
+| VHM Application | Tra cứu và sử dụng kết quả | BFF + Result API | Nhận fixed, authorized, masked outcome/next action theo purpose. |
 | Operations | Khôi phục callback thất lạc | Reconciliation Worker | Chỉ Get Result khi callback quá SLA/session treo, theo bounded backoff/quota. |
 
 ### **5.2.1. Khởi tạo session — Sequence L2**
@@ -1847,12 +1842,10 @@ sequenceDiagram
     actor User
     participant APP as VHM Application
     participant BFF as VHM BFF
-    participant DOMAIN as Domain System
     participant IV as Identity Verification Platform
     User->>APP: Đồng ý consent và bắt đầu
     APP->>BFF: Create verification session
-    BFF->>DOMAIN: Authorize business/subject reference
-    DOMAIN-->>BFF: Eligible
+    BFF->>BFF: Authenticate + authorize business/subject reference
     BFF->>IV: Create authorized session + idempotency key
     IV->>IV: Validate consent/journey/channel/capability
     IV->>IV: Generate verificationId/Client UUID/proof/runId
@@ -2159,7 +2152,6 @@ nếu chưa có phê duyệt Data Privacy bằng văn bản.
 ```mermaid
 flowchart TB
     CLIENT(["VHM Mobile / Web<br/>+ eKYC SDK"]):::entity
-    DOMAIN(["VHM Domain Systems"]):::entity
     PROVIDER(["eKYC Backend (ext)"]):::entity
 
     subgraph LZ["AWS Landing Zone — Singapore (ap-southeast-1)"]
@@ -2187,7 +2179,6 @@ flowchart TB
     end
 
     CLIENT -->|HTTPS ingress| GATEWAY
-    DOMAIN -->|S2S HTTPS ingress| GATEWAY
     PROVIDER -->|callback token + official result| GATEWAY
     GATEWAY -->|route VHM and SDK requests| BFF
     BFF -->|workload identity + bounded stream| IVP
@@ -2222,7 +2213,7 @@ tới eKYC Backend; chi tiết giao thức/cổng nằm trong Network Flow Matri
 
 | **Source** | **Destination** | **Protocol** | **Data** | **Control** |
 | --- | --- | --- | --- | --- |
-| Mobile/Web/Domain | VHM BFF | HTTPS 443 | Session/status/retry/result | JWT, WAF, rate limit |
+| Mobile/Web | VHM BFF | HTTPS 443 | Session/status/retry/result | JWT, WAF, rate limit |
 | Mobile/Web SDK | VHM BFF | HTTPS 443 | Init/OCR/liveness stream | VHM SDK session token, Client UUID/run binding, body-size limit, no body log |
 | VHM BFF | IVP | HTTPS/mTLS | Authorized command/query, media stream, callback | Workload identity, timeout, backpressure, no disk spool |
 | IVP | eKYC Backend | HTTPS 443 | Init/OCR/liveness stream, Get Result | Provider credential, allowlist, timeout, circuit breaker |
@@ -2327,7 +2318,7 @@ provider commercial cost được quản lý riêng theo hợp đồng và usage
 | Mobile SDK | Permission, lifecycle, front/back, result page OFF, compatibility matrix | Bắt buộc pass |
 | Web SDK | Camera permission, refresh/reopen/multi-tab, front/back, result page OFF | Bắt buộc pass |
 | API Security | Authn/authz, domain/object scope, SDK session token, masking, body/rate limit | Bắt buộc pass |
-| E2E | Mobile/Web SDK ↔ BFF ↔ IVP ↔ eKYC Backend staging ↔ Domain | Happy + failure paths |
+| E2E | Mobile/Web SDK ↔ BFF ↔ IVP ↔ eKYC Backend staging | Happy + failure paths |
 | Performance | Control API + concurrent media streaming + callback burst/reconciliation | Đạt NFR; không full-body buffer/disk spool |
 | Recovery | DB/provider outage, callback lost, worker restart, PITR | Bắt buộc pass |
 
@@ -2522,7 +2513,7 @@ monitoring standard cần Architecture/Ops/Data Privacy phê duyệt.
 | --- | --- |
 | Mobile/Web → BFF | OIDC/JWT qua VHM Core IAM |
 | eKYC SDK → BFF | VHM SDK session token bind `verificationId/runId/journey/channel/expiry` |
-| BFF/Domain → IVP | Workload identity/JWT hoặc mTLS + authorized context |
+| BFF → IVP | Workload identity/JWT hoặc mTLS + authorized context |
 | eKYC Backend → BFF → IVP Callback | Dynamic Bearer Token; Fixed Token cần ANBM risk acceptance |
 | IVP → eKYC Backend | Provider credential lấy từ Secret Manager theo contract |
 | IVP → RDS/Redis/Secrets | Workload role, private network và least privilege |
@@ -2547,7 +2538,6 @@ monitoring standard cần Architecture/Ops/Data Privacy phê duyệt.
 | **Role/Principal** | **Create/Start** | **Status** | **Masked Result** | **Retry** | **Reprocess/Reconcile** | **Unmask/Export** | **Config/Policy** |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | End User qua VHM Application | Theo own subject/business object | Own scope | Chỉ UX field tối thiểu | Theo eligibility/cap | Không | Không | Không |
-| Domain Service | Theo approved domain/use case | Domain + object scope | Fixed fields theo approved purpose | Theo policy | Không | Không mặc định | Không |
 | Business Operator | Không | Assigned object scope | Masked only | Có reason nếu được giao | Không | Không | Không |
 | Platform Operator | Không | Operational metadata | Không mặc định | Controlled operation + reason | Có role riêng + audit | Không | Không |
 | Auditor/Security/Privacy Reviewer | Không | Read-only theo audit scope | Masked/audit view | Không | Không | Chỉ khi có elevated approval | Read-only approved evidence |
@@ -2638,7 +2628,7 @@ monitoring standard cần Architecture/Ops/Data Privacy phê duyệt.
 - Internal threshold, raw score và provider payload không expose.
 - Support screen chỉ hiển thị dữ liệu tối thiểu và theo object scope.
 
-| **Field/data** | **Default/API mask** | **End User** | **Domain/Business Operator** | **Platform Support/Log** | **Unmask rule** |
+| **Field/data** | **Default/API mask** | **End User** | **Business Operator** | **Platform Support/Log** | **Unmask rule** |
 | --- | --- | --- | --- | --- | --- |
 | Document number | `******1234` | Own result tối thiểu nếu UX cần | Masked theo purpose contract | Không log; masked support view | Elevated scope + reason + access audit |
 | Full name | Giữ ký tự tối thiểu theo approved UX hoặc mask một phần | Own data theo UX được duyệt | Theo fixed field/purpose | Không log plaintext | Chỉ approved business purpose |
@@ -2701,7 +2691,7 @@ monitoring standard cần Architecture/Ops/Data Privacy phê duyệt.
 | Ảnh giấy tờ, selfie, liveness video/frame | Dữ liệu cá nhân nhạy cảm/sinh trắc học | Có transit tại BFF/IVP và xử lý tại eKYC Backend | VHM stream transient, không persist/spool/log; eKYC Backend xử lý theo contract. |
 | Liveness/face-match status và score | Dữ liệu liên quan sinh trắc học | Có | VHM chỉ lưu canonical status/score tối thiểu theo policy được duyệt. |
 | Chủng tộc, quan điểm chính trị, tôn giáo, sức khỏe | Dữ liệu cá nhân nhạy cảm | Không | Không thuộc contract OCR/eKYC này. |
-| Điện thoại/email/payment data | Dữ liệu cá nhân/nghiệp vụ | Không trong capability này | Nếu Domain cần, dữ liệu vẫn thuộc Domain và không đưa vào SDK result contract. |
+| Điện thoại/email/payment data | Dữ liệu cá nhân/nghiệp vụ | Không trong capability này | Dữ liệu nằm ngoài IVP và không được đưa vào SDK result contract. |
 
 Phân loại pháp lý cuối cùng, lawful basis và DPIA/DPA phải được Data Privacy/Legal
 phê duyệt; mã hóa không làm dữ liệu mất tính chất dữ liệu cá nhân.
@@ -2710,8 +2700,8 @@ phê duyệt; mã hóa không làm dữ liệu mất tính chất dữ liệu c�
 
 | **Data** | **Nguồn** | **Purpose** | **VHM persistence** | **Provider** | **Retention** |
 | --- | --- | --- | --- | --- | --- |
-| Business/subject opaque ref | Domain | Correlation/authorization | Có | External ref nếu cần | Business/audit policy |
-| Consent ref/version/time | Consent/Domain | Legal basis/audit | Có | Theo contract | Legal/privacy policy |
+| Business/subject opaque ref | VHM BFF | Correlation/authorization | Có | External ref nếu cần | Business/audit policy |
+| Consent ref/version/time | VHM Application/Consent | Legal basis/audit | Có | Theo contract | Legal/privacy policy |
 | Document fields | eKYC Backend | OCR/autofill/verification | Fixed fields, encrypted/masked | Có xử lý | Purpose-bound |
 | Document image front/back | SDK | OCR/verification | Không persist; transit BFF/IVP | Có xử lý | Provider contract, ngắn nhất |
 | Selfie/video/frame | SDK | Liveness/face matching | Không persist; transit BFF/IVP | Có xử lý | Provider contract, ngắn nhất |
@@ -2731,15 +2721,15 @@ phê duyệt; mã hóa không làm dữ liệu mất tính chất dữ liệu c�
 | Số lượng chủ thể/bản ghi | TBD theo forecast volume và retention | Product/Ops — trước capacity/privacy sign-off |
 | Tổng dung lượng lưu trữ | TBD; VHM không lưu SDK-flow media | DBA/Ops/Data Privacy |
 | Truyền sang tổ chức khác | Có — eKYC Backend xử lý document/liveness/face data | DPA, purpose, subprocessor và incident SLA bắt buộc |
-| Luồng vị trí | Mobile/Web SDK → VHM BFF → IVP → eKYC Backend; callback → BFF → IVP → approved Domain | Architecture/Data Privacy review |
+| Luồng vị trí | Mobile/Web SDK → VHM BFF → IVP → eKYC Backend; callback → BFF → IVP; kết quả → BFF → VHM Application | Architecture/Data Privacy review |
 | Dữ liệu thu thập | Front/back document, selfie/liveness/face data tại SDK flow; fixed canonical fields tại VHM | Fixed field set: TBD approval |
 | Mục đích | OCR/autofill và xác minh danh tính theo consented journey/use case | Product/Legal approval |
 | Mã hóa lưu trữ | RDS/KMS và field/inbox encryption; media không lưu tại VHM | ANBM approval |
 | Quản lý/xoay khóa | AWS KMS/Secrets Manager; rotation period theo approved standard | ANBM/Cloud — version TBD |
 | Mã hóa đường truyền | TLS 1.2 minimum, TLS 1.3 preferred; mTLS nơi contract hỗ trợ/yêu cầu | ANBM/Integration |
-| Masking | Document number `******1234`; field khác theo role/purpose matrix mục 7.1.4 | Data Privacy/Domain approval |
+| Masking | Document number `******1234`; field khác theo role/purpose matrix mục 7.1.4 | Data Privacy/Product approval |
 | Retention và tự động xóa | Purpose-bound; inbox TTL ngắn; thời hạn cụ thể TBD theo DPA/business/audit policy | Go-live blocker |
-| Data-subject request | Export/delete/anonymize qua authorized Domain mapping và provider coordination | Data Privacy/Domain/eKYC Backend |
+| Data-subject request | Export/delete/anonymize qua BFF-authorized subject/business mapping và provider coordination | Data Privacy/Product/eKYC Backend |
 | Anonymization | Chỉ giữ aggregate telemetry không định danh; canonical record xử lý theo retention/legal hold | Data Privacy/Ops |
 
 ### 7.2.4. Data Lifecycle DFD (L2)
@@ -2747,8 +2737,8 @@ phê duyệt; mã hóa không làm dữ liệu mất tính chất dữ liệu c�
 ```mermaid
 flowchart TB
     USER(["Người dùng"]):::entity
+    APP(["VHM Application"]):::entity
     BACKEND(["eKYC Backend"]):::entity
-    DOMAIN(["Approved Domain System"]):::entity
     CAPTURE["P1 · Mobile/Web SDK Capture"]:::process
     BFF["P2 · VHM BFF<br/>auth / bounded stream"]:::process
     IVP_PROXY["P3 · IVP SDK Proxy<br/>credential injection"]:::process
@@ -2767,11 +2757,11 @@ flowchart TB
     CALLBACK -->|"7. encrypted minimal payload"| INBOX
     INBOX -->|"8. claimed provider result"| NORMALIZE
     NORMALIZE -->|"9. canonical fixed fields"| RESULT
-    DOMAIN -->|"10. result query"| BFF
+    APP -->|"10. status/result query"| BFF
     BFF -->|"11. authorized result query"| RESULT_API
     RESULT -->|"12. scoped canonical fields"| RESULT_API
     RESULT_API -->|"13. masked canonical result"| BFF
-    BFF -->|"14. masked canonical result"| DOMAIN
+    BFF -->|"14. outcome/next action"| APP
 
     classDef entity fill:#3a3320,stroke:#d9b84a,color:#fff;
     classDef process fill:#1f3a5f,stroke:#4a90d9,color:#fff;
@@ -2787,7 +2777,7 @@ flowchart TB
 ### 7.2.5. Retention principles
 
 - Session/history retention theo approved business/audit purpose.
-- Canonical sensitive fields có retention ngắn nhất theo Domain purpose.
+- Canonical sensitive fields có retention ngắn nhất theo approved business purpose.
 - Callback inbox encrypted payload purge sớm sau processing; metadata/hash theo operational TTL.
 - Provider result/media retention theo DPA, reconciliation window và deletion SLA.
 - Backup retention không được làm dữ liệu sống lại ngoài policy; deletion có tombstone/evidence.
@@ -2796,7 +2786,7 @@ flowchart TB
 ### 7.2.6. Data subject request
 
 - Xác minh requester và scope trước export/delete.
-- Tìm theo opaque subject mapping qua authorized Domain contract.
+- Tìm theo opaque subject/business mapping đã được BFF authorize.
 - Export chỉ field được phép, đã mask theo legal/privacy rule.
 - Delete/anonymize session/result theo retention/legal hold và ghi audit.
 - Gửi provider deletion request khi contract/purpose yêu cầu.
@@ -2988,7 +2978,7 @@ release checklist và không thay thế evidence của từng quality gate.
 | AR-003 | Compliance/Data | Data location, subprocessor, retention và deletion SLA chưa được phê duyệt | Vi phạm privacy/cross-border requirement hoặc giữ biometric data quá hạn | Medium | Critical | DPA/DPIA, purpose-bound consent, media chỉ transit không persist tại VHM, deletion evidence | Medium | Legal/Data Privacy | OPEN — go-live blocker |
 | AR-004 | Performance | Concurrent media streams, size/duration, TPS/callback burst và provider quota chưa chốt | Quá tải BFF/IVP/network/inbox hoặc vượt quota/cost | High | High | Capacity inputs, streaming load test, HPA/pool riêng, bounded buffer/worker, quota alert | Medium | Product/Ops | OPEN |
 | AR-005 | Compatibility | Mobile/Web/SDK compatibility và lifecycle matrix chưa có evidence | Journey lỗi theo device/browser/version, tăng retry/drop-off | Medium | High | Pin version, preflight, cohort rollout, E2E matrix và rollback | Low/Medium | Client/SDK Teams | OPEN |
-| AR-006 | Data/Security | Fixed result field, masking và retention chưa được chốt theo từng Domain purpose | Over-collection hoặc lộ PII cho consumer không đúng quyền | Medium | High | Fixed schema, allowlist, object authorization, masking/unmask audit | Low sau approval | Product/Domain/Data Privacy | OPEN |
+| AR-006 | Data/Security | Fixed result field, masking và retention chưa được chốt theo từng approved purpose | Over-collection hoặc lộ PII cho caller không đúng quyền | Medium | High | Fixed schema, allowlist, object authorization, masking/unmask audit | Low sau approval | Product/Business/Data Privacy | OPEN |
 | AR-007 | Operations | Reconciliation vượt provider retention/quota khi callback backlog lớn | Session treo hoặc không thể lấy official result | Medium | High | Oldest-age alert, bounded lease/backoff, provider retention SLA, incident drain plan | Medium | Ops/eKYC Backend | OPEN |
 | AR-008 | Security/Performance | BFF/IVP vô tình full-buffer, spool hoặc log media transit | Rò rỉ dữ liệu nhạy cảm, memory/disk exhaustion và tăng blast radius | Medium | Critical | Streaming/backpressure, no-disk-spool/body-log config, metadata allowlist, load/DLP evidence | Low sau sign-off | BFF/IVP/Ops/ANBM | OPEN — go-live blocker |
 
@@ -3013,11 +3003,10 @@ owner, phạm vi, thời hạn và approver tương ứng được ghi trong phi
 | FULL_EKYC | Journey OCR front/back → liveness → face matching; pass mới thành `VERIFIED`. |
 | VHM Application | Ứng dụng Mobile và Web của VHM tích hợp eKYC SDK. |
 | VHM Backend | Ranh giới logic gồm đúng hai application component: VHM BFF và Identity Verification Platform. |
-| VHM BFF | Điểm ingress từ Mobile/Web/SDK/Domain/eKYC Backend; xác thực, authorize, áp policy và stream request xuống IVP; không giữ provider credential hoặc xử lý eKYC result. |
+| VHM BFF | Điểm ingress từ Mobile/Web/SDK/eKYC Backend; xác thực, authorize, áp policy và stream request xuống IVP; không giữ provider credential hoặc xử lý eKYC result. |
 | eKYC SDK | SDK chạy trên Mobile/Web để điều khiển capture và gửi init/OCR/liveness tới VHM BFF. |
 | eKYC Backend | Hệ thống xử lý OCR, liveness và face matching; gửi callback/cung cấp Get Result. |
 | Identity Verification Platform | System of record quản lý session/result và integration/proxy point duy nhất gọi eKYC Backend bằng server credential. |
-| Domain System | Hệ thống nghiệp vụ được phê duyệt tạo session và sử dụng Canonical Result. |
 | Provider Adapter | Lớp cô lập API/auth/payload/error của eKYC Backend khỏi VHM contract. |
 | Official Result | Kết quả server-to-server từ callback đã xác thực hoặc Get Result qua reconciliation. |
 | Canonical Result | Mô hình kết quả chuẩn VHM, không phụ thuộc raw provider payload. |
@@ -3041,14 +3030,14 @@ owner, phạm vi, thời hạn và approver tương ứng được ghi trong phi
 
 | **Input cần xác nhận** | **Owner** | **Gate/Deadline** |
 | --- | --- | --- |
-| Domain/use case/business object được phép tạo session | Product/Domain Owner | Trước API contract sign-off |
+| Domain code/use case/business object được phép tạo session | Product/Business Owner | Trước API contract sign-off |
 | Hai journey `OCR_ONLY`, `FULL_EKYC` và channel áp dụng | Product/Risk | Trước SDK profile configuration |
 | Document type `NATIONAL_ID_CHIP`, front/back và validation rules | Product/Risk/SDK Team | Trước OCR integration test |
-| Fixed result field set và masking cho Domain System | Product/Domain/Data Privacy | Trước Result API contract test |
+| Fixed result field set và masking cho VHM Application | Product/Business/Data Privacy | Trước Result API contract test |
 | Consent text/version/purpose/withdrawal behavior | Product/Legal/Data Privacy | Trước UAT |
 | Fixed decision mapping, threshold và reason code UX | Product/Risk/Architect | Trước decision contract test |
 | Whole-attempt retry cap, user message và support action | Product/Risk/Ops | Trước failure-path UAT |
-| Business owner chịu trách nhiệm sử dụng result | Domain Owner | Trước production readiness |
+| Business owner chịu trách nhiệm sử dụng result | Business Owner | Trước production readiness |
 
 ## A.2. Mobile & Web SDK Inputs
 
@@ -3088,10 +3077,10 @@ owner, phạm vi, thời hạn và approver tương ứng được ghi trong phi
 | Consent lawful basis và approved purpose | Data Privacy/Legal/Product | Trước UAT |
 | Provider media/result retention và deletion SLA/evidence | Data Privacy/Legal/eKYC Backend | Go-live blocker |
 | Callback authentication/replay/key-rotation baseline | ANBM/eKYC Backend | Trước security test |
-| Fixed field encryption/masking/unmask access | ANBM/Data Privacy/Domain | Trước Result API UAT |
+| Fixed field encryption/masking/unmask access | ANBM/Data Privacy/Business | Trước Result API UAT |
 | Log/APM/analytics/crash-report data allowlist | ANBM/Data Privacy/Ops | Trước SIT |
 | Mobile/Web security baseline và SDK integrity evidence | ANBM/Client Teams | Trước security sign-off |
-| Data-subject export/delete và provider coordination | Data Privacy/Domain/eKYC Backend | Trước go-live |
+| Data-subject export/delete và provider coordination | Data Privacy/Business/eKYC Backend | Trước go-live |
 
 ## A.5. NFR & Operations Inputs
 
@@ -3117,7 +3106,7 @@ không thay thế sign-off chính thức.
 
 | **ID** | **Decision** | **Rationale** | **Impact** | **Status** | **ADR artefact** |
 | --- | --- | --- | --- | --- | --- |
-| ADR-001 | Identity Verification Platform là capability dùng chung VHM | Tránh domain tích hợp eKYC Backend riêng | Cần ownership và governance tập trung | Accepted baseline | TBD link |
+| ADR-001 | Identity Verification Platform là capability dùng chung VHM | Tránh từng ứng dụng tích hợp eKYC Backend riêng | Cần ownership và governance tập trung | Accepted baseline | TBD link |
 | ADR-002 | Sử dụng một SDK/provider | Giữ integration và operations rõ ràng | Provider contract là dependency chính | Accepted baseline | TBD link |
 | ADR-003 | Hỗ trợ Mobile và Web | Đáp ứng hai kênh VHM đã chốt | Cần compatibility/E2E matrix cho cả hai | Accepted baseline | TBD link |
 | ADR-004 | Chỉ document `NATIONAL_ID_CHIP`, front/back | Thu hẹp mapping, test và data scope | Loại giấy tờ khác cần cập nhật TDD | Accepted baseline | TBD link |
@@ -3125,7 +3114,7 @@ không thay thế sign-off chính thức.
 | ADR-006 | Client completion không phải official result | Chống giả mạo client result | Mobile/Web phải có processing UX | Accepted baseline | TBD link |
 | ADR-007 | Callback đã xác thực là official-result ingress chính | Server-to-server trust | Cần callback auth/dedupe/durable inbox | Accepted baseline | TBD link |
 | ADR-008 | Get Result chỉ dùng cho reconciliation | Khôi phục callback lost/session stuck | Không polling mọi session | Accepted baseline | TBD link |
-| ADR-009 | Provider Adapter + Canonical Result | Cô lập provider payload | Domain contract ổn định và fixed schema | Accepted baseline | TBD link |
+| ADR-009 | Provider Adapter + Canonical Result | Cô lập provider payload | VHM contract ổn định và fixed schema | Accepted baseline | TBD link |
 | ADR-010 | OCR_ONLY pass thành `COMPLETED`, không `VERIFIED` | Tránh khẳng định sai về danh tính | UX/API phải tách outcome | Accepted baseline | TBD link |
 | ADR-011 | Retry whole attempt | Giữ history và front/back correlation rõ ràng | Không reuse ảnh/result attempt cũ | Accepted baseline | TBD link |
 | ADR-012 | Media transit BFF/IVP nhưng không persist tại VHM | Kiểm soát auth/data-plane và data minimization | Bắt buộc streaming/backpressure, no disk spool/body log và privacy evidence | Accepted baseline | TBD link |
@@ -3166,7 +3155,7 @@ không thay thế sign-off chính thức.
 - [ ] Provider credential chỉ IVP workload được đọc; BFF/Mobile/Web/SDK không nhận credential.
 - [ ] Callback Dynamic Token hoặc approved Fixed Token, expiry/scope/replay/dedupe test pass.
 - [ ] Callback key/secret rotation và revoked-key test pass.
-- [ ] Domain/object IDOR tests pass.
+- [ ] Business-scope/object IDOR tests pass.
 - [ ] Result API mask/unmask/cache-control/access audit pass.
 - [ ] Mobile SDK integrity/token/telemetry controls approved.
 - [ ] Web CSP/XSS/CSRF/CORS/storage/multi-tab controls approved.
