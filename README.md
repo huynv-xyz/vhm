@@ -47,20 +47,20 @@
 | **Chương chuẩn L2** | **Vị trí trong tài liệu này** |
 | --- | --- |
 | 1. Business Objectives & Scope | Mục 1 |
-| 2. Architecture Overview & Principles | Mục 2.1–2.3 |
+| 2. Architecture Overview & Principles | Mục 2 |
 | 3. Functional Requirements | Mục 3 |
 | 4. Non-Functional Requirements | Mục 1.6 và 6.4 |
 | 5. Technology Stack & Justification/ADR | Mục 6.6 và Appendix B |
-| 6. Integration Architecture | Mục 2.1.2, 2.1.3 và 4 |
+| 6. Integration Architecture | Mục 2.2.2, 2.2.3 và 4 |
 | 7. Data Architecture & Data Flow | Mục 2.4, 5.1 và 7.2 |
 | 8. Business Flow Diagrams | Mục 5.2 |
-| 9. Security & Compliance | Mục 2.1.5 và 7 |
+| 9. Security & Compliance | Mục 2.2.5 và 7 |
 | 10. Deployment & Infrastructure | Mục 6.1–6.5 |
 | 11. Cost & Capacity/Performance | Mục 6.4 |
 | 12. Scalability & Reliability | Mục 6.4.3 và 8.2.1 |
 | 13. Observability & Monitoring | Mục 6.8 |
-| 14. Operational Readiness | Mục 8.4–8.6 |
-| 15. Testing & Quality Strategy | Mục 6.5.2, 7.4 và 8.7 |
+| 14. Operational Readiness | Mục 8.3–8.5 |
+| 15. Testing & Quality Strategy | Mục 6.5.2, 7.4 và 8.6 |
 | 16. Risks & Open Issues/Tech Debt | Mục 9 |
 
 > **Quy ước trong tài liệu**
@@ -178,65 +178,7 @@ Xây dựng một nền tảng xác minh danh tính dùng chung nhằm:
 - Không lưu ảnh giấy tờ, selfie hoặc video/frame liveness của SDK flow tại VHM.
 - Quản lý tập trung policy, cấu hình SDK, quota, retention, audit và monitoring.
 
-### **1.2.3. Nguyên tắc thiết kế**
-
-1. **Không phát triển lại thuật toán AI**  
-   VHM không tự xây OCR engine, liveness engine hoặc face matching engine trong phạm vi này.
-
-2. **Client không phải nguồn kết quả cuối cùng**  
-   Mobile/Web phải nhận Client UUID/proof/run context từ VHM trước khi khởi chạy
-   SDK; nguồn kết quả và reconciliation tuân thủ `RESULT-01`.
-
-3. **OCR khác eKYC**  
-   `OCR=PASSED` không đồng nghĩa `eKYC=VERIFIED`. Hai kết quả được lưu và công bố độc lập.
-
-4. **Provider result không phải domain model**  
-   Provider Adapter phải ánh xạ payload sang Canonical Result trước khi áp policy.
-
-5. **Mỗi phiên có correlation ID do VHM sở hữu**  
-   `verificationId` do Identity Verification Platform sinh và được dùng làm Client UUID khi khởi tạo
-   SDK. `providerSessionId`, nếu eKYC Backend trả về, chỉ là external reference.
-
-6. **Capability dùng chung**  
-   Platform sử dụng `domain + useCase + businessRef + subjectRef + purpose`, không
-   đặt foreign key tới bảng nghiệp vụ của domain.
-   `domain` ở đây chỉ là mã phân loại business scope trong request/session, không
-   đại diện cho một application component độc lập.
-
-7. **Idempotent by design**  
-   Create, callback, retry và reconciliation không được tạo side effect lặp.
-
-8. **Fail closed về bảo mật, fail safe về trải nghiệm**  
-   Callback không xác thực phải bị từ chối; lỗi kỹ thuật không được biến thành `REJECTED`.
-
-9. **Data minimization**  
-   Chỉ lưu field cần thiết cho purpose đã phê duyệt theo `DATA-01`.
-
-10. **Configuration as controlled change**  
-    Flow, threshold, retry, retention và security setting phải version hóa, có owner,
-    phê duyệt và rollback plan.
-
-11. **VHM-controlled data-plane**  
-    Data-plane, media handling và credential ownership tuân thủ `DP-01`, `MEDIA-01`
-    và `CRED-01`.
-
-#### Normative cross-cutting controls
-
-Bảng dưới đây là nguồn chuẩn duy nhất cho các quy tắc xuyên suốt. Những mục khác
-tham chiếu control ID và chỉ mô tả chi tiết riêng của section.
-
-| **Control ID** | **Yêu cầu bắt buộc** | **Owner** | **Evidence chính** |
-| --- | --- | --- | --- |
-| `DP-01` | SDK data-plane đi đúng chuỗi `SDK → VHM BFF → IVP → eKYC Backend`; SDK version trên từng Mobile/Web channel phải hỗ trợ override toàn bộ init/OCR/liveness endpoint và custom VHM session header. Không fallback ngầm sang direct/hybrid. | Client/BFF/IVP | SDK compatibility + proxy contract/E2E |
-| `MEDIA-01` | BFF/IVP chỉ bounded-stream theo chunk và backpressure; cấm full-body buffering, decode/transform, disk spool, persist, request/response body log và transparent retry sau khi đã gửi body. | BFF/IVP/Ops | Load, memory/disk, DLP và failure-path test |
-| `CRED-01` | Provider credential lưu trong Secret Manager và chỉ IVP eKYC Backend Adapter được đọc/inject; không truyền xuống BFF, Mobile/Web hoặc SDK. | IVP/ANBM | IAM policy, secret scan và rotation test |
-| `RESULT-01` | Client/SDK result chỉ phục vụ UX; callback đã xác thực là official-result ingress chính. Get Result chỉ được gọi bởi Reconciliation Job khi callback quá SLA hoặc session treo. | IVP | Callback/reconciliation contract test |
-| `CALLBACK-01` | Callback phải được token-authenticate, bind Client UUID/environment, replay/dedupe và durable inbox trước khi trả 2xx. | IVP/ANBM | Security, duplicate và crash-recovery test |
-| `DATA-01` | VHM không lưu document image, selfie hoặc liveness video/frame; chỉ lưu canonical fixed fields và callback inbox tối thiểu, mã hóa, TTL ngắn theo approved purpose. | IVP/Data Privacy | Data inventory, DB scan, retention/purge evidence |
-| `AUTH-01` | BFF authenticate caller, authorize `businessRef/subjectRef` và không tin business scope từ request body; IVP revalidate session/run/journey binding. | BFF/IVP | AuthN/AuthZ/IDOR test |
-| `RETRY-01` | Front/back thuộc cùng run; lỗi một bước làm fail whole attempt. Retry tạo attempt/run mới và không tái sử dụng media/result cũ. | Client/IVP | State-machine và retry E2E |
-
-### **1.2.4. Phạm vi thực hiện**
+### **1.2.3. Phạm vi thực hiện**
 
 - Tích hợp eKYC SDK trên Mobile và Web.
 - Sử dụng một SDK/provider đã được phê duyệt.
@@ -254,7 +196,7 @@ tham chiếu control ID và chỉ mô tả chi tiết riêng của section.
 - Audit, metrics, alert và runbook vận hành.
 - Bảo vệ credential, PII và dữ liệu sinh trắc.
 
-### **1.2.5. Ngoài phạm vi**
+### **1.2.4. Ngoài phạm vi**
 
 - Huấn luyện/tinh chỉnh model OCR, liveness hoặc face matching.
 - Xây dựng kho dữ liệu sinh trắc học dài hạn.
@@ -263,7 +205,7 @@ tham chiếu control ID và chỉ mô tả chi tiết riêng của section.
 - Tự động áp một decision policy duy nhất cho mọi domain.
 - Đồng bộ/sửa dữ liệu master của domain ngoài contract đã thống nhất.
 
-### **1.2.6. Giả định và ràng buộc**
+### **1.2.5. Giả định và ràng buộc**
 
 | **ID** | **Giả định/Ràng buộc** | **Trạng thái** | **Ảnh hưởng nếu thay đổi** |
 | --- | --- | --- | --- |
@@ -340,9 +282,39 @@ Mục **7.2 Data Privacy** phải được APPROVED trước production.
 
 # **2. Architecture Overview & Principles**
 
-## 2.1. Application Architecture Diagram
+## 2.1. Nguyên tắc thiết kế
 
-### 2.1.1. System Context Diagram (L1)
+1. **Không phát triển lại thuật toán AI**: VHM không tự xây OCR, liveness hoặc face-matching engine.
+2. **Client không phải nguồn kết quả cuối cùng**: nguồn kết quả và reconciliation tuân thủ `RESULT-01`.
+3. **OCR khác eKYC**: `OCR=PASSED` không đồng nghĩa `eKYC=VERIFIED`.
+4. **Provider result không phải VHM model**: Provider Adapter chuẩn hóa payload trước khi áp policy.
+5. **Correlation ID do VHM sở hữu**: `verificationId` được dùng làm Client UUID; external ID chỉ phục vụ correlation.
+6. **Capability dùng chung**: `domain` chỉ là mã business scope, không đại diện một application component.
+7. **Idempotent by design**: create, callback, retry và reconciliation không tạo side effect lặp.
+8. **Fail closed/fail safe**: callback không xác thực bị từ chối; lỗi kỹ thuật không biến thành `REJECTED`.
+9. **Data minimization**: lưu dữ liệu theo `DATA-01`.
+10. **Controlled change**: policy/config phải version hóa, có owner, phê duyệt và rollback.
+11. **VHM-controlled data-plane**: tuân thủ `DP-01`, `MEDIA-01` và `CRED-01`.
+
+### 2.1.1. Normative cross-cutting controls
+
+Bảng dưới đây là nguồn chuẩn duy nhất cho các quy tắc xuyên suốt. Những mục khác
+tham chiếu control ID và chỉ mô tả chi tiết riêng của section.
+
+| **Control ID** | **Yêu cầu bắt buộc** | **Owner** | **Evidence chính** |
+| --- | --- | --- | --- |
+| `DP-01` | SDK data-plane đi đúng chuỗi `SDK → VHM BFF → IVP → eKYC Backend`; SDK version trên từng Mobile/Web channel phải hỗ trợ override toàn bộ init/OCR/liveness endpoint và custom VHM session header. Không fallback ngầm sang direct/hybrid. | Client/BFF/IVP | SDK compatibility + proxy contract/E2E |
+| `MEDIA-01` | BFF/IVP chỉ bounded-stream theo chunk và backpressure; cấm full-body buffering, decode/transform, disk spool, persist, request/response body log và transparent retry sau khi đã gửi body. | BFF/IVP/Ops | Load, memory/disk, DLP và failure-path test |
+| `CRED-01` | Provider credential lưu trong Secret Manager và chỉ IVP eKYC Backend Adapter được đọc/inject; không truyền xuống BFF, Mobile/Web hoặc SDK. | IVP/ANBM | IAM policy, secret scan và rotation test |
+| `RESULT-01` | Client/SDK result chỉ phục vụ UX; callback đã xác thực là official-result ingress chính. Get Result chỉ được gọi bởi Reconciliation Job khi callback quá SLA hoặc session treo. | IVP | Callback/reconciliation contract test |
+| `CALLBACK-01` | Callback phải được token-authenticate, bind Client UUID/environment, replay/dedupe và durable inbox trước khi trả 2xx. | IVP/ANBM | Security, duplicate và crash-recovery test |
+| `DATA-01` | VHM không lưu document image, selfie hoặc liveness video/frame; chỉ lưu canonical fixed fields và callback inbox tối thiểu, mã hóa, TTL ngắn theo approved purpose. | IVP/Data Privacy | Data inventory, DB scan, retention/purge evidence |
+| `AUTH-01` | BFF authenticate caller, authorize `businessRef/subjectRef` và không tin business scope từ request body; IVP revalidate session/run/journey binding. | BFF/IVP | AuthN/AuthZ/IDOR test |
+| `RETRY-01` | Front/back thuộc cùng run; lỗi một bước làm fail whole attempt. Retry tạo attempt/run mới và không tái sử dụng media/result cũ. | Client/IVP | State-machine và retry E2E |
+
+## 2.2. Application Architecture Diagram
+
+### 2.2.1. System Context Diagram (L2)
 
 ```mermaid
 flowchart LR
@@ -385,7 +357,7 @@ nét đứt = event/telemetry bất đồng bộ.
 | VHM Audit/Monitoring | Software System | ✓ |  | Nhận audit và telemetry đã loại bỏ dữ liệu nhạy cảm. |
 | eKYC Backend | External System |  | ✓ | Nhận data-plane từ IVP, xử lý OCR/liveness/face và trả official result. |
 
-### 2.1.2. Context Map / Integration Diagram (L2)
+### 2.2.2. Context Map / Integration Diagram (L2)
 
 ```mermaid
 flowchart LR
@@ -426,9 +398,9 @@ flowchart LR
 
 `VHM Backend` trong sơ đồ chỉ gồm hai application component. VHM BFF xử lý ingress,
 identity và business context; IVP sở hữu trạng thái xác minh và tích hợp/proxy tới
-eKYC Backend. Cấu trúc module bên trong IVP được mô tả riêng tại mục 2.3.
+eKYC Backend. Cấu trúc module bên trong IVP được mô tả riêng tại mục 2.4.
 
-### 2.1.3. Danh sách module và trách nhiệm
+### 2.2.3. Danh sách module và trách nhiệm
 
 | **STT** | **Component/Module** | **Responsibility** | **Data managed/processed** | **Technology** | **Storage** | **External exposure** | **Boundary** |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -446,7 +418,7 @@ eKYC Backend. Cấu trúc module bên trong IVP được mô tả riêng tại m
 | 12 | **Result API** | Trả fixed Canonical Result với authorization, masking và audit | Authorized masked result projection | IVP module | PostgreSQL | Không; qua BFF | Không trả raw provider response/resource URL |
 | 13 | **PostgreSQL** | System of record cho Identity Verification Platform | Session, run, check, field, inbox, result và history | Amazon RDS PostgreSQL 17 Multi-AZ | Encrypted RDS/PITR | Không — private data subnet | Không lưu binary media SDK flow |
 
-### 2.1.4. Luồng dữ liệu OCR/eKYC
+### 2.2.4. Luồng dữ liệu OCR/eKYC
 
 Mobile/Web luôn gọi VHM BFF để tạo phiên trước. Sau khi nhận Client UUID/proof và
 run context, eKYC SDK gửi init/OCR/liveness qua BFF; BFF stream xuống IVP và IVP
@@ -492,7 +464,7 @@ Luồng này phải tuân thủ `DP-01`, `MEDIA-01`, `CRED-01`, `RESULT-01`, `DA
 và `RETRY-01`. Network allowlist, TLS, SDK integrity, data location, retention,
 subprocessor và incident handling là các gate được chi tiết tại mục 7 và Appendix A.
 
-### 2.1.5. Trust Boundary
+### 2.2.5. Trust Boundary
 
 | **Boundary** | **Luồng** | **Mức tin cậy** | **Kiểm soát bắt buộc** |
 | --- | --- | --- | --- |
@@ -545,7 +517,7 @@ Caller identity, workload identity và object-level authorization là các kiể
 độc lập. Với callback, BFF chỉ áp chính sách ingress và route body/header; IVP sở
 hữu authentication, binding, replay/dedupe và durable inbox.
 
-### 2.1.6. Journey Policy Model
+### 2.2.6. Journey Policy Model
 
 | **Journey** | **Step bắt buộc** | **Kết quả Platform** | **Quy tắc sử dụng** |
 | --- | --- | --- | --- |
@@ -556,7 +528,7 @@ Backend chỉ chấp nhận `OCR_ONLY` hoặc `FULL_EKYC`, document type
 `NATIONAL_ID_CHIP` và channel `MOBILE_APP`/`WEB_APP`. Journey được resolve từ use
 case đã được phê duyệt; client không được tự đổi flow.
 
-### 2.1.7. Channel Capability Matrix
+### 2.2.7. Channel Capability Matrix
 
 | **Capability** | **Mobile** | **Web** | **Quy tắc** |
 | --- | --- | --- | --- |
@@ -566,32 +538,32 @@ case đã được phê duyệt; client không được tự đổi flow.
 | Face matching | Qua eKYC Backend | Qua eKYC Backend | Chỉ official result được dùng cho decision |
 | Resume | Query backend status trước khi resume | Query backend status sau refresh/reopen | Không lưu VHM SDK session token dài hạn; unsupported resume chuyển retry |
 
-### 2.1.8. Thông tin dữ liệu
+### 2.2.8. Thông tin dữ liệu
 
 | **Loại dữ liệu** | **Ví dụ** | **Phân loại** | **Quy tắc lưu trữ** | **Bảo mật/Logic** |
 | --- | --- | --- | --- | --- |
-| Internal session | `verificationId`, domain, purpose | L2 | PostgreSQL | UUID random; domain/object isolation |
-| Business references | `businessRef`, `subjectRef` | L2 | PostgreSQL | Opaque; không nhúng PII |
-| Provider correlation | `verificationId` truyền dưới dạng Client UUID; `providerSessionId` nếu có | L2/Internal | PostgreSQL | Client UUID do VHM sở hữu; provider session chỉ là optional external reference |
-| State/timestamps | status, attempts, expiry | L2 | PostgreSQL | Guard + optimistic lock + append-only history |
-| OCR fields | document number, name, DOB, address | L3 | Field-level encrypted; chỉ bộ field cố định đã phê duyệt | Mask theo Result API contract |
-| Confidence/warnings | score, reason code | L2/L3 | Check table/JSONB | Versioned mapping, hạn chế UI |
-| Liveness/face result | status, score | L3/Biometric-related | Status/score tối thiểu | Không lưu video/template tại VHM |
-| Resource URL | front/back/video URL | L3 | Không persist | Không log; không fetch tự động |
-| Callback payload | Payload tối thiểu phục vụ normalize | L3/L4 | Mã hóa trong Callback Inbox, TTL ngắn và purge sau xử lý | Không log; không lưu vào result/history |
-| Consent | purpose/version/time | L3 | Consent system + reference | Purpose-bound, audit được |
+| Internal session | `verificationId`, domain, purpose | Internal | PostgreSQL | UUID random; domain/object isolation |
+| Business references | `businessRef`, `subjectRef` | Personal-reference | PostgreSQL | Opaque; không nhúng PII |
+| Provider correlation | `verificationId` truyền dưới dạng Client UUID; `providerSessionId` nếu có | Internal | PostgreSQL | Client UUID do VHM sở hữu; provider session chỉ là optional external reference |
+| State/timestamps | status, attempts, expiry | Internal | PostgreSQL | Guard + optimistic lock + append-only history |
+| OCR fields | document number, name, DOB, address | Personal data | Field-level encrypted; chỉ bộ field cố định đã phê duyệt | Mask theo Result API contract |
+| Confidence/warnings | score, reason code | Sensitive inference | Check table/JSONB | Versioned mapping, hạn chế UI |
+| Liveness/face result | status, score | Biometric-related sensitive | Status/score tối thiểu | Không lưu video/template tại VHM |
+| Resource URL | front/back/video URL | Sensitive | Không persist | Không log; không fetch tự động |
+| Callback payload | Payload tối thiểu phục vụ normalize | Sensitive | Mã hóa trong Callback Inbox, TTL ngắn và purge sau xử lý | Không log; không lưu vào result/history |
+| Consent | purpose/version/time | Personal/compliance | Consent system + reference | Purpose-bound, audit được |
 | Credential/token | Provider API key, callback client secret, VHM SDK token-signing key | Secret | VHM Secret Manager/IAM; workload memory khi sử dụng | Không DB/log/client binary |
 
-## 2.2. Session Configuration
+## 2.3. Session Configuration
 
-### 2.2.1. User Authentication Session
+### 2.3.1. User Authentication Session
 
 - Do IAM/BFF quản lý qua OIDC/JWT.
 - Identity Verification Platform không tự quản lý login session; VHM BFF xác thực
   user/service và truyền authorized context bằng workload identity.
 - Backend phải xác minh user/service có quyền với `businessRef` trước mọi mutation/read.
 
-### 2.2.2. Verification Session
+### 2.3.2. Verification Session
 
 | **Thuộc tính** | **Baseline** |
 | --- | --- |
@@ -608,7 +580,7 @@ case đã được phê duyệt; client không được tự đổi flow.
 | Channel | `MOBILE_APP` hoặc `WEB_APP`; ghi nhận tại session/run |
 | Capability | Camera/liveness capability là client hint; backend validate theo Mobile/Web compatibility policy |
 
-### 2.2.3. Verification Session State Machine (L3 supporting)
+### 2.3.3. Verification Session State Machine (L2 optional)
 
 Đây là state machine chi tiết của một thực thể `IdentityVerification`. Các state
 đều là trạng thái bền được lưu trong PostgreSQL; bảng transition ngay dưới sơ đồ
@@ -646,7 +618,7 @@ stateDiagram-v2
     EXPIRED --> [*]
 ```
 
-### 2.2.4. State Transition Guard
+### 2.3.4. State Transition Guard
 
 | **From** | **To** | **Điều kiện** | **Tác động** |
 | --- | --- | --- | --- |
@@ -661,160 +633,6 @@ stateDiagram-v2
 | Any non-terminal | EXPIRED | `expiresAt < now`, chưa final | History + retry eligibility |
 | Terminal | Any | Không cho chuyển ngược | Callback/client event trễ chỉ ghi audit |
 
-## 2.3. Internal Component Design (L3 supporting)
-
-Module view dưới đây chỉ mở cấu trúc bên trong Identity Verification Platform.
-VHM BFF là component đứng trước IVP nên không nằm trong module view này. Mũi tên
-biểu diễn phụ thuộc tĩnh của module, không biểu diễn thứ tự runtime.
-
-```mermaid
-flowchart TD
-    subgraph IVP["Identity Verification Platform — module view"]
-        subgraph ADIN["adapter.in"]
-            API["Verification / Result API"]:::ad
-            PROXY["SDK Proxy API<br/>bounded streaming"]:::ad
-            CALLBACK["Callback API<br/>authentication / inbox"]:::ad
-            SCHEDULER["Reconciliation Scheduler"]:::ad
-        end
-        subgraph APP["application"]
-            USECASES["Verification Use Cases"]:::ap
-            PROXYUC["SDK Proxy Use Case<br/>session / run guard"]:::ap
-            PROCESSOR["Result Processing Use Cases"]:::ap
-            PORTS["Provider / Persistence Ports"]:::ap
-        end
-        subgraph CORE_DOMAIN["core domain"]
-            SESSION["Verification Session Core"]:::dm
-            POLICY["Canonical Decision Policy"]:::dm
-        end
-        subgraph ADOUT["adapter.out"]
-            SDKOUT["eKYC Backend Streaming Adapter<br/>credential injection"]:::ad
-            PERSIST["PostgreSQL Adapter"]:::ad
-        end
-    end
-
-    API --> USECASES
-    PROXY --> PROXYUC
-    CALLBACK --> PROCESSOR
-    SCHEDULER --> PROCESSOR
-    USECASES --> SESSION
-    PROXYUC --> SESSION
-    PROCESSOR --> SESSION
-    PROCESSOR --> POLICY
-    USECASES --> PORTS
-    PROXYUC --> PORTS
-    PROCESSOR --> PORTS
-    SDKOUT -.implements.-> PORTS
-    PERSIST -.implements.-> PORTS
-
-    classDef ad fill:#4a3a2d,stroke:#d99a4a,color:#fff;
-    classDef ap fill:#2d4a3e,stroke:#5fb37a,color:#fff;
-    classDef dm fill:#1f3a5f,stroke:#4a90d9,color:#fff;
-```
-
-**Chú giải Module L3:** nâu = adapter; xanh lá = application; xanh dương =
-domain; nét đứt `implements` = adapter hiện thực port do application sở hữu.
-
-### 2.3.1. VerificationApplicationService
-
-- Kiểm tra domain/use case đã được phê duyệt.
-- Kiểm tra business reference và quyền caller theo BFF-authorized context.
-- Validate consent đúng subject, purpose và version.
-- Resolve journey, timeout, quota và decision policy version.
-- Bảo đảm unique active session và create idempotent.
-- Sinh `verificationId`/Client UUID và integrity proof bằng secret phía server theo
-  SDK security contract; persist trước khi trả cho client.
-- Trả SDK bootstrap/run context tối thiểu; không gọi eKYC Backend để tạo phiên thay SDK.
-
-### 2.3.2. CoreConfigurationService
-
-Core config tối thiểu:
-
-| **Nhóm cấu hình** | **Thuộc tính** |
-| --- | --- |
-| Identity context | `domain`, `useCase`, `purpose` |
-| Journey/channel | `OCR_ONLY`, `FULL_EKYC`, `NATIONAL_ID_CHIP`, `MOBILE_APP`, `WEB_APP` |
-| Result contract | `fixedResultSchemaVersion` |
-| Control | `maxAttempts`, `rateLimit`, `decisionPolicyVersion` |
-| Governance | `owner`, `PIC` |
-
-- Config versioned và environment-scoped.
-- Thay đổi bộ field cố định/decision policy cần Data Privacy/Risk approval tương ứng.
-- Secret không nằm trong Core config.
-
-### 2.3.3. SDKProxyService
-
-- Nhận init/OCR/liveness từ BFF sau khi BFF đã xác thực caller/session token.
-- Revalidate `verificationId`, `runId`, journey, endpoint order, expiry và request-size policy.
-- Thực thi `DP-01`, `MEDIA-01` và `CRED-01` tại outbound adapter.
-- Chỉ ghi metadata allowlist: correlation ID, verification/run ID, endpoint,
-  content type/length, duration, upstream status và canonical error code.
-- Provider response đồng bộ không finalize business state theo `RESULT-01`.
-
-### 2.3.4. CallbackAuthenticator
-
-- Baseline dùng Dynamic Token/Bearer token ngắn hạn do hệ thống VHM cấp theo callback
-  contract; validate issuer/audience hoặc token endpoint contract, expiry và scope.
-- Token issuance ủy quyền cho VHM IAM theo OAuth2 Client Credentials/platform
-  standard; IVP không tự triển khai authorization server.
-- Fixed Token chỉ được dùng khi eKYC Backend không hỗ trợ Dynamic Token và có risk
-  acceptance, rotation/revocation runbook được ANBM phê duyệt.
-- Validate callback token trước khi parse sâu; dedupe/replay dựa trên event ID hoặc
-  fallback Client UUID + result version/payload hash đã được contract hóa.
-- IP allowlist chỉ là lớp bổ sung, không thay authentication.
-- Reject trước khi parse sâu nếu payload quá lớn.
-- Hỗ trợ token/key rotation overlap, không gây gián đoạn callback đang bay.
-
-### 2.3.5. CallbackInboxService
-
-- Idempotency key dùng `providerEventId`; chỉ fallback Client UUID + result
-  version/payload hash khi provider contract xác nhận không cung cấp event ID.
-- Sau khi xác thực, lưu payload tối thiểu đã redaction và mã hóa trước khi xử lý business.
-- Duplicate đã nhận durable trả 2xx, không chạy side effect lần hai.
-- Inbox states: `RECEIVED`, `PROCESSING`, `PROCESSED`, `FAILED`, `QUARANTINED`.
-- Encrypted payload chỉ tồn tại trong inbox theo TTL ngắn và được purge sau xử lý.
-  Không lưu payload vào result/history/log; quarantine cần incident ticket và audit.
-
-### 2.3.6. ResultNormalizer
-
-| **Nhóm Canonical Result** | **Thuộc tính chính** |
-| --- | --- |
-| Metadata | `provider`, `clientUuid`, optional `providerSessionId`, `schemaVersion` |
-| Document | `type`, `status`, `fields[]`, `overallConfidence`, `warnings[]` |
-| Liveness | `status`, `score` |
-| Face match | `status`, `similarity` |
-| Provider conclusion | `status`, `reasonCodes[]` |
-
-Normalizer phải:
-
-- Chịu được optional field, null, `N/A` và provider thêm field mới.
-- Parse score/boolean/date an toàn, validate range.
-- Quarantine khi thiếu/không khớp Client UUID, schema không hỗ trợ hoặc payload sai type nghiêm trọng.
-- Giữ provider code phục vụ audit nhưng chỉ trả canonical code cho BFF/VHM Application.
-- Không fetch resource URL tự động.
-
-### 2.3.7. VerificationDecisionPolicy
-
-Decision model:
-
-| **Input** | **Vai trò trong quyết định VHM** |
-| --- | --- |
-| Document OCR/quality | Xác định OCR pass, chất lượng và dữ liệu được phép chuẩn hóa. |
-| Liveness | Bắt buộc đối với `FULL_EKYC`; không áp dụng cho `OCR_ONLY`. |
-| Face match | Đầu vào xác minh khuôn mặt theo policy version. |
-| Provider warning/conclusion | Tín hiệu tham khảo; luôn ánh xạ sang canonical code. |
-| Attempt/policy context | Journey, attempt, config và decision policy version. |
-
-- Sử dụng fixed mapping policy đã được phê duyệt và version hóa.
-- Threshold không hard-code trong Java.
-- Provider conclusion là input, không tự động là business decision.
-- Lưu `decisionPolicyVersion` và canonical reason codes tại thời điểm quyết định.
-
-### 2.3.8. ResultService
-
-- Kiểm tra service identity, domain và business-object authorization.
-- Trả một Canonical Result schema với bộ field cố định đã được phê duyệt.
-- Mask mặc định; unmask cần elevated permission + reason + audit.
-- Không expose resource URL, raw warning hoặc internal threshold.
 
 ## 2.4. Data Model
 
@@ -855,221 +673,6 @@ flowchart TB
 IVP chỉ lưu reference trong session và không tạo FK vật lý tới dữ liệu nghiệp vụ.
 Các cạnh nét đứt là tham chiếu logic bằng ID, không phải FK vật lý xuyên system.
 
-### 2.4.2. Physical ERD (L3 supporting)
-
-```mermaid
-erDiagram
-    IDENTITY_VERIFICATION {
-        uuid verification_id PK
-        varchar domain
-        varchar use_case
-        varchar business_ref
-        varchar subject_ref
-        varchar purpose
-        varchar journey
-        varchar provider
-        varchar provider_environment
-        varchar provider_session_id
-        varchar status
-        varchar decision
-        varchar policy_version
-        varchar document_type
-        varchar channel
-        uuid retry_of_verification_id FK
-        int attempt_no
-        timestamptz expires_at
-        bigint row_version
-    }
-    IDENTITY_VERIFICATION_CHECK {
-        uuid check_id PK
-        uuid verification_id FK
-        varchar check_type
-        varchar status
-        numeric score
-        varchar threshold_version
-        varchar provider_code
-        jsonb reason_codes
-    }
-    IDENTITY_RESULT_FIELD {
-        uuid field_id PK
-        uuid verification_id FK
-        varchar field_name
-        text normalized_value_enc
-        varchar value_hash
-        numeric confidence
-        varchar source
-    }
-    VERIFICATION_CALLBACK_INBOX {
-        uuid inbox_id PK
-        uuid verification_id FK
-        varchar provider
-        varchar provider_event_id
-        varchar provider_session_id
-        varchar payload_hash
-        bytes encrypted_payload
-        varchar status
-    }
-    IDENTITY_VERIFICATION_HISTORY {
-        uuid history_id PK
-        uuid verification_id FK
-        varchar from_status
-        varchar to_status
-        varchar reason_code
-        varchar actor_type
-    }
-    IDENTITY_VERIFICATION ||--o{ IDENTITY_VERIFICATION_CHECK : has
-    IDENTITY_VERIFICATION ||--o{ IDENTITY_RESULT_FIELD : extracts
-    IDENTITY_VERIFICATION ||--o{ IDENTITY_VERIFICATION_HISTORY : records
-    IDENTITY_VERIFICATION ||--o{ VERIFICATION_CALLBACK_INBOX : correlates
-```
-
-### 2.4.3. Bảng `identity_verification`
-
-```sql
-CREATE TABLE identity_verification (
-    verification_id             uuid PRIMARY KEY,
-    domain                       varchar(50)  NOT NULL,
-    use_case                     varchar(80)  NOT NULL,
-    business_ref                 varchar(150) NOT NULL,
-    subject_ref                  varchar(150) NOT NULL,
-    purpose                      varchar(80)  NOT NULL,
-    journey                      varchar(40)  NOT NULL,
-    document_type                varchar(40)  NOT NULL,
-    channel                      varchar(30)  NOT NULL,
-    provider                     varchar(40)  NOT NULL,
-    provider_environment         varchar(30)  NOT NULL,
-    provider_session_id          varchar(150),
-    status                       varchar(30)  NOT NULL,
-    decision                     varchar(30),
-    decision_reason_codes        jsonb        NOT NULL DEFAULT '[]',
-    policy_version               varchar(80)  NOT NULL,
-    result_schema_version        varchar(30),
-    result_source                varchar(30),
-    consent_reference_id         varchar(150) NOT NULL,
-    retry_of_verification_id     uuid,
-    attempt_no                   integer      NOT NULL DEFAULT 1,
-    run_id                       uuid,
-    run_lease_expires_at         timestamptz,
-    sdk_version                  varchar(50),
-    app_version                  varchar(50),
-    expires_at                   timestamptz  NOT NULL,
-    started_at                   timestamptz,
-    submitted_at                 timestamptz,
-    completed_at                 timestamptz,
-    reconciliation_due_at       timestamptz,
-    created_by                   varchar(150) NOT NULL,
-    created_at                   timestamptz  NOT NULL,
-    updated_at                   timestamptz  NOT NULL,
-    row_version                  bigint       NOT NULL DEFAULT 0,
-    CONSTRAINT fk_iv_retry_of FOREIGN KEY (retry_of_verification_id)
-      REFERENCES identity_verification(verification_id),
-    CONSTRAINT uk_iv_run UNIQUE (run_id),
-    CONSTRAINT uk_iv_provider_session UNIQUE (
-      provider, provider_environment, provider_session_id
-    )
-);
-
-CREATE INDEX idx_iv_business_ref
-  ON identity_verification(domain, business_ref, created_at DESC);
-
-CREATE INDEX idx_iv_subject_ref
-  ON identity_verification(domain, subject_ref, created_at DESC);
-
-CREATE INDEX idx_iv_reconciliation
-  ON identity_verification(status, reconciliation_due_at)
-  WHERE status IN ('SUBMITTED', 'PROCESSING');
-
-CREATE UNIQUE INDEX uk_iv_active_subject
-  ON identity_verification(
-    domain, use_case, business_ref, subject_ref, purpose, journey
-  )
-  WHERE status IN ('INITIATED', 'SDK_STARTED', 'SUBMITTED', 'PROCESSING');
-```
-
-`provider_session_id` có thể null trước khi provider session được tạo. PostgreSQL
-cho phép nhiều null dưới unique constraint; adapter phải bổ sung validation khi bind.
-
-### 2.4.4. Bảng `identity_verification_check`
-
-```sql
-CREATE TABLE identity_verification_check (
-    check_id               uuid PRIMARY KEY,
-    verification_id        uuid        NOT NULL
-      REFERENCES identity_verification(verification_id),
-    check_type              varchar(40) NOT NULL,
-    status                  varchar(30) NOT NULL,
-    score                   numeric(12,6),
-    threshold_version       varchar(80),
-    provider_code           varchar(80),
-    reason_codes            jsonb       NOT NULL DEFAULT '[]',
-    warning_data            jsonb       NOT NULL DEFAULT '[]',
-    checked_at              timestamptz,
-    created_at              timestamptz NOT NULL,
-    updated_at              timestamptz NOT NULL,
-    CONSTRAINT uk_iv_check UNIQUE (verification_id, check_type)
-);
-```
-
-`check_type` baseline:
-
-- `DOCUMENT_OCR`
-- `DOCUMENT_QUALITY`
-- `LIVENESS`
-- `FACE_MATCH`
-- `PROVIDER_CONCLUSION`
-
-### 2.4.5. Bảng `identity_result_field`
-
-```sql
-CREATE TABLE identity_result_field (
-    field_id                  uuid PRIMARY KEY,
-    verification_id           uuid         NOT NULL
-      REFERENCES identity_verification(verification_id),
-    field_name                varchar(80)  NOT NULL,
-    normalized_value_enc      text,
-    value_hash                varchar(128),
-    confidence                numeric(12,6),
-    source                    varchar(30)   NOT NULL,
-    created_at                timestamptz   NOT NULL,
-    CONSTRAINT uk_iv_result_field UNIQUE (verification_id, field_name)
-);
-```
-
-- `normalized_value_enc`: application/column-level encryption theo platform standard.
-- `value_hash`: chỉ tạo cho field exact-match/dedup; dùng HMAC-SHA256 với key riêng,
-  không dùng plain SHA-256 cho CCCD.
-- Không index plaintext PII.
-- Retention field có thể ngắn hơn session metadata và phải có deletion job riêng.
-
-### 2.4.6. Bảng Callback Inbox
-
-```sql
-CREATE TABLE verification_callback_inbox (
-    inbox_id                 uuid PRIMARY KEY,
-    provider                 varchar(40)  NOT NULL,
-    provider_event_id        varchar(150),
-    provider_session_id      varchar(150),
-    verification_id         uuid NOT NULL REFERENCES identity_verification(verification_id),
-    result_version           varchar(80),
-    payload_hash             varchar(128) NOT NULL,
-    encrypted_payload        bytea        NOT NULL,
-    auth_subject             varchar(150),
-    status                   varchar(30)  NOT NULL,
-    received_at              timestamptz  NOT NULL,
-    processing_started_at    timestamptz,
-    processed_at             timestamptz,
-    failure_code             varchar(80),
-    failure_message_masked   varchar(500),
-    expires_at               timestamptz  NOT NULL,
-    CONSTRAINT uk_callback_event UNIQUE(provider, provider_event_id),
-    CONSTRAINT uk_callback_payload UNIQUE(provider, verification_id, payload_hash)
-);
-```
-
-Nếu provider không có event ID, uniqueness fallback theo Client UUID/
-`verification_id` + payload hash.
-`encrypted_payload` chỉ chứa dữ liệu tối thiểu sau redaction để worker normalize,
-có TTL và purge job; không được sao chép sang result/history/log.
 
 ## 2.5. Concurrency, Idempotency và Transaction
 
@@ -1217,264 +820,10 @@ Không gọi eKYC Backend hoặc dependency ngoài transaction boundary bên tro
 | 15 | Lấy result chủ động | Provider-specific, internal adapter only | Reconciliation | eKYC Backend | REST Sync | Client UUID/provider correlation ID |
 | 16 | Lấy history | `GET /internal/v1/identity-verifications/{id}/history` | Ops/Audit | Verification API | REST Sync | State/access history theo quyền |
 
-## 4.2. Internal API Contract
 
-### 4.2.1. Tạo phiên xác thực
+## 4.2. Callback eKYC Backend
 
-```http
-POST /internal/v1/identity-verifications
-Authorization: Bearer <user-or-service-token>
-Idempotency-Key: 6a2ac410-8f08-4c86-bfb6-8f142169483c
-X-Correlation-Id: 38de4a70-513a-4f61-80ff-3ea914137f65
-Content-Type: application/json
-```
-
-```json
-{
-  "domain": "DOMAIN_CODE",
-  "useCase": "SALE_ONBOARDING",
-  "businessRef": "registration-20260806-000001",
-  "subjectRef": "applicant-01",
-  "purpose": "IDENTITY_VERIFICATION",
-  "requestedJourney": "FULL_EKYC",
-  "documentType": "NATIONAL_ID_CHIP",
-  "channel": "MOBILE_APP",
-  "client": {
-    "appVersion": "<approved-version>",
-    "sdkVersion": "<approved-version>"
-  },
-  "capabilities": {
-    "camera": true,
-    "liveness": true
-  },
-  "consentReferenceId": "consent-20260806-000001"
-}
-```
-
-Validation:
-
-- Domain code/use case đã được phê duyệt cho `OCR_ONLY` hoặc `FULL_EKYC`.
-- Business/subject reference tồn tại và caller được quyền.
-- Consent đúng subject/purpose/version và chưa bị rút.
-- `documentType=NATIONAL_ID_CHIP`, `channel` thuộc `MOBILE_APP` hoặc `WEB_APP`.
-- Capability và app/SDK version phù hợp compatibility policy của channel.
-- Không có active session khác hoặc trả session cùng idempotency.
-- Không vượt rate/attempt/quota.
-
-```json
-{
-  "verificationId": "f47ed948-600b-4cbb-8f72-1306ccae1cf1",
-  "status": "INITIATED",
-  "resolvedJourney": "FULL_EKYC",
-  "resolvedFlow": "DOCUMENT_LIVENESS_FACE",
-  "documentType": "NATIONAL_ID_CHIP",
-  "channel": "MOBILE_APP",
-  "expiresAt": "2026-08-06T11:15:00+07:00",
-  "sdkBootstrap": {
-    "runId": "03d2866a-c267-47d0-8f49-64b06ef32218",
-    "clientUuid": "f47ed948-600b-4cbb-8f72-1306ccae1cf1",
-    "clientUuidProof": "opaque-integrity-proof",
-    "vhmSdkSessionToken": "opaque-short-lived-token",
-    "vhmSdkSessionTokenExpiresAt": "2026-08-06T10:50:00+07:00",
-    "endpointBaseUrl": "https://<vhm-bff>/ekyc/sdk",
-    "configurationRef": "mobile-full-ekyc-v1"
-  }
-}
-```
-
-Không trả provider API key/app secret, callback credential, raw provider configuration,
-threshold hoặc policy detail xuống client. Create idempotency replay trả cùng
-session; VHM SDK session token cũ hết hạn không được replay và client gọi Bootstrap API.
-
-Ví dụ trên minh họa `MOBILE_APP`; `WEB_APP` dùng cùng contract và chỉ thay channel,
-client version/capability tương ứng, không thay đổi official-result flow.
-
-### 4.2.2. SDK Bootstrap
-
-```http
-POST /internal/v1/identity-verifications/{verificationId}/bootstrap
-Authorization: Bearer <authorized-token>
-Idempotency-Key: <uuid>
-Content-Type: application/json
-```
-
-```json
-{
-  "appVersion": "<approved-version>",
-  "sdkVersion": "<approved-version>",
-  "capabilities": {
-    "camera": true,
-    "liveness": true
-  }
-}
-```
-
-Server chỉ cấp bootstrap khi session còn hiệu lực, chưa terminal, version/capability
-nằm trong allowlist và không có run/bootstrap lease khác đang active. VHM SDK
-session token bind với `verificationId`, `runId`, journey, document type, channel,
-environment và expiry; Client UUID proof được IVP sinh bằng secret phía server.
-
-### 4.2.3. SDK started
-
-```http
-POST /internal/v1/identity-verifications/{id}/started
-```
-
-```json
-{
-  "runId": "03d2866a-c267-47d0-8f49-64b06ef32218",
-  "channel": "MOBILE_APP",
-  "appVersion": "<approved-version>",
-  "sdkVersion": "<approved-version>"
-}
-```
-
-- `runId` do Create/Bootstrap API cấp và phải bind đúng session/token.
-- Cùng `runId` xử lý idempotent.
-- Run khác khi lease còn active trả `409 IV_SDK_RUN_ACTIVE` trên cả Mobile và Web.
-- Session hết hạn trả `409 IV_SESSION_EXPIRED`.
-
-### 4.2.4. Client submitted
-
-```json
-{
-  "runId": "03d2866a-c267-47d0-8f49-64b06ef32218",
-  "sdkCompletionStatus": "COMPLETED",
-  "sdkCompletionCode": "OPTIONAL_UNTRUSTED_CODE"
-}
-```
-
-- Chỉ chuyển `SDK_STARTED → SUBMITTED` nếu session chưa terminal.
-- Không nhận OCR fields, score, provider result, media reference hoặc token từ Mobile/Web.
-- Không đánh dấu `COMPLETED`, `VERIFIED` hoặc `REJECTED` từ client event.
-- Sau completion/close event, VHM Application hiển thị “Đang xử lý kết quả” và query status.
-- Nếu callback đã final, giữ terminal state và audit late client event.
-
-### 4.2.5. SDK error và Cancel
-
-SDK error:
-
-```json
-{
-  "runId": "03d2866a-c267-47d0-8f49-64b06ef32218",
-  "category": "CAMERA_PERMISSION_DENIED",
-  "sdkCode": "MASKED_CLIENT_CODE",
-  "retryable": true
-}
-```
-
-`retryable` chỉ là client hint; backend resolve theo canonical policy. SDK error
-không tạo identity decision. Không nhận raw message, stack trace chứa PII hoặc SDK payload.
-
-Cancel:
-
-```json
-{
-  "runId": "03d2866a-c267-47d0-8f49-64b06ef32218",
-  "reason": "USER_CANCELLED"
-}
-```
-
-Cancel hợp lệ từ `INITIATED`/`SDK_STARTED` chuyển `CANCELLED`. Cancel sau
-`SUBMITTED` hoặc terminal chỉ được audit, không đảo state.
-
-### 4.2.6. Lấy trạng thái
-
-```json
-{
-  "verificationId": "f47ed948-600b-4cbb-8f72-1306ccae1cf1",
-  "status": "PROCESSING",
-  "journey": "FULL_EKYC",
-  "documentType": "NATIONAL_ID_CHIP",
-  "nextAction": "WAIT_FOR_RESULT",
-  "expiresAt": "2026-08-06T11:15:00+07:00",
-  "retry": {
-    "allowed": false,
-    "remainingAttempts": 2
-  }
-}
-```
-
-Status API không trả raw provider state hoặc PII không cần cho UX.
-
-### 4.2.7. Whole-attempt retry
-
-```http
-POST /internal/v1/identity-verifications/{verificationId}/retry
-Authorization: Bearer <authorized-token>
-Idempotency-Key: <uuid>
-Content-Type: application/json
-```
-
-```json
-{
-  "reason": "DOCUMENT_QUALITY_RETRY"
-}
-```
-
-- Chỉ retry từ `NEED_RETRY`, `PROVIDER_ERROR` hoặc `EXPIRED` theo policy.
-- Lỗi tích hợp không retryable chỉ cho retry sau khi Ops xác nhận nguyên nhân đã sửa.
-- Sinh verification/provider session mới và link `retryOfVerificationId`.
-- Không reuse result, history, bootstrap hoặc ảnh của attempt trước.
-- Request retry trùng chỉ tạo một attempt mới.
-
-### 4.2.8. Result API
-
-```http
-GET /internal/v1/identity-verifications/{verificationId}/result
-Authorization: Bearer <authorized-token>
-```
-
-```json
-{
-  "verificationId": "f47ed948-600b-4cbb-8f72-1306ccae1cf1",
-  "journey": "FULL_EKYC",
-  "documentType": "NATIONAL_ID_CHIP",
-  "status": "VERIFIED",
-  "outcome": {
-    "ocr": "PASSED",
-    "ekyc": "VERIFIED"
-  },
-  "reasonCodes": [],
-  "document": {
-    "documentNumber": "******1234",
-    "fullName": "NGUYEN V** A",
-    "dateOfBirth": "1990-**-**"
-  },
-  "policyVersion": "identity-policy-1.0",
-  "completedAt": "2026-08-06T10:46:30+07:00"
-}
-```
-
-- Validate workload/user identity, domain và business-object ownership.
-- Chỉ trả fixed approved field set; mask sensitive fields mặc định.
-- Unmask cần explicit role/scope, reason và access audit.
-- Không trả raw provider payload/code, resource URL, media hoặc threshold.
-- `200` khi result đã final; `409 IV_RESULT_NOT_READY` khi session chưa final.
-
-### 4.2.9. Error contract
-
-| **HTTP** | **Code** | **Ý nghĩa** | **Retry** |
-| --- | --- | --- | --- |
-| 400 | `IV_INVALID_REQUEST` | Sai schema/business input | Không, sửa request |
-| 401 | `IV_UNAUTHENTICATED` | Thiếu/sai identity | Re-auth |
-| 403 | `IV_FORBIDDEN` | Không có quyền object/domain | Không |
-| 404 | `IV_NOT_FOUND` | Không tồn tại trong caller scope | Không |
-| 409 | `IV_ACTIVE_SESSION_EXISTS` | Đã có session active | Dùng session hiện hữu |
-| 409 | `IV_IDEMPOTENCY_CONFLICT` | Cùng key khác payload | Key/request mới |
-| 409 | `IV_INVALID_STATE` | Action không hợp lệ với state | Query status |
-| 409 | `IV_SDK_RUN_ACTIVE` | Đã có SDK run active | Resume/query status |
-| 409 | `IV_RESULT_NOT_READY` | Canonical Result chưa final | Query status |
-| 422 | `IV_CHANNEL_CAPABILITY_REQUIRED` | Mobile/Web thiếu capability bắt buộc | Khắc phục permission hoặc dùng client phù hợp |
-| 422 | `IV_UNSUPPORTED_CLIENT` | Client/SDK version không tương thích | Upgrade VHM Application |
-| 429 | `IV_ATTEMPT_LIMIT_EXCEEDED` | Vượt quota/attempt | Không tự retry |
-| 502 | `IV_PROVIDER_BAD_RESPONSE` | Provider response sai contract | Reconciliation/Ops |
-| 503 | `IV_PROVIDER_UNAVAILABLE` | eKYC Backend unavailable | Retry có backoff |
-| 504 | `IV_PROVIDER_TIMEOUT` | Dependency timeout | Retry có backoff |
-
-## 4.3. Callback eKYC Backend
-
-### 4.3.1. Endpoint
+### 4.2.1. Endpoint
 
 ```http
 POST /integration/v1/ekyc/callback
@@ -1500,36 +849,8 @@ vẫn trả phải được redaction trước khi lưu inbox và không đượ
 `providerSessionId` có thể optional nếu provider contract không cung cấp, khi đó
 dedupe dùng Client UUID + result version/payload hash.
 
-### 4.3.2. Callback Processing Activity (L3 supporting)
 
-```mermaid
-flowchart TD
-    START(["Bắt đầu — nhận callback"]):::entity
-    VERIFY{"WAF, envelope, auth, replay<br/>và session binding hợp lệ?"}:::infra
-    REJECT["Từ chối và ghi security audit"]:::sensitive
-    INBOX[("Redact, hash, mã hóa payload<br/>và durable inbox")]:::datastore
-    ACK(["Kết thúc HTTP — trả 2xx"]):::entity
-    NORMALIZE{"Worker claim và normalize<br/>canonical schema thành công?"}:::bc
-    QUARANTINE["Quarantine và tạo operational alert"]:::sensitive
-    PERSIST[("Áp fixed policy; lưu result,<br/>state và history")]:::datastore
-    DONE(["Kết thúc xử lý"]):::entity
-
-    START --> VERIFY
-    VERIFY -->|không| REJECT --> DONE
-    VERIFY -->|có| INBOX
-    INBOX --> ACK
-    INBOX --> NORMALIZE
-    NORMALIZE -->|không| QUARANTINE --> DONE
-    NORMALIZE -->|có| PERSIST --> DONE
-
-    classDef bc fill:#1f3a5f,stroke:#4a90d9,color:#fff;
-    classDef entity fill:#3a3320,stroke:#d9b84a,color:#fff;
-    classDef datastore fill:#3a2d4a,stroke:#a06fd9,color:#fff;
-    classDef sensitive fill:#5a2d2d,stroke:#d96f6f,color:#fff;
-    classDef infra fill:#444,stroke:#aaa,color:#fff;
-```
-
-### 4.3.3. Authentication và Idempotency
+### 4.2.2. Authentication và Idempotency
 
 | **Control** | **Yêu cầu** |
 | --- | --- |
@@ -1544,7 +865,7 @@ flowchart TD
 Authentication failure không insert business result và không thay đổi session.
 Duplicate đã durable trả 2xx nhưng không normalize/finalize lần hai.
 
-### 4.3.4. Callback response
+### 4.2.3. Callback response
 
 | **HTTP** | **Khi dùng** | **Provider action kỳ vọng** |
 | --- | --- | --- |
@@ -1554,40 +875,8 @@ Duplicate đã durable trả 2xx nhưng không normalize/finalize lần hai.
 | 429 | VHM rate limit theo contract | Retry backoff |
 | 500/503 | Chưa durable receive | Retry theo provider contract |
 
-## 4.4. Provider Adapter API
 
-```text
-proxyInitSession(context, requestStream) -> responseStream
-proxyOcr(context, multipartStream) -> responseStream
-proxyLiveness(context, multipartStream) -> responseStream
-getResult(clientUuid) -> ProviderResult
-normalizeResult(providerResult) -> CanonicalVerificationResult
-mapError(providerError) -> CanonicalProviderError
-```
-
-Provider Adapter phải:
-
-- Cô lập endpoint, credential, timeout, payload và error code.
-- Chỉ tích hợp một SDK/provider đã được phê duyệt.
-- Không để DTO provider đi vào controller hoặc VHM internal contract.
-- Không log request/response raw.
-- Dùng streaming/backpressure, timeout, bounded retry phù hợp, circuit breaker và metrics.
-- Không tự retry init/OCR/liveness sau khi đã bắt đầu gửi body; retry media là whole
-  attempt do SDK/session policy điều khiển để tránh gửi lặp hoặc ghép chéo ảnh.
-- Get Result chỉ được gọi bởi Reconciliation Job.
-
-### 4.4.1. Timeout/Retry Baseline
-
-| **Operation** | **Timeout** | **Retry** |
-| --- | --- | --- |
-| SDK init session proxy | Connect 2s; response timeout theo SDK contract | Chỉ retry trước khi gửi body và khi contract xác nhận idempotent |
-| OCR/liveness streaming | Connect 2s; upload/upstream timeout theo provider contract | Không transparent retry sau khi body bắt đầu; whole-attempt retry |
-| Get Result | Connect 2s, read 5s | Bounded theo reconciliation policy |
-| Callback ack | `<= 2s` sau durable inbox | Provider retry nếu không nhận 2xx |
-
-Không retry tự động cho 4xx business/schema. 401/403 phải alert Critical.
-
-## 4.5. Canonical Result Contract
+## 4.3. Canonical Result Contract
 
 ```json
 {
@@ -1628,7 +917,7 @@ Không retry tự động cho 4xx business/schema. 401/403 phải alert Critical
 }
 ```
 
-### 4.5.1. Normalization rules
+### 4.3.1. Normalization rules
 
 - External session/environment phải khớp verification mapping.
 - Critical fields thiếu hoặc sai type phải quarantine/alert.
@@ -1639,9 +928,9 @@ Không retry tự động cho 4xx business/schema. 401/403 phải alert Critical
 - Callback payload chỉ lưu mã hóa tạm thời trong inbox và purge theo TTL.
 - `ocrOutcome` và `ekycOutcome` luôn tách riêng.
 
-## 4.6. Decision Mapping
+## 4.4. Decision Mapping
 
-### 4.6.1. Baseline
+### 4.4.1. Baseline
 
 | **Input/result condition** | **Platform status** | **Next action** |
 | --- | --- | --- |
@@ -1658,7 +947,7 @@ Không retry tự động cho 4xx business/schema. 401/403 phải alert Critical
 Similarity/score đơn lẻ không đủ tạo `REJECTED`. Fixed mapping phải được
 Product/Risk/Architect phê duyệt, version hóa và contract-test.
 
-### 4.6.2. Reason Code Catalogue
+### 4.4.2. Reason Code Catalogue
 
 | **Canonical reason** | **Ý nghĩa** | **Retryable** |
 | --- | --- | --- |
@@ -1743,35 +1032,6 @@ flowchart TB
     classDef sensitive fill:#5a2d2d,stroke:#d96f6f,color:#fff;
 ```
 
-### 5.1.3. Official Result Sequence (L3 supporting)
-
-```mermaid
-sequenceDiagram
-    participant BACKEND as eKYC Backend (ext)
-    participant BFF as VHM BFF
-    participant CALLBACK as IVP Callback API
-    participant INBOX as Callback Inbox Store
-    participant PROCESSOR as Result Processor
-    participant STORE as Verification Store
-    participant RESULT as IVP Result API
-    participant APP as VHM Application
-    BACKEND->>BFF: Callback token + official result
-    BFF->>CALLBACK: Ingress policy + routed body/headers
-    CALLBACK->>CALLBACK: Auth + dedupe + schema + bind
-    CALLBACK->>INBOX: Encrypt minimal payload + durable insert
-    CALLBACK-->>BFF: 2xx durable acknowledgement
-    BFF-->>BACKEND: 2xx
-    PROCESSOR->>INBOX: Claim received callback
-    INBOX-->>PROCESSOR: Encrypted minimal payload
-    PROCESSOR->>PROCESSOR: Normalize + fixed decision mapping
-    PROCESSOR->>STORE: Persist result + state + history
-    APP->>BFF: Query status/result
-    BFF->>RESULT: Authorized query
-    RESULT->>STORE: Read authorized result
-    STORE-->>RESULT: Canonical Result
-    RESULT-->>BFF: Authorized masked result
-    BFF-->>APP: Authorized outcome/next action
-```
 
 ## 5.2. Data Flow quan trọng
 
@@ -1944,34 +1204,8 @@ sequenceDiagram
 Refresh/reopen/multi-tab phải query backend status. Web không lưu VHM SDK session token
 dài hạn và không tự tạo run mới khi lease còn active.
 
-### **5.2.5. Callback thành công và duplicate — Sequence L3 supporting**
 
-```mermaid
-sequenceDiagram
-    participant BACKEND as eKYC Backend (ext)
-    participant BFF as VHM BFF
-    participant CALLBACK as IVP Callback API
-    participant DB as PostgreSQL
-    participant WORKER as Inbox Worker
-    BACKEND->>BFF: Callback token + event E1
-    BFF->>CALLBACK: Ingress policy + routed callback
-    CALLBACK->>CALLBACK: Token auth + dedupe + bind
-    CALLBACK->>DB: INSERT inbox E1 + encrypted payload
-    DB-->>CALLBACK: Inserted
-    CALLBACK-->>BFF: 2xx
-    BFF-->>BACKEND: 2xx
-    WORKER->>DB: Lock E1/session
-    WORKER->>DB: Persist result + final state + history
-    BACKEND->>BFF: Retry event E1
-    BFF->>CALLBACK: Routed duplicate
-    CALLBACK->>DB: INSERT same dedupe key
-    DB-->>CALLBACK: Unique conflict / existing
-    CALLBACK-->>BFF: 2xx duplicate
-    BFF-->>BACKEND: 2xx duplicate
-    Note right of CALLBACK: No second normalize/finalize
-```
-
-### **5.2.6. Callback đến trước client submitted — Sequence L2**
+### **5.2.5. Callback đến trước client submitted — Sequence L2**
 
 ```mermaid
 sequenceDiagram
@@ -1991,38 +1225,8 @@ sequenceDiagram
 
 Client event không được đảo state hoặc ghi đè official result.
 
-### **5.2.7. Callback thất lạc - Reconciliation — Sequence L3 supporting**
 
-```mermaid
-sequenceDiagram
-    participant JOB as Reconciliation Job
-    participant DB as PostgreSQL
-    participant ADAPTER as Provider Adapter
-    participant BACKEND as eKYC Backend (ext)
-    participant PROCESSOR as Result Processor
-    JOB->>DB: Find due/stuck SUBMITTED/PROCESSING
-    DB-->>JOB: Bounded batch
-    loop Each due session
-        JOB->>ADAPTER: getResult(clientUuid)
-        ADAPTER->>BACKEND: Provider-specific Get Result
-        alt Final
-            BACKEND-->>ADAPTER: Final result
-            ADAPTER-->>PROCESSOR: Official result
-            PROCESSOR->>DB: Finalize idempotently
-        else Pending
-            BACKEND-->>ADAPTER: Pending
-            JOB->>DB: Schedule next attempt with backoff
-        else Not found/error
-            BACKEND-->>ADAPTER: Error
-            JOB->>DB: Increment recovery attempt
-        end
-    end
-```
-
-Callback và reconciliation dùng chung normalizer/state guard và session lock ngắn.
-Hết recovery budget mới chuyển `PROVIDER_ERROR`.
-
-### **5.2.8. User cancel/client close**
+### **5.2.6. User cancel/client close**
 
 | **Tình huống** | **Client event** | **Backend action** |
 | --- | --- | --- |
@@ -2032,7 +1236,7 @@ Hết recovery budget mới chuyển `PROVIDER_ERROR`.
 | Mất mạng | Có thể không có event | Session timeout/reconcile theo policy |
 | Official result đến sau cancel | Late result | Lưu late-result audit; không đảo `CANCELLED` |
 
-### **5.2.9. Retry session — Sequence L2**
+### **5.2.7. Retry session — Sequence L2**
 
 ```mermaid
 sequenceDiagram
@@ -2308,35 +1512,8 @@ ADR là record quản trị riêng; bảng trong tài liệu này chỉ là inde
 
 ## 6.7. Configuration Management
 
-### 6.7.1. Application config mẫu
 
-```yaml
-identity-verification:
-  provider: DEFAULT_EKYC
-  document-type: NATIONAL_ID_CHIP
-  allowed-channels:
-    - MOBILE_APP
-    - WEB_APP
-  allowed-journeys:
-    - OCR_ONLY
-    - FULL_EKYC
-  session-timeout: 30m
-  callback:
-    processing-mode: ASYNC_INBOX
-    replay-window: 5m
-    encrypted-payload-ttl: 24h
-  reconciliation:
-    initial-delay: 2m
-    interval: 1m
-    max-attempts: 5
-  retry:
-    max-whole-attempts: 3
-```
-
-Configuration nằm trong versioned repository, không chứa secret, có schema
-validation, owner, approval, before/after evidence và rollback.
-
-### 6.7.2. SDK configuration baseline
+### 6.7.1. SDK configuration baseline
 
 | **Nhóm** | **Baseline** | **Owner** |
 | --- | --- | --- |
@@ -2350,7 +1527,7 @@ validation, owner, approval, before/after evidence và rollback.
 | Session timeout | 30 phút, đồng bộ backend | Backend/SDK Team |
 | Client compatibility | Mobile/Web/SDK matrix được pin version | Client/SDK Teams |
 
-### 6.7.3. Change governance
+### 6.7.2. Change governance
 
 1. Tạo change ticket và mô tả business/security/privacy impact.
 2. Update versioned config/schema/contract fixture.
@@ -2524,7 +1701,7 @@ monitoring standard cần Architecture/Ops/Data Privacy phê duyệt.
 #### Callback Security
 
 - Áp `CALLBACK-01`; cơ chế token, replay key, durable-ack và rotation được định nghĩa
-  tại mục 2.3.4 và 4.3.3.
+  tại mục 4.2.2.
 - Callback body vẫn phải qua size/depth/content-type/schema validation trước xử lý business.
 
 #### Mobile Security
@@ -2823,34 +2000,8 @@ Không backup như business source:
 Single point of dependency còn lại là eKYC Backend của một provider; rủi ro và
 acceptance được ghi tại Architecture Risk Register.
 
-## 8.3. Recovery Sequence (L3 supporting)
 
-```mermaid
-sequenceDiagram
-    participant OPS as Operations
-    participant RDS as RDS Backup/PITR
-    participant DB as Restored PostgreSQL
-    participant API as Verification API
-    participant INBOX as Inbox Worker
-    participant RECON as Reconciliation Worker
-    participant BACKEND as eKYC Backend (ext)
-    OPS->>RDS: Chọn restore point đã phê duyệt
-    RDS->>DB: Restore isolated instance
-    OPS->>DB: Validate schema/index/constraint/data integrity
-    OPS->>API: Deploy approved artifact/config + bind secrets
-    OPS->>API: Smoke test auth/create/status/result
-    OPS->>INBOX: Resume pending/failed inbox bounded
-    INBOX->>DB: Process idempotently
-    OPS->>RECON: Resume due non-terminal sessions
-    RECON->>BACKEND: Get Result trong provider retention window
-    RECON->>DB: Finalize idempotently
-    OPS->>OPS: Verify dashboards/alerts and close recovery
-```
-
-Trong recovery có thể tạm dừng create session trong khi callback ingress/inbox và
-reconciliation tiếp tục để bảo toàn result đang bay.
-
-## 8.4. RTO & RPO
+## 8.3. RTO & RPO
 
 | **Hạng mục** | **Baseline** | **Ghi chú** |
 | --- | --- | --- |
@@ -2862,7 +2013,7 @@ reconciliation tiếp tục để bảo toàn result đang bay.
 
 RTO/RPO cuối cùng phải được System Owner và Operations xác nhận bằng restore drill.
 
-## 8.5. Recovery verification checklist
+## 8.4. Recovery verification checklist
 
 - Schema/version/index/constraint đúng.
 - Callback route/auth/key hoạt động.
@@ -2878,7 +2029,7 @@ RTO/RPO cuối cùng phải được System Owner và Operations xác nhận b�
 - Data retention/deletion job tiếp tục đúng policy.
 - Đạt RTO/RPO trong evidence của restore drill.
 
-## 8.6. Operational Readiness
+## 8.5. Operational Readiness
 
 | **Item** | **Baseline/decision** | **Evidence/approval** |
 | --- | --- | --- |
@@ -2891,7 +2042,7 @@ RTO/RPO cuối cùng phải được System Owner và Operations xác nhận b�
 | Operational ownership | Service owner, incident route, on-call/escalation và provider contacts: TBD | Go-live blocker |
 | Known exceptions | Một provider; provider SLA/location/retention và organizational-standard version chưa chốt | Risk acceptance hoặc đóng trước approval |
 
-## 8.7. Testing & Quality Strategy
+## 8.6. Testing & Quality Strategy
 
 | **Test type** | **Scope** | **Environment** | **Success criterion/release gate** |
 | --- | --- | --- | --- |
