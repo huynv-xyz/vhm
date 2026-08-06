@@ -885,11 +885,14 @@ dedupe dùng Client UUID + result version/payload hash.
 | --- | --- |
 | Authentication | Dynamic Bearer Token ngắn hạn theo callback contract; Fixed Token cần ANBM risk acceptance |
 | Token control | Validate token endpoint contract/issuer, audience hoặc resource scope, expiry và environment binding |
+| Payload integrity | Callback payload hiện không có chữ ký số/JWS/HMAC; baseline là TLS + Dynamic Bearer Token + Client UUID/session/environment binding + replay/dedupe. ANBM phải chấp nhận residual risk nếu provider không hỗ trợ ký payload |
 | Replay | Event ID/nonce nếu provider có; fallback result version/payload hash theo contract |
 | Dedupe key 1 | `provider + providerEventId` |
 | Dedupe key 2 | `provider + clientUuid + resultVersion/payloadHash` theo contract |
 | Ack | Durable inbox trước 2xx |
-| Token rotation | Overlap old/new token/key material, revoke và rollback runbook |
+| Planned rotation | Cấp material mới, cho old/new cùng hợp lệ trong overlap, chuyển provider sang material mới, xác nhận callback thành công rồi mới revoke material cũ; không downtime |
+| Emergency rotation | Revoke/cô lập credential bị lộ và kích hoạt material dự phòng với RTO `<= 30 phút`; callback chưa nhận được khôi phục bằng provider retry/reconciliation |
+| Provider input | Token TTL, thời lượng overlap, giới hạn số credential đồng thời và khả năng ký JWS/HMAC phải có contract evidence trước security sign-off |
 
 Authentication failure không insert business result và không thay đổi session.
 Duplicate đã durable trả 2xx nhưng không normalize/finalize lần hai.
@@ -971,7 +974,8 @@ Duplicate đã durable trả 2xx nhưng không normalize/finalize lần hai.
 | Provider result không kết luận được nhưng không phải lỗi tích hợp | `NEED_RETRY` theo fixed mapping | Retry whole attempt nếu còn quota |
 | Definitive official identity/document failure | `REJECTED` | VHM Application hiển thị canonical outcome |
 | Callback schema/auth không hợp lệ | Không đổi business state | Operations/security xử lý |
-| Không có final result sau recovery budget | `PROVIDER_ERROR` | `CONTACT_SUPPORT` hoặc retry theo policy |
+| Không có final result sau recovery budget nhưng provider còn giữ result | `PROVIDER_ERROR` | `CONTACT_SUPPORT` hoặc whole-attempt retry theo policy |
+| Callback thất lạc và Get Result không còn dữ liệu sau provider retention | `PROVIDER_ERROR` + `RESULT_UNRECOVERABLE_AFTER_RETENTION` | Không reuse media/result; `CONTACT_SUPPORT` hoặc whole-attempt retry, đồng thời mở incident nếu xảy ra theo cụm |
 
 Similarity/score đơn lẻ không đủ tạo `REJECTED`. Fixed mapping phải được
 Product/Risk/Architect phê duyệt, version hóa và contract-test.
@@ -994,6 +998,7 @@ Product/Risk/Architect phê duyệt, version hóa và contract-test.
 | `PROVIDER_SCHEMA_INVALID` | Payload sai contract | Không tự retry |
 | `CALLBACK_AUTH_FAILED` | Callback không xác thực | Không |
 | `CALLBACK_REPLAYED` | Callback replay | Không |
+| `RESULT_UNRECOVERABLE_AFTER_RETENTION` | Không thể khôi phục official result vì callback thất lạc và provider đã hết thời hạn lưu | Có, bằng whole attempt mới theo policy |
 | `CAMERA_PERMISSION_DENIED` | Client thiếu quyền camera | User action |
 | `UNSUPPORTED_CLIENT` | Mobile/Web SDK không tương thích | Upgrade VHM Application |
 
@@ -1301,6 +1306,8 @@ Attempt mới không reuse Client UUID, provider session, result, history, token
 | Session row lock timeout/deadlock | PostgreSQL `lock_timeout`/SQLSTATE | Rollback, không đổi session/result | Inbox giữ retryable; worker backoff theo mục 2.5.3 | Lock-timeout/retry alert |
 | Callback lost | Reconciliation due | Giữ `SUBMITTED/PROCESSING` | Get Result bounded | Reconcile metric |
 | Session stuck hết budget | Recovery counter | `PROVIDER_ERROR` | Contact support/retry theo policy | Incident review |
+| Callback lost và provider hết retention | Get Result `not found/expired` sau recovery deadline | `PROVIDER_ERROR`, reason `RESULT_UNRECOVERABLE_AFTER_RETENTION` | Không reuse media/result; contact support hoặc whole-attempt retry | Incident nếu theo cụm; review retention/backlog |
+| Provider outage kéo dài | Circuit breaker/health/SLA breach | Dừng create mới; session đã submit giữ `PROCESSING`, không chuyển `REJECTED` | Tiếp tục durable callback; ưu tiên reconciliation khi provider phục hồi | Escalate provider; theo dõi retention-at-risk |
 | Concurrent create | Unique/idempotency guard | Một active session | Trả session hiện hữu/conflict | Metric |
 | Result API access sai scope | Authorization | Không đổi state | `403/404` | Security audit |
 
@@ -1325,7 +1332,6 @@ Attempt mới không reuse Client UUID, provider session, result, history, token
 | Development | Phát triển và unit/component integration | Theo giờ làm việc/platform standard | VHM non-production AWS/EKS | Không public; egress sandbox theo allowlist | Synthetic only | Không yêu cầu DR | Có thể dùng provider mock; không dùng production credential/data. |
 | SIT | Contract, DB integration, callback và security integration | Theo test window được duyệt | Isolated non-production AWS/EKS | Ingress restricted; provider staging only | Synthetic/masked test data | Restore test theo kế hoạch | Callback key/endpoint riêng; cấu hình gần production. |
 | UAT | Product/UX/Risk/Privacy acceptance trên Mobile và Web | Theo UAT plan | Production-like non-production environment | Restricted tester access | Synthetic hoặc approved masked data | Theo platform non-prod standard | Provider staging; fixed journey/document/profile như production candidate. |
-| Pre-production | Performance, recovery, deployment và final release validation | Theo release plan | Production-like topology, capacity nhỏ hơn | Restricted | Synthetic/masked; cấm production PII nếu chưa phê duyệt | Multi-AZ/restore drill theo test scope | Cùng artifact/config schema với production; credential riêng. |
 | Production | Vận hành OCR/eKYC chính thức | Theo SLA/SLO được phê duyệt | AWS Singapore, EKS, RDS/Redis managed services | WAF/API ingress; workload/data private | Production personal data theo approved purpose | Multi-AZ, PITR và DR policy | Provider production endpoint; mọi thay đổi qua approval/canary/rollback. |
 
 Availability window chi tiết, quyền truy cập và platform-standard version là
@@ -1425,6 +1431,8 @@ tới eKYC Provider Backend; chi tiết giao thức/cổng nằm trong Network F
 | Create session latency | p95 `<= 1s` qua BFF/VHM eKYC Service/DB; không có synchronous eKYC Provider Backend call | Baseline. |
 | Status/Result API latency | p95 `<= 300ms` với dữ liệu đã persist | Baseline. |
 | Callback durable acknowledgement | `<= 2s` để durable receive và trả 2xx | Baseline; xử lý nặng async. |
+| Callback durable→Canonical Result | p95 `<= 60s` | Warning khi oldest inbox `>5 phút`; critical khi `>15 phút`. |
+| Reconciliation recovery deadline | Hoàn tất trước provider retention với safety margin `>=6 giờ` | Backlog ceiling phụ thuộc measured throughput/quota, không đặt số giả. |
 | Concurrent sessions Mobile/Web | Chưa có input — `BLOCKING` | Bắt buộc điền worksheet 6.4.2 trước capacity sign-off. |
 | Peak create/status/result TPS | Chưa có input — `BLOCKING` | Bắt buộc điền worksheet 6.4.2 trước capacity sign-off. |
 | Callback burst TPS/payload p95-p99 | Chưa có input — `BLOCKING` | eKYC Provider Backend/Ops cung cấp và xác nhận bằng callback load test. |
@@ -1444,7 +1452,7 @@ tới eKYC Provider Backend; chi tiết giao thức/cổng nằm trong Network F
 | Concurrent media stream | stream đồng thời | `UNRESOLVED` | Mobile/Web concurrency model | Product/Client/Ops |
 | Media distribution | byte và upload duration p50/p95/p99 | `UNRESOLVED` | SDK staging measurement cho OCR/liveness | Client/eKYC Provider Backend |
 | Journey/retry mix | `% OCR_ONLY`, `% FULL_EKYC`, retry rate | `UNRESOLVED` | Product funnel forecast | Product/Risk |
-| Reconciliation workload | due session/phút, retry budget | `UNRESOLVED` | Callback SLA, retention và quota | Ops/eKYC Provider Backend |
+| Reconciliation workload | due session/phút, sustainable Get Result throughput, retry budget | `UNRESOLVED` | Callback SLA, retention, provider quota và load test để tính backlog ceiling | Ops/eKYC Provider Backend |
 | Provider quota/SLA | request/TPS/concurrency/maintenance | `UNRESOLVED` | Contract/SLA evidence | Procurement/Ops |
 | Data growth | record/day, byte/record, retention | `UNRESOLVED` | Fixed field set + retention decision | Product/Data Privacy/DBA |
 
@@ -1632,8 +1640,10 @@ media, raw callback, resource URL hoặc biometric score gắn với danh tính.
 | Provider authentication failure | 401/403 liên tục | Critical |
 | Provider availability | Error rate vượt threshold trong 5 phút | High |
 | Callback schema/mapping error | Có lỗi kéo dài hoặc sau provider change | High |
-| Callback Inbox backlog | Oldest age vượt SLA | High |
-| Reconciliation backlog | Oldest due age vượt SLA | High |
+| Callback Inbox backlog — warning | Oldest unprocessed age `> 5 phút` | Medium |
+| Callback Inbox backlog — critical | Oldest unprocessed age `> 15 phút` hoặc estimated drain time vượt recovery budget | Critical |
+| Reconciliation backlog — warning | Estimated drain time chạm recovery deadline hoặc safety margin còn `< 6 giờ` | High |
+| Reconciliation backlog — critical | Bất kỳ session có nguy cơ vượt provider retention trước khi Get Result hoàn tất | Critical |
 | SDK init/crash spike | Tăng theo channel/app/sdk version | High/Medium |
 | SDK proxy saturation | Active streams/network/memory hoặc timeout vượt threshold | High |
 | Media control violation | Phát hiện body log, temp file/disk spool hoặc buffer vượt hard limit | Critical |
@@ -1651,8 +1661,8 @@ cho tới khi artefact này được cung cấp, các SLI/SLO dưới đây là 
 | SDK data-plane proxy | Successful upstream response, active streams, upload/upstream latency và timeout | Target cụ thể theo mục 6.4.1/provider SLA | Đo riêng BFF và VHM eKYC Service; không dùng media/body/PII làm metric label. |
 | Status/Result API | Success rate, p95/p99 và authorization deny rate | p95 `<=300ms` với persisted result | Không tính caller cancellation; 4xx business/auth đo riêng. |
 | Callback ingress | Durable acknowledgement rate/latency | 2xx durable ack `<=2s`; auth failure luôn alert | Duplicate hợp lệ đo riêng, không tính là business failure. |
-| Callback processing | Oldest inbox age, processing success và quarantine count | Threshold cụ thể TBD theo callback SLA | Không dùng PII/provider session làm metric label. |
-| Reconciliation | Due backlog age, recovered-session rate và provider error rate | Hoàn tất trong provider retention/recovery budget | Threshold/budget do Ops/eKYC Provider Backend duyệt. |
+| Callback processing | Callback durable→Canonical Result latency, oldest inbox age, processing success và quarantine count | p95 `<= 60 giây`; warning nếu oldest `>5 phút`, critical nếu `>15 phút` | Không dùng PII/provider session làm metric label; `<=2s` chỉ là durable-ack SLO, không phải processing SLO. |
+| Reconciliation | Due backlog age, estimated drain time, recovered-session rate và provider error rate | Hoàn tất trước provider retention với safety margin `>=6 giờ` | Số item backlog tối đa = sustainable Get Result throughput × thời gian còn lại trước recovery deadline; throughput/quota phải được load test/provider xác nhận. |
 | Mobile/Web journey | Start→submit→official outcome funnel theo channel/version | Baseline và alert threshold TBD sau UAT/performance test | Không gửi OCR field/media/token vào analytics. |
 
 Telemetry volume, retention và cost phải nằm trong cost estimate; sai lệch khỏi
@@ -1704,7 +1714,9 @@ monitoring standard cần Architecture/Ops/Data Privacy phê duyệt.
 - Không dùng shared Basic Auth cho internal S2S.
 - Không đưa provider API key/app secret xuống BFF, Mobile/Web hoặc SDK.
 - VHM SDK session token TTL ngắn, bind session/run/journey/channel/environment.
-- Callback token/key rotation phải overlap old/new material và có rollback runbook.
+- Callback credential rotation tuân thủ mục 4.2.2: planned rotation không downtime;
+  emergency rotation có RTO `<=30 phút`. Token TTL/overlap chính xác phải được
+  eKYC Provider Backend và ANBM xác nhận bằng contract/security test.
 
 #### Authorization
 
@@ -1741,7 +1753,7 @@ monitoring standard cần Architecture/Ops/Data Privacy phê duyệt.
 | **Secret/credential** | **Storage** | **Consumer** | **Rotation/revocation** | **Control** |
 | --- | --- | --- | --- | --- |
 | Provider API credential | AWS Secrets Manager | Provider Adapter/Reconciliation của VHM eKYC Service | Theo provider contract; emergency revoke runbook | Workload-only read, không nằm trong client/config repo. |
-| Callback token/client secret | Secrets Manager/config reference | Callback API/token endpoint | Old/new overlap, revoke sau evidence | Dynamic Token ưu tiên; Fixed Token cần exception và rotation chặt. |
+| Callback token/client secret | Secrets Manager/config reference | Callback API/token endpoint | Planned zero-downtime overlap; emergency revoke/activate dự phòng `<=30 phút` | Dynamic Token ưu tiên; TTL/overlap theo provider contract. Fixed Token cần exception và rotation chặt. |
 | Workload/DB credential | Workload IAM và managed secret | API/Workers | Platform-managed rotation | Không shared identity; DB role riêng theo workload. |
 | Field/inbox encryption key | KMS-CMK | Persistence/crypto adapter | Theo KMS/ANBM standard; version/period TBD | Encrypt/decrypt permission tách theo role, có Cloud audit. |
 | VHM SDK session token | Chỉ process/client memory | VHM Application/eKYC SDK, BFF validation | TTL ngắn; hết hạn hoặc revoke theo session/run | Bind environment, journey, channel và run; không lưu dài hạn. |
@@ -1758,6 +1770,10 @@ monitoring standard cần Architecture/Ops/Data Privacy phê duyệt.
 
 - Áp `CALLBACK-01`; cơ chế token, replay key, durable-ack và rotation được định nghĩa
   tại mục 4.2.2.
+- Callback payload hiện không được ký số. Control bù trừ bắt buộc gồm TLS, Dynamic
+  Bearer Token, binding Client UUID/session/environment, schema validation và
+  replay/dedupe. Nếu provider không hỗ trợ JWS/HMAC, ANBM phải phê duyệt residual
+  risk; khi provider hỗ trợ, verification key chỉ lưu trong Secrets Manager/KMS.
 - Callback body vẫn phải qua size/depth/content-type/schema validation trước xử lý business.
 
 #### Media request limits (`MEDIA-01`)
@@ -1793,6 +1809,11 @@ Enforcement bắt buộc:
 #### Mobile Security
 
 - SDK/package/profile pin version và integrity theo Mobile release process.
+- Certificate pinning cho Mobile là security input cần ANBM và SDK Team chốt sau
+  compatibility test. Nếu áp dụng theo data-plane đã chọn, Mobile pin **VHM BFF
+  ingress** bằng SPKI primary + backup pin; không pin trực tiếp certificate của
+  eKYC Provider Backend. Pin mới phải được phát hành trong VHM Application trước
+  khi rotate certificate để tránh khóa toàn bộ journey.
 - Camera permission chỉ yêu cầu khi user bắt đầu journey.
 - VHM SDK session token chỉ giữ memory; clear khi completion/cancel/expiry.
 - Device-security signal theo approved baseline; không dùng client signal làm identity decision duy nhất.
@@ -2134,6 +2155,25 @@ Không backup như business source:
 Single point of dependency còn lại là eKYC Provider Backend của một provider; rủi ro và
 acceptance được ghi tại Architecture Risk Register.
 
+### 8.2.2. Provider outage và backlog recovery
+
+- Khi provider unavailable, VHM dừng create/session mới theo circuit-breaker policy;
+  các session đã submit giữ `PROCESSING`, không chuyển thành `REJECTED` do lỗi kỹ thuật.
+- Callback API vẫn durable receive nếu provider còn gửi được callback. Reconciliation
+  tạm backoff có quota guard và được ưu tiên drain ngay khi provider phục hồi.
+- Từ thời điểm provider phục hồi, Ops ưu tiên session có retention deadline gần nhất.
+  Recovery phải hoàn tất trước provider retention với safety margin `>=6 giờ`.
+- Maximum admissible reconciliation backlog không dùng một số đoán trước. Ops tính
+  theo `sustainable Get Result throughput × thời gian còn lại trước recovery deadline`
+  và chốt bằng provider quota cùng load-test evidence tại mục 6.4.2.
+- Nếu outage kéo dài tới mức safety margin dưới `6 giờ`, kích hoạt critical incident,
+  provider escalation và retention-at-risk dashboard. Outage `24 giờ` không được coi
+  là recoverable mặc định khi provider retention chỉ `24 giờ`.
+- Nếu callback mất và Get Result đã hết retention, đóng attempt ở `PROVIDER_ERROR`
+  với reason `RESULT_UNRECOVERABLE_AFTER_RETENTION`; không reuse media/result,
+  cho `CONTACT_SUPPORT` hoặc whole-attempt retry theo policy. Sự cố theo cụm phải mở
+  incident và review lại retention/quota/backlog control.
+
 
 ## 8.3. RTO & RPO
 
@@ -2183,10 +2223,10 @@ RTO/RPO cuối cùng phải được System Owner và Operations xác nhận b�
 | System/Integration | State guard, DB constraint/locking, callback auth/dedupe, normalization, masking | Dev/SIT | Critical branches `>=80%`; toàn bộ contract/DB test pass. |
 | Provider contract | SDK init/OCR/liveness, callback, Get Result, error/schema evolution fixtures | SIT/provider staging | Pass supported/unsupported/duplicate/timeout cases; no raw payload leakage. |
 | Mobile/Web E2E | OCR_ONLY và FULL_EKYC; permission/lifecycle/front-back/result-page OFF | UAT/provider staging | Happy path và failure path cho cả Mobile/Web; official-result rule luôn đúng. |
-| Performance/capacity | API p95/p99, callback burst, inbox/reconciliation backlog, DB lock/pool | Pre-production | Đạt NFR và capacity target mục 6.4; không mất/duplicate finalization. |
-| Security | AuthN/AuthZ/IDOR, callback token/replay, SDK streaming route, WAF/input, secrets/masking | SIT/Pre-production | Không còn Critical/High finding chưa được risk acceptance. |
-| Resilience/chaos | Provider/DB/Redis outage, callback lost, worker restart, stale/duplicate event | Pre-production | State toàn vẹn, bounded recovery, alert đúng và không blind retry. |
-| OAT/Recovery | Deploy/rollback, key rotation, PITR restore, backlog drain, dashboard/runbook | Pre-production | Đạt RTO/RPO; Operations sign-off. |
+| Performance/capacity | API p95/p99, callback burst, inbox/reconciliation backlog, DB lock/pool | SIT — dedicated performance window | Đạt NFR và capacity target mục 6.4; không mất/duplicate finalization. |
+| Security | AuthN/AuthZ/IDOR, callback token/replay, SDK streaming route, WAF/input, secrets/masking | SIT | Không còn Critical/High finding chưa được risk acceptance. |
+| Resilience/chaos | Provider/DB/Redis outage, callback lost, worker restart, stale/duplicate event | SIT — isolated recovery window | State toàn vẹn, bounded recovery, alert đúng và không blind retry. |
+| OAT/Recovery | Deploy/rollback, key rotation, PITR restore, backlog drain, dashboard/runbook | SIT | Đạt RTO/RPO; Operations sign-off. |
 | PAT/UAT | Purpose, consent, UX, fixed fields, decision/retry messages | UAT | Product/Risk/Legal/Data Privacy sign-off. |
 
 Test case chi tiết, automation suite và test data thuộc L3/Test Plan; Appendix C là
@@ -2199,12 +2239,12 @@ release checklist và không thay thế evidence của từng quality gate.
 | **Risk ID** | **Category** | **Description** | **Business impact** | **Likelihood** | **Severity** | **Mitigation strategy** | **Residual risk** | **Owner** | **Status** |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | AR-001 | Availability/Integration | eKYC Provider Backend là một dependency/provider duy nhất | Không tạo mới hoặc hoàn tất eKYC trong thời gian dependency gián đoạn | Medium | High | Circuit breaker, safe-mode stop-create, callback inbox, reconciliation, SLA/escalation | Medium | Product/Ops/eKYC Provider Backend | OPEN — SLA TBD |
-| AR-002 | Security | Callback Dynamic/Fixed Token và retry contract chưa có evidence chính thức | Forged/replayed callback có thể làm sai quyết định xác minh | Medium | Critical | Dynamic Token baseline, scope/expiry, replay/dedupe, rotation overlap, contract/security test | Low sau sign-off | ANBM/eKYC Provider Backend | OPEN — go-live blocker |
+| AR-002 | Security | Callback payload chưa có chữ ký số; token TTL/overlap và provider signing capability chưa có evidence chính thức | Forged/replayed callback có thể làm sai quyết định xác minh | Medium | Critical | TLS, Dynamic Token, Client UUID/session binding, replay/dedupe, zero-downtime rotation; JWS/HMAC hoặc ANBM residual-risk acceptance | Low sau sign-off | ANBM/eKYC Provider Backend | OPEN — go-live blocker |
 | AR-003 | Compliance/Data | Data location, subprocessor, retention baseline và deletion SLA chưa được Data Privacy/Legal ratify | Vi phạm privacy/cross-border requirement hoặc giữ biometric data quá hạn | Medium | Critical | `DATA-01`, DPA/DPIA, purpose-bound consent và deletion evidence | Medium | Legal/Data Privacy | OPEN — go-live blocker |
 | AR-004 | Performance | Concurrent media streams, size/duration, TPS/callback burst và provider quota chưa chốt | Quá tải BFF/VHM eKYC Service/network/inbox hoặc vượt quota/cost | High | High | Capacity inputs, streaming load test, HPA/pool riêng, bounded buffer/worker, quota alert | Medium | Product/Ops | OPEN |
 | AR-005 | Compatibility | Mobile/Web/SDK compatibility và lifecycle matrix chưa có evidence | Journey lỗi theo device/browser/version, tăng retry/drop-off | Medium | High | Pin version, preflight, cohort rollout, E2E matrix và rollback | Low/Medium | Client/SDK Teams | OPEN |
 | AR-006 | Data/Security | Fixed result field, masking và retention chưa được chốt theo từng approved purpose | Over-collection hoặc lộ PII cho caller không đúng quyền | Medium | High | Fixed schema, allowlist, object authorization, masking/unmask audit | Low sau approval | Product/Business/Data Privacy | OPEN |
-| AR-007 | Operations | Reconciliation vượt provider retention/quota khi callback backlog lớn | Session treo hoặc không thể lấy official result | Medium | High | Oldest-age alert, bounded lease/backoff, provider retention SLA, incident drain plan | Medium | Ops/eKYC Provider Backend | OPEN |
+| AR-007 | Operations | Reconciliation vượt provider retention/quota khi callback backlog lớn hoặc provider outage kéo dài | Session treo hoặc official result không thể khôi phục | Medium | High | p95/oldest-age alert, safety margin `>=6h`, bounded lease/backoff, quota-aware drain, `RESULT_UNRECOVERABLE_AFTER_RETENTION` runbook | Medium | Ops/eKYC Provider Backend | OPEN |
 | AR-008 | Security/Performance | BFF/VHM eKYC Service vi phạm media handling | Rò rỉ dữ liệu nhạy cảm, memory/disk exhaustion và tăng blast radius | Medium | Critical | `MEDIA-01`, metadata allowlist và load/DLP evidence | Low sau sign-off | BFF/VHM eKYC Service/Ops/ANBM | OPEN — go-live blocker |
 
 ## 9.2. Open Issues/Technical Debt Register
@@ -2276,6 +2316,7 @@ owner, phạm vi, thời hạn và approver tương ứng được ghi trong phi
 | Result page `OFF` nhưng completion/close event vẫn phát | SDK Technical Team | Trước submitted integration test |
 | Liveness/face behavior trong `FULL_EKYC` | SDK/Product/Risk | Trước FULL_EKYC E2E |
 | Mobile background/force-close/reopen behavior | Mobile/SDK Team | Trước lifecycle test |
+| Mobile certificate-pinning decision; nếu bật phải có VHM BFF primary/backup SPKI pin, rollover và compatibility evidence | ANBM/Mobile/SDK Team | Trước security sign-off |
 | Web refresh/reopen/multi-tab behavior | Web/SDK Team | Trước lifecycle test |
 | Branding, localization, accessibility và security behavior | Product/UX/Client Teams | Trước UAT |
 
@@ -2286,7 +2327,8 @@ owner, phạm vi, thời hạn và approver tương ứng được ghi trong phi
 | SDK init/OCR/liveness endpoint, multipart field, response và error contract | eKYC Provider Backend/Backend Team | Trước Provider Adapter build |
 | Streaming timeout/body-size/part-count và idempotency/retry semantics | eKYC Provider Backend/Backend Team | Trước proxy/load test |
 | Provider credential/header và Client UUID/proof contract | eKYC Provider Backend/ANBM | Trước integration/security test |
-| Callback Dynamic Token/Fixed Token, token endpoint, scope/expiry và event/version fields | eKYC Provider Backend/ANBM | Trước callback implementation |
+| Callback Dynamic Token/Fixed Token, token endpoint, scope/expiry, rotation overlap và event/version fields | eKYC Provider Backend/ANBM | Trước callback implementation |
+| Callback JWS/HMAC signing capability và key-rotation contract; nếu không hỗ trợ phải có ANBM residual-risk acceptance | eKYC Provider Backend/ANBM | Trước security sign-off |
 | Callback retry/backoff/ordering/duplicate semantics | eKYC Provider Backend/Backend Team | Trước callback contract test |
 | Get Result final/pending/not-found/error/quota contract | eKYC Provider Backend/Ops | Trước reconciliation test |
 | Provider media/raw-result retention `<= 24 giờ` và deletion evidence | eKYC Provider Backend/Data Privacy | Trước recovery/privacy sign-off |
@@ -2301,7 +2343,7 @@ owner, phạm vi, thời hạn và approver tương ứng được ghi trong phi
 | DPA/DPIA, data location và subprocessor list | Data Privacy/Legal | Go-live blocker |
 | Consent lawful basis và approved purpose | Data Privacy/Legal/Product | Trước UAT |
 | Provider media/raw-result retention `<= 24 giờ`, deletion SLA và evidence | Data Privacy/Legal/eKYC Provider Backend | Go-live blocker |
-| Callback authentication/replay/key-rotation baseline | ANBM/eKYC Provider Backend | Trước security test |
+| Callback authentication/replay/key-rotation baseline, emergency rotation RTO `<=30 phút` và signing/risk-acceptance evidence | ANBM/eKYC Provider Backend | Trước security test |
 | Fixed field encryption/masking/unmask access | ANBM/Data Privacy/Business | Trước Result API UAT |
 | Log/APM/analytics/crash-report data allowlist | ANBM/Data Privacy/Ops | Trước SIT |
 | Mobile/Web security baseline và SDK integrity evidence | ANBM/Client Teams | Trước security sign-off |
@@ -2378,9 +2420,12 @@ không thay thế sign-off chính thức.
 - [ ] Không secret trong Mobile/Web/repo/image/ConfigMap/log.
 - [ ] `CRED-01` IAM/rotation/secret-scan evidence pass.
 - [ ] `CALLBACK-01` auth/scope/expiry/replay/dedupe/rotation evidence pass.
+- [ ] Callback payload JWS/HMAC được verify hoặc ANBM đã phê duyệt residual risk cho baseline không ký số.
+- [ ] Planned callback credential rotation không downtime và emergency rotation `<=30 phút` đã được diễn tập.
 - [ ] Business-scope/object IDOR tests pass.
 - [ ] Result API mask/unmask/cache-control/access audit pass.
 - [ ] Mobile SDK integrity/token/telemetry controls approved.
+- [ ] Mobile certificate-pinning decision có evidence; nếu bật, primary/backup SPKI và certificate rollover test pass.
 - [ ] Web CSP/XSS/CSRF/CORS/storage/multi-tab controls approved.
 - [ ] Encrypted Callback Inbox, TTL, purge và backup behavior tested.
 - [ ] Init/OCR/liveness/callback body ceiling pass cho cả `Content-Length` và chunked stream tại WAF/Ingress, BFF và VHM eKYC Service.
@@ -2409,6 +2454,8 @@ không thay thế sign-off chính thức.
 - [ ] Capacity worksheet 6.4.2 không còn `UNRESOLVED` và có forecast/load-test evidence.
 - [ ] AWS Pricing Calculator export/share link, provider quotation và monthly cost đã được Finance/Product duyệt.
 - [ ] Inbox/Reconciliation workers healthy và backlog dưới SLA.
+- [ ] Callback processing p95 `<=60 giây`; oldest-age warning `>5 phút` và critical `>15 phút` đã test alert routing.
+- [ ] Reconciliation drain giữ safety margin `>=6 giờ`; case provider outage/retention expiry trả `RESULT_UNRECOVERABLE_AFTER_RETENTION` đúng runbook.
 - [ ] Stop-create/rollback/provider incident runbook đã diễn tập.
 - [ ] Backup/PITR/restore test đạt RTO/RPO.
 - [ ] Key/secret/config rotation runbook đã diễn tập.
