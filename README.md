@@ -15,8 +15,8 @@
 | **VERSION** | **DATE** | **CHANGES** | **UPDATED BY** |
 | --- | --- | --- | --- |
 | 0.1 | 06/08/2026 | Khởi tạo TDD nền tảng OCR & eKYC SDK dùng chung cho VHM | TBD |
-| 0.2 | 06/08/2026 | Chốt baseline R1, Mermaid diagram, Mobile fail-fast/manual evidence và external-input gates | TBD |
-| 1.0 | TBD | First approved release | TBD |
+| 0.2 | 06/08/2026 | Chốt baseline, Mermaid diagram, Mobile fail-fast/manual evidence và external-input gates | TBD |
+| 1.0 | TBD | Bản được phê duyệt | TBD |
 
 > **Quy ước trong tài liệu**
 >
@@ -202,14 +202,14 @@ Xây dựng một nền tảng xác minh danh tính dùng chung nhằm:
 - Cho Domain System truy cập raw provider payload.
 - Tự động áp một decision policy duy nhất cho mọi domain.
 - Đồng bộ/sửa dữ liệu master của domain ngoài contract đã thống nhất.
-- Tự động fallback sang provider khác trong release đầu tiên.
-- Manual review console đầy đủ nếu chưa được Product đưa vào scope release.
+- Tự động fallback sang provider khác.
+- Manual review console đầy đủ nếu chưa được Product phê duyệt trong phạm vi.
 
 ### **1.2.6. Giả định và ràng buộc**
 
 | **ID** | **Giả định/Ràng buộc** | **Trạng thái** | **Ảnh hưởng nếu thay đổi** |
 | --- | --- | --- | --- |
-| A-01 | Release đầu tiên sử dụng một eKYC SDK/provider chính | External scope input — Product | Thêm provider routing, cost/risk policy và consent nếu scope thay đổi |
+| A-01 | Giải pháp sử dụng một eKYC SDK/provider chính | External scope input — Product | Thêm provider routing, cost/risk policy và consent nếu scope thay đổi |
 | A-02 | Kết quả chính thức luôn lấy server-to-server | Quyết định thiết kế | Client result không được dùng cho business decision |
 | A-03 | `verificationId` do VHM sinh; external ID không phải primary key | Quyết định thiết kế | External ID chỉ dùng correlation/provider mapping |
 | A-04 | Callback có JWS/JWT và replay protection theo baseline | Provider capability input — go-live blocker | Provider không đáp ứng phải có ANBM exception trước production |
@@ -217,7 +217,7 @@ Xây dựng một nền tảng xác minh danh tính dùng chung nhằm:
 | A-06 | SDK Backend giữ kết quả đủ lâu để reconciliation | Provider/Privacy contract input | Retention quá ngắn làm mất khả năng phục hồi callback |
 | A-07 | VHM không lưu video liveness/face template | Quyết định Data Minimization | Thay đổi yêu cầu DPIA, encryption, access và retention riêng |
 | A-08 | Domain System sử dụng opaque `businessRef/subjectRef` | Quyết định thiết kế | Tránh coupling DB giữa platform và domain |
-| A-09 | SDK platform/version và compatibility matrix Mobile/Web được pin theo release | Implementation manifest input | Thiếu manifest thì không được tạo release build |
+| A-09 | SDK platform/version và compatibility matrix Mobile/Web được pin theo implementation baseline | Implementation manifest input | Thiếu manifest thì không được tạo build để triển khai |
 | A-10 | Volume, peak TPS và dependency SLA phải được cung cấp | Capacity/SLO input | Thiếu input thì không qua production readiness review |
 | A-11 | Mỗi domain có owner chịu trách nhiệm business decision | Quyết định ownership | Platform không tự định nghĩa risk rule thay domain |
 | A-12 | Một use case cấu hình 0..N active step; không có active step nghĩa là skip có audit | Quyết định pipeline | Governance ngăn vô tình tắt xác minh |
@@ -270,13 +270,13 @@ Mục **7.2 Data Privacy** phải được APPROVED trước production.
 
 ## 1.6 Non-Functional Requirements tổng quát
 
-| **Nhóm** | **Release 1 Baseline** | **Trạng thái** |
+| **Nhóm** | **Baseline** | **Trạng thái** |
 | --- | --- | --- |
-| Availability | Platform >= 99.9% theo tháng; dependency SDK Backend theo SLA riêng | Baseline Release 1 |
-| Create session | p95 <= 1 giây không tính external call; p95 <= 3 giây end-to-end | Baseline Release 1 |
-| Status/result query | p95 <= 300 ms với dữ liệu đã persist | Baseline Release 1 |
-| Callback acknowledgement | Durable receive và trả 2xx <= 2 giây; xử lý nặng async | Baseline Release 1 |
-| Event delivery | p95 <= 5 giây sau khi result được xác minh | Baseline Release 1 |
+| Availability | Platform >= 99.9% theo tháng; dependency SDK Backend theo SLA riêng | Baseline |
+| Create session | p95 <= 1 giây không tính external call; p95 <= 3 giây end-to-end | Baseline |
+| Status/result query | p95 <= 300 ms với dữ liệu đã persist | Baseline |
+| Callback acknowledgement | Durable receive và trả 2xx <= 2 giây; xử lý nặng async | Baseline |
+| Event delivery | p95 <= 5 giây sau khi result được xác minh | Baseline |
 | Scalability | Horizontal scale; không giữ session trong memory local | Bắt buộc |
 | Data integrity | Idempotency, optimistic locking, append-only history, outbox | Bắt buộc |
 | Security | TLS, secret manager, callback auth, schema validation, masking | Bắt buộc |
@@ -461,7 +461,7 @@ fieldScopes + enforcementPoint + policyVersion` trước khi được phép tạ
 | --- | --- | --- | --- | --- |
 | Camera OCR | Native SDK | Web SDK trên browser allowlist | Web SDK + webcam trên browser allowlist | Permission/camera quality phải pass trước start |
 | Upload giấy tờ | Không cho FULL_EKYC; OCR_ONLY theo explicit policy | Không cho FULL_EKYC; OCR_ONLY theo explicit policy | Không cho FULL_EKYC; OCR_ONLY theo explicit policy | Live capture là baseline verification journey |
-| NFC | Mobile App trên device/OS allowlist | Không hỗ trợ Release 1 | Không hỗ trợ Release 1 | `nfcRequired=true` trên Web bắt buộc handoff Mobile |
+| NFC | Mobile App trên device/OS allowlist | Không hỗ trợ | Không hỗ trợ | `nfcRequired=true` trên Web bắt buộc handoff Mobile |
 | Liveness | Native SDK | Web SDK trên browser allowlist | Web SDK + webcam trên browser allowlist | Thiếu capability trả `CHANNEL_CAPABILITY_REQUIRED` |
 | Face matching | Qua SDK Backend | Qua SDK Backend | Qua SDK Backend | Backend-only official result |
 | Resume | Query backend status; SDK run resume theo compatibility manifest | Query backend status sau refresh | Query backend status sau refresh | Không lưu bootstrap token dài hạn; unsupported resume chuyển retry/handoff |
@@ -508,13 +508,13 @@ vào cùng `verificationId`; mọi liên kết được audit và token không c
 
 ### 2.2.2. Verification Session
 
-| **Thuộc tính** | **Release 1 Baseline** |
+| **Thuộc tính** | **Baseline** |
 | --- | --- |
 | Internal ID | `verificationId` UUIDv7 do VHM sinh |
 | External correlation | `providerSessionId`, unique theo provider/environment |
 | Active uniqueness | Một session active trên `(tenant, domain, businessRef, subjectRef, purpose, journey)` |
 | Idempotency | `Idempotency-Key` bắt buộc khi create/retry |
-| Timeout | 30 phút cho Release 1; backend và SDK config dùng cùng versioned policy |
+| Timeout | 30 phút; backend và SDK config dùng cùng versioned policy |
 | Retry | Tạo session mới, link `retryOfVerificationId`; không reuse external session |
 | Resume | Chỉ khi SDK contract hỗ trợ; backend không giả định resume |
 | Client completion | Chỉ là `SUBMITTED`, không phải verified |
@@ -696,7 +696,7 @@ flowchart LR
     CONTEXT["Attempt/policy context"] --> DECISION
 ```
 
-- Release đầu dùng mapping policy versioned, không tự xây fraud engine phức tạp.
+- Sử dụng mapping policy versioned, không tự xây fraud engine phức tạp.
 - Threshold không hard-code trong Java.
 - Provider conclusion là input, không tự động là business decision.
 - Lưu `decisionPolicyVersion` và canonical reason codes tại thời điểm quyết định.
@@ -1076,7 +1076,7 @@ phải nằm cùng transaction với thay đổi document references.
 - Fail-fast không được làm manual review thiếu evidence. Platform tạo requirement
   cho mọi sub-step phải review nhưng chưa được thu nhận; Mobile nhận
   `nextAction=CAPTURE_MANUAL_EVIDENCE` và thu bổ sung back bằng VHM Secure Evidence
-  Capture. Release 1 không phụ thuộc khả năng tiếp tục capture của SDK provider.
+  Capture. Thiết kế không phụ thuộc khả năng tiếp tục capture của SDK provider.
 - Evidence completion chỉ thu/upload evidence cho người review, không đổi failed
   result của front, không chạy back OCR tự động và không tạo attempt mới. Muốn chạy
   lại provider phải dùng whole-step `RE_RUN`/retry theo policy.
@@ -1297,7 +1297,7 @@ version đang được session tham chiếu; thay đổi tạo version mới.
 | BR-009 | Timeout/network/SDK Backend unavailable là `PROVIDER_ERROR`, không phải `REJECTED`. |
 | BR-010 | Lỗi ảnh, permission hoặc thao tác recoverable có thể chuyển `NEED_RETRY`. |
 | BR-011 | Hard fraud/reject chỉ áp dụng khi policy được PO/Risk/ANBM phê duyệt. |
-| BR-012 | Provider/SDK `NEED_REVIEW` luôn chuyển `MANUAL_REVIEW`; manual-review capability là dependency bắt buộc của Release 1. |
+| BR-012 | Provider/SDK `NEED_REVIEW` luôn chuyển `MANUAL_REVIEW`; manual-review capability là dependency bắt buộc của hệ thống. |
 | BR-013 | Domain chỉ nhận normalized fields thuộc approved field scope. |
 | BR-014 | Auto-fill chỉ ghi field trống; overwrite field đã xác nhận cần explicit confirmation/rule. |
 | BR-015 | Retry tạo session/provider transaction mới và không ghi đè lịch sử attempt trước. |
@@ -1354,14 +1354,14 @@ version đang được session tham chiếu; thay đổi tạo version mới.
 
 | **Rule ID** | **Mobile** | **Web** |
 | --- | --- | --- |
-| CH-01 Permission | Camera/NFC permission qua OS/native SDK | Camera permission qua browser; NFC không hỗ trợ trên Web Release 1 |
+| CH-01 Permission | Camera/NFC permission qua OS/native SDK | Camera permission qua browser; NFC không hỗ trợ trên Web |
 | CH-02 Lifecycle | Background/foreground, force-close, deep link | Refresh, close tab, multi-tab, browser storage |
 | CH-03 Token storage | Chỉ giữ bootstrap token trong memory; secure storage chỉ dùng cho opaque resume handle có TTL | Chỉ giữ bootstrap token trong memory; không lưu token trong localStorage/sessionStorage |
 | CH-04 Capability | Device model/OS/SDK matrix | Browser/version/camera/Web SDK matrix |
 | CH-05 Handoff | Nhận one-time deep link/QR | Phát QR/deep link khi cần Mobile capability |
 | CH-06 Upload | Live capture bắt buộc cho verification journey; không chọn ảnh có sẵn | Webcam/live capture bắt buộc; file upload chỉ áp dụng OCR_ONLY use case được policy cho phép |
 | CH-07 Anti-tamper | Root/jailbreak/debugger/emulator signal | CSP, SRI khi phù hợp, anti-XSS, browser support policy |
-| CH-08 Fail-fast evidence | Sau front fail, VHM Secure Evidence Capture thu bổ sung back và giữ correlation với cùng review | Web không thu manual evidence trong Release 1; bắt buộc handoff sang Mobile |
+| CH-08 Fail-fast evidence | Sau front fail, VHM Secure Evidence Capture thu bổ sung back và giữ correlation với cùng review | Web không thu manual evidence; bắt buộc handoff sang Mobile |
 
 ---
 
@@ -1369,7 +1369,7 @@ version đang được session tham chiếu; thay đổi tạo version mới.
 
 ## 4.1. Danh sách Interfaces
 
-> Endpoint dưới đây là **contract nội bộ bắt buộc của VHM cho Release 1**. Chi tiết
+> Endpoint dưới đây là **contract nội bộ bắt buộc của VHM**. Chi tiết
 > API/auth/callback bên ngoài được cô lập trong Provider Adapter theo integration pack.
 
 | **STT** | **Miêu tả** | **Endpoint/Topic** | **From** | **To** | **Mode** | **Data chính** |
@@ -1841,10 +1841,10 @@ Yêu cầu:
 
 | **Tham số** | **Giá trị ban đầu** | **Ghi chú** |
 | --- | --- | --- |
-| Connect timeout | 2 giây | Release 1 baseline |
+| Connect timeout | 2 giây | Baseline |
 | Read timeout | 10 giây | Tránh giữ thread lâu |
 | Synchronous retry | Tối đa 2 | Exponential backoff + jitter |
-| Reconcile initial delay | 2 phút | Release 1 baseline |
+| Reconcile initial delay | 2 phút | Baseline |
 | Reconcile interval | 1 phút | Batch bounded |
 | Max reconcile attempts | 5 | Sau đó operation/NEED_RETRY theo policy |
 | Circuit open threshold | 50% failure, minimum 10 calls | Có thể tune bằng versioned config sau load test |
@@ -1921,7 +1921,7 @@ Yêu cầu:
 | Ảnh mờ/chói/mất góc và còn attempt | NEED_RETRY | Hướng dẫn user-friendly |
 | Camera permission/SDK init lỗi | SDK_ERROR | Không phải identity failure |
 | Provider timeout/5xx | PROVIDER_ERROR | Reconcile trước user retry |
-| Face mismatch | MANUAL_REVIEW | Release 1 không auto-reject chỉ từ similarity score |
+| Face mismatch | MANUAL_REVIEW | Không auto-reject chỉ từ similarity score |
 | Provider conclusion uncertain | MANUAL_REVIEW | Manual-review capability bắt buộc |
 | Hard document fraud warning | MANUAL_REVIEW | Reviewer/Risk quyết định; không auto-reject từ raw provider warning |
 | Callback không tới trong SLA; reconciliation Get Result có final | Xử lý qua cùng official-result pipeline | `resultSource=RECONCILIATION` |
@@ -1953,7 +1953,7 @@ Yêu cầu:
 
 ## 4.7. Event Contract
 
-Topic Release 1: `identity_verification_events.v1`, partition key=`verificationId`.
+Topic: `identity_verification_events.v1`, partition key=`verificationId`.
 
 ```json
 {
@@ -2241,9 +2241,9 @@ sequenceDiagram
     end
 ```
 
-Web baseline Release 1:
+Web baseline:
 
-- Chỉ browser/version có trong compatibility allowlist được publish cùng release;
+- Chỉ browser/version có trong compatibility allowlist được publish trong deployment;
   browser ngoài allowlist bị chặn trước khi tạo SDK run.
 - Camera tối thiểu 720p, permission phải được cấp trước start; mất permission chuyển
   `SDK_ERROR` và không silent fallback sang file upload.
@@ -2711,13 +2711,13 @@ Không dùng verification ID, business ref, subject ref hoặc PII làm metric l
 | Backend | Java/Spring Boot theo VHM platform BOM | Version pin trong build manifest |
 | Mobile | Framework hiện hữu của VHM Mobile App | Module/platform version pin trong build manifest |
 | Web | Framework hiện hữu của VHM Web App + Web eKYC SDK | Version pin trong package lock/build manifest |
-| SDK | Native/Web eKYC SDK từ private artifact repository | Package/version pin theo release manifest |
-| Database | PostgreSQL Multi-AZ | Quyết định Release 1 |
-| Event | Kafka + transactional outbox | Quyết định Release 1 |
+| SDK | Native/Web eKYC SDK từ private artifact repository | Package/version pin theo deployment manifest |
+| Database | PostgreSQL Multi-AZ | Quyết định kiến trúc |
+| Event | Kafka + transactional outbox | Quyết định kiến trúc |
 | Storage | Private Object Storage cho manual evidence | Bắt buộc khi manual review bật |
 | Authentication | OIDC/JWT; internal workload identity | Theo IAM |
 | Secrets | Vault/Secrets Manager + KMS | Bắt buộc |
-| Resilience | Resilience4j theo VHM Java platform standard | Quyết định Release 1 |
+| Resilience | Resilience4j theo VHM Java platform standard | Quyết định kiến trúc |
 | Observability | OpenTelemetry, metrics, dashboards, centralized logs | Bắt buộc |
 
 ## 6.6. Configuration Management
@@ -2754,7 +2754,7 @@ identity-verification:
 
 ### 6.6.2. SDK configuration baseline
 
-| **Nhóm** | **Cấu hình** | **Release 1 Baseline** | **Owner** |
+| **Nhóm** | **Cấu hình** | **Baseline** | **Owner** |
 | --- | --- | --- | --- |
 | Journey | OCR/FULL eKYC flow | Theo use case + channel policy | Product/Risk |
 | Liveness | Disable/skip | OFF cho FULL_EKYC production | ANBM/Risk |
@@ -2820,7 +2820,7 @@ URL, consent text đầy đủ, business PII hoặc biometric score gắn với 
 
 ### 6.7.3. Alerts
 
-| **Alert** | **Release 1 Trigger** | **Severity** |
+| **Alert** | **Trigger** | **Severity** |
 | --- | --- | --- |
 | Callback auth/replay failure | Bất kỳ production hoặc tăng đột biến | Critical/High |
 | Provider auth failure | 401/403 liên tục | Critical |
@@ -2828,7 +2828,7 @@ URL, consent text đầy đủ, business PII hoặc biometric score gắn với 
 | Mapping/schema error | >0 kéo dài/sau provider change | High |
 | Inbox/reconciliation backlog | Oldest age vượt SLA | High |
 | Outbox backlog | Event age vượt SLA | High |
-| Unsupported browser spike | Tăng sau Web release | Medium |
+| Unsupported browser spike | Tăng sau Web deployment | Medium |
 | SDK crash/init error spike | Theo app/sdk/browser version | High/Medium |
 | Handoff conversion drop | So với baseline | Medium |
 | Step outbox backlog | Oldest due age vượt SLA | High |
@@ -3100,7 +3100,7 @@ Runbook phải bao gồm:
 | Provider schema drift | Type/field đổi hàng loạt | Tolerant parser, contract monitor, quarantine/alert |
 | Insider access | Support unmask không cần thiết | RBAC, reason, audit, dual control |
 | Compromised device | Root/debugger/emulator | SDK checks, app hardening, server policy |
-| Config drift | Flow/retention bị đổi ngoài release | Baseline, change audit, periodic reconciliation |
+| Config drift | Flow/retention bị đổi ngoài change process | Baseline, change audit, periodic reconciliation |
 | Over-retention | Media/PII giữ quá purpose | Lifecycle, deletion verification, DPIA |
 
 ## 7.4. Security Test Cases tối thiểu
@@ -3191,7 +3191,7 @@ sequenceDiagram
 
 ## 8.4. RTO & RPO
 
-| **Chỉ số** | **Release 1 Baseline** | **Ghi chú** |
+| **Chỉ số** | **Baseline** | **Ghi chú** |
 | --- | --- | --- |
 | RTO | <= 4 giờ | Tier 2 baseline; System Owner phê duyệt |
 | RPO | <= 15 phút/PITR | Session/result nhạy với mất dữ liệu |
@@ -3257,7 +3257,7 @@ Các mục dưới đây không phải lựa chọn kiến trúc. Đây là inpu
 
 | **Input bắt buộc** | **Owner** | **Gate** |
 | --- | --- | --- |
-| Danh sách domain/use case thuộc Release 1 và owner của từng use case | Product/System Owner | Trước implementation scope freeze |
+| Danh sách domain/use case được phê duyệt và owner của từng use case | Product/System Owner | Trước implementation scope freeze |
 | Journey `OCR_ONLY/FULL_EKYC`, enforcement và channel cho từng use case | Product/Risk | Trước config baseline |
 | Subject types: customer, partner, employee, legal representative hoặc related party | Product/Domain | Trước API mapping |
 | Document types được phép theo domain/use case | Product/Risk | Trước SDK flow config |
@@ -3336,29 +3336,29 @@ Các mục dưới đây không phải lựa chọn kiến trúc. Đây là inpu
 
 | **ID** | **Decision** | **Lý do** | **Hệ quả/Trade-off** | **Status** |
 | --- | --- | --- | --- | --- |
-| ADR-001 | Dùng eKYC SDK, không tự xây OCR/liveness | Time-to-market, model expertise | External dependency | Accepted — R1 |
-| ADR-002 | Identity Platform dùng chung, domain không tích hợp trực tiếp | Central policy/security/audit | Thêm platform dependency | Accepted — R1 |
-| ADR-003 | Server-to-server là official result | Chống giả mạo client | Cần callback inbox và reconciliation fallback | Accepted — R1 |
-| ADR-004 | VHM sinh Verification ID, external ID chỉ reference | Correlation và provider portability | Cần mapping table | Accepted — R1 |
-| ADR-005 | Provider Adapter + Canonical Result | Domain không lock vào SDK payload | Thêm mapping/contract tests | Accepted — R1 |
-| ADR-006 | Callback Inbox idempotent | Callback retry/duplicate/schema lỗi | Thêm table/worker | Accepted — R1 |
-| ADR-007 | Callback là luồng chính; Get Result chỉ dùng cho reconciliation | Realtime và recovery | Cần provider retention/quota | Accepted — R1 |
-| ADR-008 | Không lưu raw payload/media automatic flow tại VHM | Privacy/minimization | Troubleshooting dựa canonical data/audit | Accepted — R1 |
-| ADR-009 | Transactional Outbox cho domain event | Không mất event | Thêm worker/Kafka ops | Accepted — R1 |
-| ADR-010 | OCR_ONLY và FULL_EKYC là journey khác nhau | Tránh hiểu sai OCR là verified identity | Domain phải chọn đúng journey | Accepted — R1 |
-| ADR-011 | Web/Mobile là channel hạng nhất | Hỗ trợ đầy đủ hai kênh | Tăng compatibility/test matrix | Accepted — R1 |
-| ADR-012 | Không silent downgrade khi thiếu capability | Giữ đúng risk assurance | Cần handoff/UX fallback | Accepted — R1 |
-| ADR-013 | One-time Web→Mobile handoff | Hỗ trợ NFC/mobile-only securely | Thêm token lifecycle/deep link | Accepted — R1 |
-| ADR-014 | Result field projection theo consumer scope | Data minimization | Thêm authorization/audit complexity | Accepted — R1 |
-| ADR-015 | Configurable ordered verification pipeline | Dùng chung cho use case nhiều step | Thêm orchestrator/config governance | Accepted — R1 |
-| ADR-016 | Step outbox + after-commit fast path + scheduler fallback | Durable async và phản hồi business nhanh | Thêm worker/outbox operations | Accepted — R1 |
-| ADR-017 | Identity-version guard | Không apply task cũ lên document mới | Domain phải tăng version atomically | Accepted — R1 |
-| ADR-018 | Snapshot retry/term/sub-step config lúc enqueue | Deterministic execution | Config mới chỉ áp task/session mới | Accepted — R1 |
-| ADR-019 | Manual fan-out `ANY/STRICT` | Review linh hoạt theo sub-step | Tăng aggregate/assignment complexity | Accepted — R1 |
-| ADR-020 | Domain hook cho identity lock/notification | Giữ core domain-neutral | Domain consumer phải idempotent | Accepted — R1 |
-| ADR-021 | Mobile dùng VHM Secure Evidence Capture sau OCR fail-fast | Không phụ thuộc capture lifecycle của provider SDK | VHM lưu manual evidence TTL ngắn | Accepted — R1 |
-| ADR-022 | Web không capture manual evidence; handoff sang Mobile | Giảm Web media/storage risk | Thêm cross-channel UX | Accepted — R1 |
-| ADR-023 | Callback dùng JWS/JWT bất đối xứng; mTLS là lớp bổ sung | Auth mạnh và hỗ trợ rotation | Provider không đáp ứng cần ANBM exception | Accepted — R1 |
+| ADR-001 | Dùng eKYC SDK, không tự xây OCR/liveness | Time-to-market, model expertise | External dependency | Accepted |
+| ADR-002 | Identity Platform dùng chung, domain không tích hợp trực tiếp | Central policy/security/audit | Thêm platform dependency | Accepted |
+| ADR-003 | Server-to-server là official result | Chống giả mạo client | Cần callback inbox và reconciliation fallback | Accepted |
+| ADR-004 | VHM sinh Verification ID, external ID chỉ reference | Correlation và provider portability | Cần mapping table | Accepted |
+| ADR-005 | Provider Adapter + Canonical Result | Domain không lock vào SDK payload | Thêm mapping/contract tests | Accepted |
+| ADR-006 | Callback Inbox idempotent | Callback retry/duplicate/schema lỗi | Thêm table/worker | Accepted |
+| ADR-007 | Callback là luồng chính; Get Result chỉ dùng cho reconciliation | Realtime và recovery | Cần provider retention/quota | Accepted |
+| ADR-008 | Không lưu raw payload/media automatic flow tại VHM | Privacy/minimization | Troubleshooting dựa canonical data/audit | Accepted |
+| ADR-009 | Transactional Outbox cho domain event | Không mất event | Thêm worker/Kafka ops | Accepted |
+| ADR-010 | OCR_ONLY và FULL_EKYC là journey khác nhau | Tránh hiểu sai OCR là verified identity | Domain phải chọn đúng journey | Accepted |
+| ADR-011 | Web/Mobile là channel hạng nhất | Hỗ trợ đầy đủ hai kênh | Tăng compatibility/test matrix | Accepted |
+| ADR-012 | Không silent downgrade khi thiếu capability | Giữ đúng risk assurance | Cần handoff/UX fallback | Accepted |
+| ADR-013 | One-time Web→Mobile handoff | Hỗ trợ NFC/mobile-only securely | Thêm token lifecycle/deep link | Accepted |
+| ADR-014 | Result field projection theo consumer scope | Data minimization | Thêm authorization/audit complexity | Accepted |
+| ADR-015 | Configurable ordered verification pipeline | Dùng chung cho use case nhiều step | Thêm orchestrator/config governance | Accepted |
+| ADR-016 | Step outbox + after-commit fast path + scheduler fallback | Durable async và phản hồi business nhanh | Thêm worker/outbox operations | Accepted |
+| ADR-017 | Identity-version guard | Không apply task cũ lên document mới | Domain phải tăng version atomically | Accepted |
+| ADR-018 | Snapshot retry/term/sub-step config lúc enqueue | Deterministic execution | Config mới chỉ áp task/session mới | Accepted |
+| ADR-019 | Manual fan-out `ANY/STRICT` | Review linh hoạt theo sub-step | Tăng aggregate/assignment complexity | Accepted |
+| ADR-020 | Domain hook cho identity lock/notification | Giữ core domain-neutral | Domain consumer phải idempotent | Accepted |
+| ADR-021 | Mobile dùng VHM Secure Evidence Capture sau OCR fail-fast | Không phụ thuộc capture lifecycle của provider SDK | VHM lưu manual evidence TTL ngắn | Accepted |
+| ADR-022 | Web không capture manual evidence; handoff sang Mobile | Giảm Web media/storage risk | Thêm cross-channel UX | Accepted |
+| ADR-023 | Callback dùng JWS/JWT bất đối xứng; mTLS là lớp bổ sung | Auth mạnh và hỗ trợ rotation | Provider không đáp ứng cần ANBM exception | Accepted |
 
 ---
 
