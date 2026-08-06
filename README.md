@@ -26,6 +26,22 @@
 | Data Privacy/Legal | TBD | Pending | TBD |
 | Operations/Cloud/DBA | TBD | Pending | TBD |
 
+### Document completion gate
+
+Tài liệu chỉ được chuyển từ `BẢN NHÁP` sang `ĐANG THẨM ĐỊNH` khi toàn bộ trường
+dưới đây có giá trị và link evidence truy cập được. Không dùng `TBD`, tên team
+chung hoặc trao đổi miệng để thay cho owner/sign-off cụ thể.
+
+| **Hạng mục bắt buộc** | **Giá trị hiện tại** | **Owner cung cấp** | **Điều kiện qua gate** |
+| --- | --- | --- | --- |
+| Document Owner và System Owner | Chưa được cung cấp | Sponsor/Program Lead | Có họ tên, vai trò và đơn vị chịu trách nhiệm |
+| Reviewer/Approver | Chưa được cung cấp | Architecture Governance | Có cá nhân cho Product, Architecture, Integration, ANBM, Data Privacy và Operations |
+| L1 document | Chưa được cung cấp | System Owner | Link hợp lệ và scope/name nhất quán với TDD |
+| L3 API specification | Chưa được cung cấp | Backend Tech Lead | Link contract cho BFF, VHM eKYC Service, callback và Result API |
+| L3 Mobile/Web integration specifications | Chưa được cung cấp | Mobile/Web Tech Leads | Link SDK lifecycle, compatibility và failure-path specification |
+| L3 DB/Operations runbook | Chưa được cung cấp | DBA/Ops | Link migration, retention/purge, backup/restore và incident runbook |
+| Referenced-standard versions | Chưa đầy đủ | Architecture/ANBM/Data Privacy/Ops | Có version/link chính thức và deviation/exception nếu có |
+
 ## Mục lục
 
 1. [Business Objectives & Scope](#1-business-objectives--scope)
@@ -304,7 +320,7 @@ tham chiếu control ID và chỉ mô tả chi tiết riêng của section.
 | `CRED-01` | Provider credential lưu trong Secret Manager và chỉ Provider Adapter của VHM eKYC Service được đọc/inject; không truyền xuống BFF, Mobile/Web hoặc SDK. | VHM eKYC Service/ANBM | IAM policy, secret scan và rotation test |
 | `RESULT-01` | Client/SDK result chỉ phục vụ UX; callback đã xác thực là official-result ingress chính. Get Result chỉ được gọi bởi Reconciliation Job khi callback quá SLA hoặc session treo. | VHM eKYC Service | Callback/reconciliation contract test |
 | `CALLBACK-01` | Callback phải được token-authenticate, bind Client UUID/environment, replay/dedupe và durable inbox trước khi trả 2xx. | VHM eKYC Service/ANBM | Security, duplicate và crash-recovery test |
-| `DATA-01` | VHM không lưu document image, selfie hoặc liveness video/frame; chỉ lưu canonical fixed fields và callback inbox tối thiểu, mã hóa, TTL ngắn theo approved purpose. | VHM eKYC Service/Data Privacy | Data inventory, DB scan, retention/purge evidence |
+| `DATA-01` | VHM không lưu document image, selfie hoặc liveness video/frame; chỉ lưu canonical fixed fields và callback inbox tối thiểu, mã hóa và purge theo mục 7.2.5. | VHM eKYC Service/Data Privacy | Data inventory, DB scan, retention/purge evidence |
 | `AUTH-01` | BFF authenticate caller, authorize `businessRef/subjectRef` và không tin business scope từ request body; VHM eKYC Service revalidate session/run/journey binding. | BFF/VHM eKYC Service | AuthN/AuthZ/IDOR test |
 | `RETRY-01` | Front/back thuộc cùng run; lỗi một bước làm fail whole attempt. Retry tạo attempt/run mới và không tái sử dụng media/result cũ. | Client/VHM eKYC Service | State-machine và retry E2E |
 
@@ -408,7 +424,7 @@ và tích hợp/proxy tới eKYC Provider Backend. Cấu trúc module bên trong
 | 5 | **Verification API** | Validate contract và điều phối use case | Session command/query và canonical response | VHM eKYC Service module | Qua persistence port tới PostgreSQL | Không; qua BFF | Không thực hiện thuật toán OCR/liveness |
 | 6 | **Session Manager** | Active guard, state machine, expiry, retry chain và optimistic locking | Verification session/run/state/history | VHM eKYC Service domain/application module | PostgreSQL | Không | Không phụ thuộc raw SDK payload |
 | 7 | **Provider Adapter** | Stream init/OCR/liveness, inject server credential, Get Result và translate error | Media transient, provider reference/config và response tạm thời | VHM eKYC Service outbound adapter, streaming HTTP client, Resilience4j | Không | Có — outbound tới eKYC Provider Backend | Không áp business rule domain |
-| 8 | **Callback Inbox** | Authenticate, durable receive, dedupe và xử lý callback | Encrypted minimal callback payload, hash và processing state | Callback API/worker của VHM eKYC Service | PostgreSQL encrypted inbox, TTL ngắn | Không; callback qua BFF | Không lưu media hoặc raw payload dài hạn |
+| 8 | **Callback Inbox** | Authenticate, durable receive, dedupe và xử lý callback | Encrypted minimal callback payload, hash và processing state | Callback API/worker của VHM eKYC Service | PostgreSQL encrypted inbox; payload processed `24h`, failed/quarantine `7d` | Không; callback qua BFF | Không lưu media hoặc raw payload dài hạn |
 | 9 | **Result Normalizer** | Ánh xạ provider result sang Canonical Result | Fixed OCR fields, canonical checks/warnings | VHM eKYC Service application module | PostgreSQL qua persistence port | Không | Không cập nhật business object |
 | 10 | **Decision Mapper** | Ánh xạ canonical checks theo fixed policy version | Decision, outcome, reason và policy version | VHM eKYC Service domain policy | PostgreSQL check/result/history | Không | Không hard-code threshold chưa phê duyệt |
 | 11 | **Reconciliation Job** | Khôi phục callback thất lạc/session treo bằng bounded polling | Due schedule, recovery attempt và official result | VHM eKYC Service scheduler/worker, Resilience4j | PostgreSQL | Có — outbound Get Result | Không polling mọi session liên tục |
@@ -547,7 +563,7 @@ case đã được phê duyệt; client không được tự đổi flow.
 | Confidence/warnings | score, reason code | Sensitive inference | Check table/JSONB | Versioned mapping, hạn chế UI |
 | Liveness/face result | status, score | Biometric-related sensitive | Status/score tối thiểu | Không lưu video/template tại VHM |
 | Resource URL | front/back/video URL | Sensitive | Không persist | Không log; không fetch tự động |
-| Callback payload | Payload tối thiểu phục vụ normalize | Sensitive | Mã hóa trong Callback Inbox, TTL ngắn và purge sau xử lý | Không log; không lưu vào result/history |
+| Callback payload | Payload tối thiểu phục vụ normalize | Sensitive | Mã hóa trong Callback Inbox; processed `24h`, failed/quarantine `7d` | Không log; không lưu vào result/history |
 | Consent | purpose/version/time | Personal/compliance | Consent system + reference | Purpose-bound, audit được |
 | Credential/token | Provider API key, callback client secret, VHM SDK token-signing key | Secret | VHM Secret Manager/IAM; workload memory khi sử dụng | Không DB/log/client binary |
 
@@ -693,9 +709,25 @@ Kiểm soát:
 ### 2.5.3. Callback và reconciliation cùng chạy
 
 - Cả hai gọi chung `processOfficialResult()`.
-- Callback/reconciliation khóa session bằng `SELECT ... FOR UPDATE` trong transaction
-  ngắn; API mutation thông thường dùng optimistic `rowVersion`.
+- Callback HTTP request chỉ authenticate, dedupe và durable-insert inbox; không
+  giữ session row lock trong request thread trước khi trả 2xx.
+- Callback Worker và Reconciliation Worker khóa session bằng
+  `SELECT ... FOR UPDATE` trong transaction ngắn; API mutation thông thường dùng
+  optimistic `rowVersion`.
 - Nếu terminal, chỉ append audit duplicate/late source, không finalize lần hai.
+
+| **Kiểm soát đồng thời** | **Baseline bắt buộc** |
+| --- | --- |
+| Session row lock | `SET LOCAL lock_timeout = '1s'` trước `SELECT ... FOR UPDATE` |
+| Transaction query budget | `SET LOCAL statement_timeout = '5s'`; transaction không gọi network/external dependency |
+| Lock timeout/deadlock | Rollback toàn bộ; không đổi session/result; inbox vẫn ở trạng thái retryable |
+| Worker retry | Tối đa 3 lần retry nhanh với exponential backoff + jitter `250ms → 1s`; sau đó chuyển delayed retry/reconciliation, không spin |
+| Callback acknowledgement | Chỉ phụ thuộc durable inbox; mục tiêu `<= 2s`, không chờ normalize/finalize |
+| Metrics/alert | `db_lock_wait_seconds`, `db_lock_timeout_total`, `official_result_retry_total`, inbox oldest age |
+
+Giá trị `1s/5s` là safety baseline để bảo vệ worker pool khi callback burst. Chỉ
+được tăng sau lock/load test và ADR; không được tăng timeout để che transaction
+dài hoặc network call nằm sai transaction boundary.
 
 ### 2.5.4. Transaction boundary
 
@@ -1266,6 +1298,7 @@ Attempt mới không reuse Client UUID, provider session, result, history, token
 | Callback schema invalid | Schema validation | Không finalize | Provider sửa contract/payload | High alert |
 | DB lỗi trước durable inbox | Insert failure | Chưa nhận callback | Provider retry | DB alert |
 | DB lỗi sau durable inbox | Worker/inbox status | Giữ inbox pending/failed | Worker reprocess | Backlog alert |
+| Session row lock timeout/deadlock | PostgreSQL `lock_timeout`/SQLSTATE | Rollback, không đổi session/result | Inbox giữ retryable; worker backoff theo mục 2.5.3 | Lock-timeout/retry alert |
 | Callback lost | Reconciliation due | Giữ `SUBMITTED/PROCESSING` | Get Result bounded | Reconcile metric |
 | Session stuck hết budget | Recovery counter | `PROVIDER_ERROR` | Contact support/retry theo policy | Incident review |
 | Concurrent create | Unique/idempotency guard | Một active session | Trả session hiện hữu/conflict | Metric |
@@ -1392,24 +1425,39 @@ tới eKYC Provider Backend; chi tiết giao thức/cổng nằm trong Network F
 | Create session latency | p95 `<= 1s` qua BFF/VHM eKYC Service/DB; không có synchronous eKYC Provider Backend call | Baseline. |
 | Status/Result API latency | p95 `<= 300ms` với dữ liệu đã persist | Baseline. |
 | Callback durable acknowledgement | `<= 2s` để durable receive và trả 2xx | Baseline; xử lý nặng async. |
-| Concurrent sessions Mobile/Web | TBD | Product/Ops cung cấp trước load test. |
-| Peak create/status/result TPS | TBD | Product/Ops cung cấp trước capacity sign-off. |
-| Callback burst TPS/payload p95-p99 | TBD | eKYC Provider Backend/Ops cung cấp trước callback load test. |
-| Concurrent SDK media streams | TBD theo Mobile/Web peak | Bắt buộc đo riêng BFF và VHM eKYC Service trước capacity sign-off. |
-| Media size/upload duration p95-p99 | TBD theo OCR/liveness method | Dùng để chốt body limit, timeout, bandwidth, HPA và memory budget. |
+| Concurrent sessions Mobile/Web | Chưa có input — `BLOCKING` | Bắt buộc điền worksheet 6.4.2 trước capacity sign-off. |
+| Peak create/status/result TPS | Chưa có input — `BLOCKING` | Bắt buộc điền worksheet 6.4.2 trước capacity sign-off. |
+| Callback burst TPS/payload p95-p99 | Chưa có input — `BLOCKING` | eKYC Provider Backend/Ops cung cấp và xác nhận bằng callback load test. |
+| Concurrent SDK media streams | Chưa có input — `BLOCKING` | Đo riêng BFF và VHM eKYC Service trong streaming load test. |
+| Media size/upload duration p95-p99 | Theo security ceiling mục 7.1.4; phân phối thực tế chưa có — `BLOCKING` | Dùng để chốt timeout, bandwidth, HPA và memory budget. |
 | Streaming memory per connection | Theo `MEDIA-01`, không tỷ lệ theo body size | Load/memory/disk evidence. |
-| Data volume/growth | TBD theo retention và fixed field set | Data Privacy/Ops/DBA xác nhận. |
+| Data volume/growth | Chưa có retention/volume input — `BLOCKING` | Data Privacy/Ops/DBA xác nhận. |
 
 ### 6.4.2. Capacity inputs bắt buộc trước production
 
-- Daily/peak concurrent session cho Mobile và Web.
-- Peak create/status/result TPS.
-- Callback burst TPS và payload size p95/p99.
-- Concurrent media stream, media size, upload duration và bandwidth p95/p99.
-- Tỷ lệ `OCR_ONLY/FULL_EKYC`, retry và reconciliation.
-- Provider quota, rate limit, SLA và maintenance window.
-- Canonical result/inbox retention và DB growth.
-- Mục tiêu p95/p99 theo từng interface.
+| **Input bắt buộc** | **Đơn vị** | **Design value** | **Evidence yêu cầu** | **Owner** |
+| --- | --- | --- | --- | --- |
+| Daily session Mobile/Web | session/ngày theo channel | `UNRESOLVED` | Product forecast được phê duyệt | Product/Ops |
+| Peak concurrent active session | session đồng thời theo channel | `UNRESOLVED` | Forecast + journey-duration p95/p99 | Product/Ops |
+| Peak create/status/result | TPS p95/p99 và burst duration | `UNRESOLVED` | Access pattern/forecast | Product/Ops |
+| Callback burst | TPS, duration, payload p95/p99 | `UNRESOLVED` | Provider contract hoặc staging measurement | eKYC Provider Backend/Ops |
+| Concurrent media stream | stream đồng thời | `UNRESOLVED` | Mobile/Web concurrency model | Product/Client/Ops |
+| Media distribution | byte và upload duration p50/p95/p99 | `UNRESOLVED` | SDK staging measurement cho OCR/liveness | Client/eKYC Provider Backend |
+| Journey/retry mix | `% OCR_ONLY`, `% FULL_EKYC`, retry rate | `UNRESOLVED` | Product funnel forecast | Product/Risk |
+| Reconciliation workload | due session/phút, retry budget | `UNRESOLVED` | Callback SLA, retention và quota | Ops/eKYC Provider Backend |
+| Provider quota/SLA | request/TPS/concurrency/maintenance | `UNRESOLVED` | Contract/SLA evidence | Procurement/Ops |
+| Data growth | record/day, byte/record, retention | `UNRESOLVED` | Fixed field set + retention decision | Product/Data Privacy/DBA |
+
+`UNRESOLVED` là approval blocker, không phải giá trị mặc định để dev tự chọn.
+Sizing phải dùng tối thiểu các công thức sau và đính kèm spreadsheet/load-test
+evidence:
+
+- `peakConcurrency = peakArrivalRate × journeyDurationP99 × safetyFactor`.
+- `requiredReplicas = ceil(peakConcurrentWork / measuredCapacityPerPod) + HA headroom`.
+- RDS storage/IOPS/connection sizing dựa trên measured write amplification,
+  callback burst, retention và restore-window requirement.
+- Safety factor và HA headroom do Architecture/Ops ký duyệt; không lấy production
+  replica count từ sample hoặc môi trường SIT.
 
 ### 6.4.3. Scaling design
 
@@ -1441,8 +1489,19 @@ phải bounded và tôn trọng provider quota; không dùng unbounded polling.
 | SDK/provider usage | OCR/eKYC transaction theo journey/attempt | TBD theo volume và retry rate | TBD | Product/Procurement |
 | **Total monthly estimate** | AWS + provider usage | — | **TBD** | Finance/Product approval gate |
 
-**AWS Pricing Calculator link:** TBD — Cloud/Ops phải đính kèm estimate được duyệt;
-provider commercial cost được quản lý riêng theo hợp đồng và usage quota.
+**Công cụ bắt buộc:** [AWS Pricing Calculator](https://calculator.aws/).
+
+| **Cost approval artefact** | **Giá trị/link** | **Owner** | **Gate** |
+| --- | --- | --- | --- |
+| AWS estimate share/export | `UNRESOLVED` | Cloud/Ops | Bắt buộc trước Architecture/Finance sign-off |
+| Tổng AWS monthly estimate | `UNRESOLVED` USD/tháng | Cloud/Ops/Finance | Phải khớp capacity worksheet 6.4.2 |
+| Provider pricing model và monthly estimate | `UNRESOLVED` | Product/Procurement/Finance | Phải gồm OCR/FULL_EKYC/retry/reconciliation usage |
+| Cost assumptions | `UNRESOLVED` | Cloud/Ops | Region, hours/month, data transfer, log retention, backup và headroom |
+| Budget/quota/alert threshold | `UNRESOLVED` | Product/Ops/Finance | Có dashboard, owner và stop-create/escalation rule |
+
+Không được dùng bảng `TBD` phía trên như cost estimate. Tài liệu chỉ qua cost gate
+khi có calculator export/share link, provider quotation và tổng chi phí tháng đã
+được Finance/Product ký duyệt.
 
 ## 6.5. CI/CD Architecture
 
@@ -1701,6 +1760,36 @@ monitoring standard cần Architecture/Ops/Data Privacy phê duyệt.
   tại mục 4.2.2.
 - Callback body vẫn phải qua size/depth/content-type/schema validation trước xử lý business.
 
+#### Media request limits (`MEDIA-01`)
+
+Các giá trị dưới đây là hard security ceiling trên **mỗi HTTP request**, không phải
+memory-buffer size hoặc mục tiêu payload. Nếu contract của eKYC Provider Backend
+thấp hơn thì dùng giới hạn thấp hơn.
+
+| **Operation** | **Max body** | **Giới hạn bổ sung** | **Timeout baseline** |
+| --- | --- | --- | --- |
+| SDK init/config JSON | `256 KiB` | JSON depth `<= 20`, tối đa `200` fields | Request `10s` |
+| OCR multipart | `25 MiB` | Tối đa 2 media parts; mỗi media part `<= 12 MiB`; chỉ MIME allowlist | Upload `60s`, idle-read `10s` |
+| Liveness multipart/binary | `50 MiB` | Part-count/MIME phải khớp SDK contract; cấm archive/nested multipart | Upload `90s`, idle-read `10s` |
+| Provider callback JSON | `2 MiB` | JSON depth `<= 30`; không nhận binary/base64 media | Request `10s`, durable ack `<= 2s` |
+| Get Result response | `2 MiB` | JSON only; resource URL không được tự động fetch | Upstream `10s` |
+
+Enforcement bắt buộc:
+
+- WAF/Ingress, VHM BFF và VHM eKYC Service dùng cùng operation limit; startup/config
+  validation phải fail nếu downstream limit nhỏ hơn upstream hoặc route không hỗ trợ streaming.
+- Có `Content-Length` và vượt limit: trả `413 Payload Too Large` trước khi gọi downstream.
+- Chunked/không có `Content-Length`: đếm byte khi stream ở cả BFF và VHM eKYC
+  Service; vượt limit phải cancel upstream/downstream ngay, không đọc hết body.
+- Chỉ bounded buffer theo chunk và backpressure; memory per connection không được
+  tăng theo body size, không spool xuống disk và không ghi body vào log/APM.
+- Media request đã gửi một phần không được transparent retry. Client nhận canonical
+  error và thực hiện whole-attempt retry theo `RETRY-01` khi được phép.
+- Metric tối thiểu: rejected-by-size, bytes theo operation/direction, upload duration,
+  active streams, timeout, cancelled upstream và memory per pod; cấm label chứa PII.
+- Tăng bất kỳ ceiling nào phải có provider contract fixture, load/OOM test, ANBM
+  review và ADR; không thay trực tiếp bằng environment variable trong production.
+
 #### Mobile Security
 
 - SDK/package/profile pin version và integrity theo Mobile release process.
@@ -1795,13 +1884,13 @@ monitoring standard cần Architecture/Ops/Data Privacy phê duyệt.
 - [x] **Có xử lý dữ liệu cá nhân**, bao gồm dữ liệu cơ bản và dữ liệu sinh trắc
   học/định danh nhạy cảm trong hành trình `FULL_EKYC`.
 
-| **Loại dữ liệu** | **Phân nhóm** | **Có xử lý?** | **Phạm vi** |
+| **Loại dữ liệu** | **Phân nhóm thiết kế** | **Có xử lý?** | **Phạm vi** |
 | --- | --- | --- | --- |
 | Họ và tên | Dữ liệu cá nhân cơ bản | Có | Fixed OCR field nếu được Product/Data Privacy phê duyệt. |
 | Ngày sinh | Dữ liệu cá nhân cơ bản | Có | Fixed OCR field, mã hóa/masking theo purpose. |
-| Giới tính | Dữ liệu cá nhân cơ bản | TBD | Chỉ nhận nếu nằm trong approved fixed result set; mặc định không yêu cầu. |
+| Giới tính | Dữ liệu cá nhân cơ bản | Có điều kiện | Chỉ nhận nếu nằm trong approved fixed result set; mặc định không yêu cầu. |
 | Địa chỉ/nơi cư trú/quê quán | Dữ liệu cá nhân cơ bản | Có | Fixed OCR field theo use case; không dùng ngoài purpose. |
-| Số giấy tờ định danh | Dữ liệu cá nhân cơ bản có rủi ro cao | Có | Mã hóa, mask mặc định và object-level authorization. |
+| Số giấy tờ định danh | Dữ liệu cá nhân cơ bản; field tác động cao trong thiết kế | Có | Mã hóa, mask mặc định và object-level authorization. |
 | Opaque subject/business/device-linked ID | Dữ liệu cá nhân nếu liên kết được cá nhân | Có | Dùng correlation/authorization; không nhúng PII vào ID. |
 | Ảnh giấy tờ, selfie, liveness video/frame | Dữ liệu cá nhân nhạy cảm/sinh trắc học | Có transit tại BFF/VHM eKYC Service và xử lý tại eKYC Provider Backend | Transient tại VHM; provider xử lý theo contract. |
 | Liveness/face-match status và score | Dữ liệu liên quan sinh trắc học | Có | VHM chỉ lưu canonical status/score tối thiểu theo policy được duyệt. |
@@ -1811,41 +1900,64 @@ monitoring standard cần Architecture/Ops/Data Privacy phê duyệt.
 Phân loại pháp lý cuối cùng, lawful basis và DPIA/DPA phải được Data Privacy/Legal
 phê duyệt; mã hóa không làm dữ liệu mất tính chất dữ liệu cá nhân.
 
+| **Nhóm phê duyệt** | **Data thuộc nhóm** | **Control tối thiểu** | **Approval status** |
+| --- | --- | --- | --- |
+| Dữ liệu cá nhân cơ bản | Họ tên, ngày sinh, giới tính, địa chỉ và opaque reference liên kết được cá nhân | Purpose limitation, field allowlist, encryption, masking, object authorization | `PENDING — Data Privacy/Legal` |
+| Field định danh tác động cao | Số giấy tờ định danh | Field encryption, mask mặc định, unmask approval/audit, retention 7.2.5 | `PENDING — Data Privacy/Legal` |
+| Dữ liệu nhạy cảm/sinh trắc | Ảnh giấy tờ, selfie, liveness video/frame và face/liveness result | Consent, no VHM media persistence, strict transit control, provider DPA/DPIA, shortest retention | `PENDING — Data Privacy/Legal/ANBM` |
+| Ngoài contract | Chủng tộc, chính trị, tôn giáo, sức khỏe, payment, phone/email | Reject/redact; không thêm field nếu chưa đổi fixed contract và privacy approval | Không được xử lý |
+
 ### 7.2.2. Data inventory
 
 | **Data** | **Nguồn** | **Purpose** | **VHM persistence** | **Provider** | **Retention** |
 | --- | --- | --- | --- | --- | --- |
-| Business/subject opaque ref | VHM BFF | Correlation/authorization | Có | External ref nếu cần | Business/audit policy |
-| Consent ref/version/time | VHM Application/Consent | Legal basis/audit | Có | Theo contract | Legal/privacy policy |
-| Document fields | eKYC Provider Backend | OCR/autofill/verification | Fixed fields, encrypted/masked | Có xử lý | Purpose-bound |
-| Document image front/back | SDK | OCR/verification | Không persist; transit BFF/VHM eKYC Service | Có xử lý | Provider contract, ngắn nhất |
-| Selfie/video/frame | SDK | Liveness/face matching | Không persist; transit BFF/VHM eKYC Service | Có xử lý | Provider contract, ngắn nhất |
-| Liveness/face status | eKYC Provider Backend | Identity decision | Canonical status tối thiểu | Có xử lý | Purpose/audit policy |
-| Provider session/event refs | eKYC Provider Backend | Correlation/dedupe | Có | Có | Operational retention |
-| Callback payload | eKYC Provider Backend | Async normalization | Encrypted inbox TTL ngắn; purge sau processing | N/A | Operational minimum |
-| App/SDK/channel metadata | Client | Compatibility/operations | Tối thiểu | SDK-dependent | Ops/security policy |
-| Audit/history | VHM | Traceability/compliance | Có | Không cần | Audit policy |
+| Business/subject opaque ref | VHM BFF | Correlation/authorization | Có | External ref nếu cần | Tối đa 90 ngày sau terminal |
+| Consent ref/version/time | VHM Application/Consent | Legal basis/audit | Chỉ reference | Theo contract | Consent System policy; link evidence bắt buộc |
+| Document fields | eKYC Provider Backend | OCR/autofill/verification | Fixed fields, encrypted/masked | Có xử lý | Tối đa 90 ngày sau terminal |
+| Document image front/back | SDK | OCR/verification | Không persist; transit BFF/VHM eKYC Service | Có xử lý | Provider tối đa 24 giờ |
+| Selfie/video/frame | SDK | Liveness/face matching | Không persist; transit BFF/VHM eKYC Service | Có xử lý | Provider tối đa 24 giờ |
+| Liveness/face status | eKYC Provider Backend | Identity decision | Canonical status tối thiểu | Có xử lý | Tối đa 90 ngày sau terminal |
+| Provider session/event refs | eKYC Provider Backend | Correlation/dedupe | Có | Có | Tối đa 90 ngày sau terminal |
+| Callback payload | eKYC Provider Backend | Async normalization | Encrypted inbox; không lưu media | N/A | Processed 24 giờ; failed/quarantine 7 ngày |
+| App/SDK/channel metadata | Client | Compatibility/operations | Tối thiểu | SDK-dependent | Masked log tối đa 30 ngày |
+| Audit/history | VHM | Traceability/compliance | Không lưu raw payload/media | Không cần | Tối đa 365 ngày |
 
 ### 7.2.3. Data Privacy processing summary
 
 | **Thông tin yêu cầu** | **Baseline của giải pháp** | **Owner/status** |
 | --- | --- | --- |
 | Chủ thể dữ liệu | Người dùng VHM thực hiện OCR/eKYC trên Mobile/Web | Product/Data Privacy — xác nhận theo use case |
-| Vị trí VHM xử lý/lưu trữ | AWS Singapore `ap-southeast-1` | Data residency/cross-border approval: TBD |
+| Vị trí VHM xử lý/lưu trữ | AWS Singapore `ap-southeast-1` | `PENDING` evidence/sign-off theo matrix dưới đây |
 | Vị trí eKYC Provider Backend/subprocessor | Theo DPA và data-location evidence của eKYC Provider Backend | Legal/Data Privacy — go-live blocker |
-| Số lượng chủ thể/bản ghi | TBD theo forecast volume và retention | Product/Ops — trước capacity/privacy sign-off |
-| Tổng dung lượng lưu trữ | TBD theo capacity input và approved data inventory | DBA/Ops/Data Privacy |
+| Số lượng chủ thể/bản ghi | Chưa có forecast — `BLOCKING` | Product/Ops — worksheet 6.4.2 |
+| Tổng dung lượng lưu trữ | Chưa có capacity/retention input — `BLOCKING` | DBA/Ops/Data Privacy |
 | Truyền sang tổ chức khác | Có — eKYC Provider Backend xử lý document/liveness/face data | DPA, purpose, subprocessor và incident SLA bắt buộc |
 | Luồng vị trí | Mobile/Web SDK → VHM BFF → VHM eKYC Service → eKYC Provider Backend; callback → BFF → VHM eKYC Service; kết quả → BFF → VHM Application | Architecture/Data Privacy review |
-| Dữ liệu thu thập | Front/back document, selfie/liveness/face data tại SDK flow; fixed canonical fields tại VHM | Fixed field set: TBD approval |
+| Dữ liệu thu thập | Front/back document, selfie/liveness/face data tại SDK flow; fixed canonical fields tại VHM | Fixed field set: `PENDING` Product/Data Privacy approval |
 | Mục đích | OCR/autofill và xác minh danh tính theo consented journey/use case | Product/Legal approval |
 | Mã hóa lưu trữ | RDS/KMS và field/inbox encryption; media không lưu tại VHM | ANBM approval |
-| Quản lý/xoay khóa | AWS KMS/Secrets Manager; rotation period theo approved standard | ANBM/Cloud — version TBD |
+| Quản lý/xoay khóa | AWS KMS/Secrets Manager; rotation period theo approved standard | ANBM/Cloud — standard version `PENDING` |
 | Mã hóa đường truyền | TLS 1.2 minimum, TLS 1.3 preferred; mTLS nơi contract hỗ trợ/yêu cầu | ANBM/Integration |
 | Masking | Document number `******1234`; field khác theo role/purpose matrix mục 7.1.4 | Data Privacy/Product approval |
-| Retention và tự động xóa | Purpose-bound; inbox TTL ngắn; thời hạn cụ thể TBD theo DPA/business/audit policy | Go-live blocker |
+| Retention và tự động xóa | Baseline và purge mechanism tại mục 7.2.5 | Data Privacy/Product/Ops sign-off bắt buộc |
 | Data-subject request | Export/delete/anonymize qua BFF-authorized subject/business mapping và provider coordination | Data Privacy/Product/eKYC Provider Backend |
 | Anonymization | Chỉ giữ aggregate telemetry không định danh; canonical record xử lý theo retention/legal hold | Data Privacy/Ops |
+
+#### DPIA và data-residency evidence matrix
+
+Việc cấu hình resource ở `ap-southeast-1` không tự động chứng minh data residency.
+Các evidence dưới đây phải được đính kèm và ký duyệt; mọi dòng `PENDING` chặn
+`APPROVED` và production go-live.
+
+| **Phạm vi** | **Residency baseline** | **Evidence bắt buộc** | **Owner** | **Status** |
+| --- | --- | --- | --- | --- |
+| EKS runtime, RDS primary/standby, Redis | AWS Singapore `ap-southeast-1` | IaC plan, deployed-resource inventory và AWS Config/export | Cloud/Ops | `PENDING` |
+| RDS backup/PITR/snapshot/DR copy | Singapore; cross-region chỉ khi có approval riêng | Backup policy, KMS key region và restore evidence | DBA/Cloud/Data Privacy | `PENDING` |
+| Logs, APM, metrics và audit | Singapore hoặc approved VHM observability location | Sink/index/bucket region, retention và field allowlist | Ops/ANBM/Data Privacy | `PENDING` |
+| eKYC Provider Backend processing/media/result | Theo signed DPA; không suy đoán từ endpoint | Provider data-flow, region, subprocessor list, backup/DR location và deletion SLA | Legal/Data Privacy/Provider | `PENDING — GO-LIVE BLOCKER` |
+| Provider/support remote access | Chỉ approved location/role/purpose | Support-access matrix, privileged-access audit và incident SLA | Legal/ANBM/Provider | `PENDING — GO-LIVE BLOCKER` |
+| Cross-border transfer | Chỉ theo lawful basis và approved transfer mechanism | Legal assessment/DPA annex và Data Privacy sign-off | Legal/Data Privacy | `PENDING — GO-LIVE BLOCKER` |
+| DPIA | Bao phủ Mobile/Web, SDK data-plane, callback, reconciliation, backup và data-subject request | DPIA document ID/link, risk treatment và approver/sign-off date | Data Privacy/Legal/ANBM | `PENDING — GO-LIVE BLOCKER` |
 
 ### 7.2.4. Data Lifecycle DFD (L2)
 
@@ -1858,7 +1970,7 @@ flowchart TB
     EKYC_SERVICE_PROXY(("P3 · VHM eKYC Service<br/>SDK Proxy<br/>credential injection")):::process
     RESULT_PROCESS(("P4 · VHM eKYC Service<br/>Callback &<br/>Result Processing")):::process
     RESULT_API(("P5 · Authorized Result API")):::process
-    INBOX[("D1 · Encrypted Inbox<br/>TTL ngắn")]:::sensitive
+    INBOX[("D1 · Encrypted Inbox<br/>24h / 7d")]:::sensitive
     RESULT[("D2 · Canonical Result<br/>fixed fields")]:::sensitive
 
     APP -->|"1. consent-bound capture data"| CAPTURE
@@ -1882,18 +1994,45 @@ flowchart TB
 ```
 
 - Media lifecycle tuân thủ `MEDIA-01` và `DATA-01`.
-- Provider retention phải đủ cho reconciliation nhưng ngắn nhất theo contract.
+- Provider media/raw result retention tối đa `24 giờ` và phải đủ cho reconciliation.
 - Callback payload chỉ lưu mã hóa tạm thời để async process.
 - Canonical sensitive field chỉ lưu nếu nằm trong fixed approved result set.
 
-### 7.2.5. Retention principles
+### 7.2.5. Retention and purge policy
 
-- Session/history retention theo approved business/audit purpose.
-- Canonical sensitive fields có retention ngắn nhất theo approved business purpose.
-- Callback inbox encrypted payload purge sớm sau processing; metadata/hash theo operational TTL.
-- Provider result/media retention theo DPA, reconciliation window và deletion SLA.
-- Backup retention không được làm dữ liệu sống lại ngoài policy; deletion có tombstone/evidence.
-- Không kéo dài retention chỉ vì mục đích debug/analytics.
+Các giá trị sau là technical maximum baseline. Data Privacy/Legal có quyền yêu cầu
+thời hạn ngắn hơn. Mọi yêu cầu kéo dài phải có purpose, lawful basis, owner,
+approval và cập nhật DPIA/DPA trước khi thay đổi cấu hình.
+
+| **Dữ liệu** | **Retention tính từ** | **Thời hạn tối đa** | **Purge mechanism** | **Owner/approval** |
+| --- | --- | --- | --- | --- |
+| Verification session/run và Canonical Result fixed fields | `terminalAt` | `90 ngày` | Xóa encrypted sensitive fields/check details; giữ tombstone tối thiểu không chứa PII để chống xử lý lặp | Product + Data Privacy/Legal — phải ratify trước go-live |
+| State/access history có PII reference | `terminalAt` | `90 ngày` | Xóa/anonymize subject/business reference; giữ aggregate không định danh | Product + Data Privacy/Legal |
+| Callback Inbox payload — `PROCESSED` | `processedAt` | `24 giờ` | Batch hard-delete ciphertext sau khi result/history commit thành công | Ops + Data Privacy |
+| Callback Inbox payload — `FAILED/QUARANTINED` | `lastFailedAt` | `7 ngày` | Retry có giới hạn, export troubleshooting bị cấm; hết hạn hard-delete và ghi purge audit | Ops + ANBM + Data Privacy |
+| Callback event metadata/hash không chứa PII | `receivedAt` | `90 ngày` | Batch delete theo partition/date; terminal guard vẫn là lớp chống duplicate cuối | Ops/ANBM |
+| Masked application/security log | `eventTime` | `30 ngày` | Index lifecycle deletion; không archive body/PII | Ops/ANBM/Data Privacy |
+| Audit record không chứa payload/media | `eventTime` | `365 ngày` | Delete/anonymize theo audit standard; extension cần compliance approval | ANBM/Audit/Data Privacy |
+| eKYC Provider Backend media/raw result | Provider completion | `24 giờ` | Provider lifecycle/deletion API hoặc contract evidence; không copy về VHM | Legal/Data Privacy/Provider — DPA sign-off bắt buộc |
+| RDS automated backup/PITR chứa record chưa purge | Backup creation | `35 ngày` | Hết backup window tự xóa; restore phải chạy purge/tombstone replay trước mở truy cập | DBA/Ops/Data Privacy |
+
+Purge implementation bắt buộc:
+
+- Job chạy tối thiểu mỗi ngày, batch `<= 500` rows, dùng lease/`SKIP LOCKED`, có
+  rate limit và không khóa bảng dài.
+- Eligibility dùng server timestamp và approved policy version; legal hold loại
+  record khỏi purge nhưng phải có owner, reason và expiry.
+- Callback payload purge chỉ chạy khi canonical transaction đã commit hoặc record
+  đã hết quarantine window; không giữ ciphertext để debug vô thời hạn.
+- Canonical purge xóa field/check nhạy cảm và subject reference; tombstone chỉ giữ
+  `verificationId`, terminal status, policy version, purge time và non-PII hash cần
+  cho idempotency/audit.
+- Provider deletion phải có request/response hoặc contractual lifecycle evidence;
+  lỗi deletion vào retry queue và alert theo SLA.
+- Metrics: eligible/deleted/failed rows, oldest eligible age, legal-hold count và
+  provider-deletion backlog. Purge failure quá `24 giờ` phải alert Data Privacy/Ops.
+- Restore từ backup phải chạy retention sweep trước khi cho application traffic;
+  backup expiry không được dùng để kéo dài live-data retention.
 
 ### 7.2.6. Data subject request
 
@@ -2061,7 +2200,7 @@ release checklist và không thay thế evidence của từng quality gate.
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | AR-001 | Availability/Integration | eKYC Provider Backend là một dependency/provider duy nhất | Không tạo mới hoặc hoàn tất eKYC trong thời gian dependency gián đoạn | Medium | High | Circuit breaker, safe-mode stop-create, callback inbox, reconciliation, SLA/escalation | Medium | Product/Ops/eKYC Provider Backend | OPEN — SLA TBD |
 | AR-002 | Security | Callback Dynamic/Fixed Token và retry contract chưa có evidence chính thức | Forged/replayed callback có thể làm sai quyết định xác minh | Medium | Critical | Dynamic Token baseline, scope/expiry, replay/dedupe, rotation overlap, contract/security test | Low sau sign-off | ANBM/eKYC Provider Backend | OPEN — go-live blocker |
-| AR-003 | Compliance/Data | Data location, subprocessor, retention và deletion SLA chưa được phê duyệt | Vi phạm privacy/cross-border requirement hoặc giữ biometric data quá hạn | Medium | Critical | `DATA-01`, DPA/DPIA, purpose-bound consent và deletion evidence | Medium | Legal/Data Privacy | OPEN — go-live blocker |
+| AR-003 | Compliance/Data | Data location, subprocessor, retention baseline và deletion SLA chưa được Data Privacy/Legal ratify | Vi phạm privacy/cross-border requirement hoặc giữ biometric data quá hạn | Medium | Critical | `DATA-01`, DPA/DPIA, purpose-bound consent và deletion evidence | Medium | Legal/Data Privacy | OPEN — go-live blocker |
 | AR-004 | Performance | Concurrent media streams, size/duration, TPS/callback burst và provider quota chưa chốt | Quá tải BFF/VHM eKYC Service/network/inbox hoặc vượt quota/cost | High | High | Capacity inputs, streaming load test, HPA/pool riêng, bounded buffer/worker, quota alert | Medium | Product/Ops | OPEN |
 | AR-005 | Compatibility | Mobile/Web/SDK compatibility và lifecycle matrix chưa có evidence | Journey lỗi theo device/browser/version, tăng retry/drop-off | Medium | High | Pin version, preflight, cohort rollout, E2E matrix và rollback | Low/Medium | Client/SDK Teams | OPEN |
 | AR-006 | Data/Security | Fixed result field, masking và retention chưa được chốt theo từng approved purpose | Over-collection hoặc lộ PII cho caller không đúng quyền | Medium | High | Fixed schema, allowlist, object authorization, masking/unmask audit | Low sau approval | Product/Business/Data Privacy | OPEN |
@@ -2074,7 +2213,7 @@ release checklist và không thay thế evidence của từng quality gate.
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | TD-001 | VHM eKYC Service | L1 và L3 artefact links chưa được cung cấp | L2 được soạn trước khi các spec triển khai hoàn tất | Reviewer/dev khó truy vết contract chi tiết | High | Tạo/link API, client, DB và operations L3 tại metadata | TBD | Document Owner/Tech Leads | Trước implementation sign-off | OPEN |
 | TD-002 | Governance | VHM IAM/ANBM/Data Privacy/Observability standard version còn TBD | Chưa nhận canonical standard registry từ owner | Không chứng minh được compliance/deviation theo version | High | Cập nhật metadata và mapping control sau khi owner cung cấp | TBD | Architecture/ANBM/Data Privacy/Ops | Trước L2 approval | OPEN |
-| TD-003 | Capacity/Cost | Capacity target, AWS calculator và provider commercial estimate còn TBD | Chưa có forecast volume/quota/retention | Không thể phê duyệt sizing, budget và performance gate | High | Chốt Appendix A inputs, chạy load model và đính kèm cost estimate | TBD | Product/Cloud/Ops/Finance | Trước production readiness | OPEN |
+| TD-003 | Capacity/Cost | Capacity target, AWS calculator export và provider commercial estimate chưa được cung cấp | Chưa có forecast volume/quota và quotation | Không thể phê duyệt sizing, budget và performance gate | High | Chốt worksheet 6.4.2, chạy load model và đính kèm cost estimate | TBD | Product/Cloud/Ops/Finance | Trước production readiness | OPEN |
 
 Các item chưa đóng không được ngầm coi là chấp nhận rủi ro. Risk acceptance cần
 owner, phạm vi, thời hạn và approver tương ứng được ghi trong phiên bản phê duyệt.
@@ -2150,7 +2289,7 @@ owner, phạm vi, thời hạn và approver tương ứng được ghi trong phi
 | Callback Dynamic Token/Fixed Token, token endpoint, scope/expiry và event/version fields | eKYC Provider Backend/ANBM | Trước callback implementation |
 | Callback retry/backoff/ordering/duplicate semantics | eKYC Provider Backend/Backend Team | Trước callback contract test |
 | Get Result final/pending/not-found/error/quota contract | eKYC Provider Backend/Ops | Trước reconciliation test |
-| Provider result retention window | eKYC Provider Backend/Data Privacy | Trước recovery sign-off |
+| Provider media/raw-result retention `<= 24 giờ` và deletion evidence | eKYC Provider Backend/Data Privacy | Trước recovery/privacy sign-off |
 | Canonical mapping fixtures cho success/failure/quality/technical errors | eKYC Provider Backend/QA | Trước contract test |
 | Staging credentials/endpoints/allowlist và certificate chain | eKYC Provider Backend/DevOps/ANBM | Trước SIT |
 | SLA, maintenance, incident contacts và escalation | eKYC Provider Backend/Ops | Trước production readiness |
@@ -2161,7 +2300,7 @@ owner, phạm vi, thời hạn và approver tương ứng được ghi trong phi
 | --- | --- | --- |
 | DPA/DPIA, data location và subprocessor list | Data Privacy/Legal | Go-live blocker |
 | Consent lawful basis và approved purpose | Data Privacy/Legal/Product | Trước UAT |
-| Provider media/result retention và deletion SLA/evidence | Data Privacy/Legal/eKYC Provider Backend | Go-live blocker |
+| Provider media/raw-result retention `<= 24 giờ`, deletion SLA và evidence | Data Privacy/Legal/eKYC Provider Backend | Go-live blocker |
 | Callback authentication/replay/key-rotation baseline | ANBM/eKYC Provider Backend | Trước security test |
 | Fixed field encryption/masking/unmask access | ANBM/Data Privacy/Business | Trước Result API UAT |
 | Log/APM/analytics/crash-report data allowlist | ANBM/Data Privacy/Ops | Trước SIT |
@@ -2177,7 +2316,7 @@ owner, phạm vi, thời hạn và approver tương ứng được ghi trong phi
 | Callback burst TPS/payload size và provider quota | eKYC Provider Backend/Ops | Trước load test |
 | p95/p99 target theo interface và availability SLA | System Owner/Ops | Trước NFR sign-off |
 | Reconciliation delay/interval/batch/max attempts | Architect/Ops/eKYC Provider Backend | Trước recovery test |
-| Callback inbox TTL/purge và operational retention | Ops/Data Privacy | Trước DB migration sign-off |
+| Callback inbox processed `24h`, failed/quarantine `7d`, metadata `90d` và purge evidence | Ops/Data Privacy | Trước DB migration sign-off |
 | RTO/RPO, PITR, restore frequency và DR owner | System Owner/Ops | Trước production readiness |
 | Dashboard/alert threshold, routing và on-call owner | Ops/Service Owners | Trước go-live |
 | Cost quota/alert và stop-create rule khi incident | Product/Ops | Trước go-live |
@@ -2224,6 +2363,7 @@ không thay thế sign-off chính thức.
 - [ ] SDK result page `OFF`; completion/close event vẫn phát.
 - [ ] Started/submitted/error/cancel idempotency và late-event handling.
 - [ ] Callback trước/sau submitted, duplicate và out-of-order.
+- [ ] Callback Worker/Reconciliation lock contention, `lock_timeout`, deadlock và delayed retry pass; callback HTTP thread không chờ finalize.
 - [ ] Callback lost → reconciliation final/pending/not-found/error.
 - [ ] `OCR_ONLY → COMPLETED`, `FULL_EKYC → VERIFIED` đúng contract.
 - [ ] Definitive failure, recoverable quality và technical error mapping đúng.
@@ -2243,6 +2383,8 @@ không thay thế sign-off chính thức.
 - [ ] Mobile SDK integrity/token/telemetry controls approved.
 - [ ] Web CSP/XSS/CSRF/CORS/storage/multi-tab controls approved.
 - [ ] Encrypted Callback Inbox, TTL, purge và backup behavior tested.
+- [ ] Init/OCR/liveness/callback body ceiling pass cho cả `Content-Length` và chunked stream tại WAF/Ingress, BFF và VHM eKYC Service.
+- [ ] Request vượt ceiling trả `413`, cancel upstream và không tạo full-body memory/disk buffer.
 - [ ] PII/secret scan sạch trên log/APM/analytics/crash report.
 - [ ] Không High/Critical security defect còn mở.
 
@@ -2250,8 +2392,10 @@ không thay thế sign-off chính thức.
 
 - [ ] Consent purpose/version/withdrawal approved và tested.
 - [ ] Fixed result field set và retention được phê duyệt.
+- [ ] Baseline `90d/24h/7d/30d/365d/35d` tại mục 7.2.5 được Data Privacy/Legal ratify hoặc thay bằng policy đã phê duyệt.
 - [ ] `MEDIA-01`/`DATA-01` có load/DLP/DB-scan/DPIA/retention evidence đạt.
 - [ ] Provider data location/subprocessor/DPA/DPIA approved.
+- [ ] Toàn bộ DPIA/data-residency evidence matrix không còn dòng `PENDING`.
 - [ ] Provider retention/deletion SLA và evidence approved.
 - [ ] Data-subject export/delete và backup behavior tested.
 - [ ] Callback payload TTL/purge evidence đầy đủ.
@@ -2262,6 +2406,8 @@ không thay thế sign-off chính thức.
 - [ ] Provider quota/SLA/maintenance/incident contacts confirmed.
 - [ ] Dashboard/alerts có owner và routing.
 - [ ] Capacity/load/callback burst/reconciliation test đạt baseline.
+- [ ] Capacity worksheet 6.4.2 không còn `UNRESOLVED` và có forecast/load-test evidence.
+- [ ] AWS Pricing Calculator export/share link, provider quotation và monthly cost đã được Finance/Product duyệt.
 - [ ] Inbox/Reconciliation workers healthy và backlog dưới SLA.
 - [ ] Stop-create/rollback/provider incident runbook đã diễn tập.
 - [ ] Backup/PITR/restore test đạt RTO/RPO.
