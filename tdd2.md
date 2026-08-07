@@ -367,15 +367,17 @@ flowchart LR
     PROVIDER(["eKYC Provider Backend<br/>external processing service"]):::entity
 
     subgraph SCOPE["Scope Boundary — VHM eKYC Service"]
-        CORE["VHM eKYC Service"]:::bc
+        CORE["VHM eKYC Service<br/>Session / Result<br/>Media Upload API / Finalizer"]:::bc
     end
 
     USER -->|thực hiện OCR/eKYC| APP
     OPS -->|vận hành và kiểm soát| CORE
     REVIEWER -->|case assignment · controlled media view| CORE
-    APP -->|create/bootstrap/status/result + SDK data-plane + media manifest| CORE
-    APP -->|presigned media upload| VAULT
-    CORE -->|upload presign · finalize · controlled reveal presign| VAULT
+    APP -->|1 · create session / request media slots| CORE
+    CORE -->|2 · mediaId + presigned PUT/multipart| APP
+    APP ==>|3 · UPLOAD MEDIA BYTES pass/fail| VAULT
+    APP -->|4 · submit SDK outcome + media manifest| CORE
+    CORE -->|5 · validate checksum / finalize / reveal presign| VAULT
     CORE -->|xác thực và consent| IAM
     CORE -->|forward init/OCR/liveness + Get Result| PROVIDER
     PROVIDER -->|SDK response + official callback| CORE
@@ -389,7 +391,8 @@ flowchart LR
 
 **Chú giải STD-DIAG:** xanh dương = hệ thống trọng tâm; xanh lá = hệ thống VHM
 láng giềng/in-scope; vàng = actor hoặc hệ ngoài; nét liền = tương tác đồng bộ;
-nét đứt = event/telemetry bất đồng bộ.
+nét đậm = media bytes upload trực tiếp bằng presigned request; nét đứt =
+event/telemetry bất đồng bộ.
 
 | **Tác nhân/Hệ thống** | **Loại** | **Internal** | **External** | **Vai trò** |
 | --- | --- | --- | --- | --- |
@@ -424,12 +427,15 @@ flowchart LR
 
     USER -->|bắt đầu hành trình| APP
     APP -->|create/bootstrap/status/result · HTTPS| BFF
+    APP -->|1 · request media slots| BFF
     BFF -->|authorized command/query| EKYC_SERVICE
     EKYC_SERVICE -->|Client UUID/proof/run context| BFF
     BFF -->|SDK bootstrap| APP
     APP -->|khởi chạy SDK sau bootstrap| SDK
-    APP -->|presigned PUT/multipart media| S3
-    APP -->|submit media manifest| BFF
+    EKYC_SERVICE -->|2 · mediaId + presigned request| BFF
+    BFF -->|3 · presigned PUT/multipart response| APP
+    APP ==>|4 · MEDIA BYTES pass/fail| S3
+    APP -->|5 · submit SDK outcome + media manifest| BFF
     SDK -->|init/OCR/liveness · HTTPS| BFF
     BFF -->|authenticated streamed request| EKYC_SERVICE
     EKYC_SERVICE -->|server credential + streamed data| BACKEND
@@ -437,7 +443,7 @@ flowchart LR
     BFF -->|callback ingress · body/headers không biến đổi| EKYC_SERVICE
     EKYC_SERVICE -->|Get Result khi reconciliation · HTTPS| BACKEND
     EKYC_SERVICE -->|principal/consent check| IAM
-    EKYC_SERVICE -->|upload presign · validate · reveal/presign download| S3
+    EKYC_SERVICE -->|6 · validate/checksum/finalize media<br/>+ controlled reveal presign| S3
     EKYC_SERVICE -.->|audit/telemetry| OBS
 
     classDef bc fill:#1f3a5f,stroke:#4a90d9,color:#fff;
@@ -523,6 +529,51 @@ diễn thứ tự thực thi. Trình tự thời gian được mô tả tại m�
 Luồng này phải tuân thủ `DP-01`, `MEDIA-01`, `MEDIA-STORE-01`, `CRED-01`,
 `RESULT-01`, `DATA-01`, `REVIEW-01` và `RETRY-01`. Network allowlist, TLS, SDK integrity, data location, retention,
 subprocessor và incident handling là các gate được chi tiết tại mục 7 và Appendix A.
+
+#### 2.2.4.1. Presigned Media Upload Flow — áp dụng cho SDK pass và fail
+
+```mermaid
+sequenceDiagram
+    participant APP as VHM Application Mobile/Web
+    participant BFF as VHM BFF
+    participant UPLOAD as Media Upload API
+    participant DB as PostgreSQL Media Manifest
+    participant S3 as VHM S3 Intake/Media Vault
+    participant FINALIZER as Media Upload Finalizer
+    participant CORE as Session Finalization Guard
+
+    Note over APP,CORE: SDK completion pass hoặc fail đều đi qua cùng media-persistence flow
+    APP->>BFF: Create media upload session(types, sizes, checksums, runId)
+    BFF->>UPLOAD: Authorized request + verification/run context
+    UPLOAD->>DB: Allocate immutable mediaId/object slot idempotently
+    UPLOAD->>UPLOAD: Generate exact short-lived presigned PUT/multipart request
+    UPLOAD-->>BFF: mediaId + presigned request + required headers
+    BFF-->>APP: Upload slots
+    loop Mỗi required document/direct-face/liveness artifact
+        APP->>S3: Direct PUT/multipart MEDIA BYTES
+        S3-->>APP: Object version/ETag/checksum response
+    end
+    APP->>BFF: Submit SDK outcome + server-issued media manifest
+    BFF->>UPLOAD: Authorized idempotent submit
+    UPLOAD->>DB: Bind manifest to verificationId/runId
+    UPLOAD-->>FINALIZER: Finalization task/event
+    FINALIZER->>S3: Validate existence, size, type, checksum and object version
+    S3-->>FINALIZER: Object metadata
+    alt Object hợp lệ
+        FINALIZER->>FINALIZER: AES-GCM encrypt internal S3 reference
+        FINALIZER->>DB: Seal immutable manifest and mark media READY
+        FINALIZER->>CORE: evaluateFinalization()
+    else Thiếu hoặc không hợp lệ
+        FINALIZER->>DB: Keep evidence pending or mark failed by policy
+        FINALIZER-->>CORE: Do not expose terminal outcome
+    end
+```
+
+Media bytes đi trực tiếp từ VHM Application tới VHM S3 bằng presigned request;
+BFF và Media Upload API chỉ xử lý control-plane/manifest, không proxy hoặc buffer
+binary upload. `submit` và official callback có thể đến theo mọi thứ tự, nhưng
+terminal outcome chỉ được expose sau khi finalization guard xác nhận official
+result và toàn bộ required media đã `READY`.
 
 ### 2.2.5. Trust Boundary
 
