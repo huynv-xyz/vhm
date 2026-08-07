@@ -503,19 +503,21 @@ subprocessor và incident handling là các gate được chi tiết tại mục
 
 ```mermaid
 sequenceDiagram
+    participant SDK as eKYC SDK
     participant APP as VHM Application Mobile/Web
     participant BFF as VHM BFF
     participant MEDIA as Media Upload API / Finalizer
     participant S3 as VHM S3 Intake/Media Vault
     participant DB as PostgreSQL Media Manifest
 
-    Note over APP,DB: SDK completion pass hoặc fail đều đi qua cùng media-persistence flow
+    Note over SDK,DB: SDK completion pass hoặc fail đều đi qua cùng media-persistence flow
+    SDK-->>APP: Available documents/media list from current run
     APP->>BFF: Create upload session(types, sizes, checksums, runId)
     BFF->>MEDIA: Authorized verification/run context
     MEDIA->>DB: Allocate immutable mediaId/object slot
     MEDIA-->>BFF: mediaId + short-lived presigned PUT/multipart
     BFF-->>APP: Upload slots + required headers
-    loop Mỗi required document/direct-face/liveness artifact
+    loop Mỗi artifact có trong documents/media list
         APP->>S3: Direct PUT/multipart MEDIA BYTES
         S3-->>APP: Object version/ETag/checksum response
     end
@@ -535,8 +537,11 @@ sequenceDiagram
 Media bytes đi trực tiếp từ VHM Application tới VHM S3 bằng presigned request;
 VHM BFF và Media Upload API chỉ xử lý control-plane/manifest, không proxy hoặc
 buffer binary upload. `submit` và provider callback có thể đến theo mọi thứ tự, nhưng
-terminal outcome chỉ được expose sau khi finalization guard xác nhận official
-result và toàn bộ required media đã `READY`.
+terminal outcome chỉ được expose sau khi finalization guard xác nhận provider
+result và toàn bộ media bắt buộc theo failure/stage policy đã `READY`. Với SDK fail trước khi capture hoàn
+tất, client upload toàn bộ artifact thực tế có trong documents/media list và
+submit manifest kèm trạng thái thiếu tương ứng; không giả định mọi failure đều có
+đủ document/direct-face/liveness media.
 
 ### 2.2.5. Trust Boundary
 
@@ -1345,53 +1350,57 @@ Attempt mới không reuse Client UUID, provider session, result, history, token
 
 ```mermaid
 sequenceDiagram
-    actor CALLER as Manual Review Operator / Supervisor
-    participant API as Reveal API
-    participant DB as Verification/Media DB
-    participant AUDIT as Append-only audit_logs
-    participant CACHE as PresignUrlCache L1/L2
-    participant FILE as FilePrivateService
-    CALLER->>API: GET /manual-review/verifications/{id}/media
-    API->>DB: Resolve verification/run + authorized business-object context
-    API->>DB: Check platform role, case assignment and purpose scope
-    alt out of role/assignment/object scope
-        API-->>CALLER: MANUAL_REVIEW_ACCESS_DENIED
-    else in scope
-        API->>AUDIT: VIEW_IDENTITY_MEDIA (PII-safe types/parts/poses)
-        API-->>CALLER: encrypted refs only
-    end
-    CALLER->>API: POST reveal(caseId, reasonCode, encrypted refs, ticketRef if exceptional)
-    API->>DB: Re-resolve role/assignment/object scope
-    API->>API: Verify recent step-up + reason/exception approval
-    API->>API: De-duplicate and cap at 16
-    API->>DB: Bind every ciphertext to this verification/run stored refs
-    alt any foreign/invalid ciphertext
-        API-->>CALLER: IDENTITY_MEDIA_REVEAL_FAILED (whole call)
-    else all refs valid
-        loop each ciphertext
-            API->>API: AES-GCM decrypt ref to transient S3 path
-            API->>CACHE: Lookup scoped presigned URL
-            alt cache miss/error
-                CACHE->>FILE: prepareDownload, Redis error falls back direct
-                FILE-->>API: Short-lived presigned URL
-            else cache hit
-                CACHE-->>API: Short-lived presigned URL
-            end
-        end
-        API->>AUDIT: REVEAL_IDENTITY_MEDIA (PII-safe types/parts/poses)
-        API-->>CALLER: media(encryptedRef, presignedUrl)
-    end
+    actor CALLER as Authorized Review Caller
+    participant API as Manual Review API
+    participant DB as Media Metadata DB
+    participant STORAGE as S3 Access Adapter
+    participant AUDIT as Append-only Audit
+
+    Note over CALLER,AUDIT: 1. List available media
+    CALLER->>API: GET media list
+    API->>API: Authorize role, assignment and purpose
+    API->>DB: Load media metadata
+    DB-->>API: Types/parts/poses + AES-GCM encrypted refs
+    API->>AUDIT: VIEW_IDENTITY_MEDIA
+    AUDIT-->>API: Audit persisted
+    API-->>CALLER: Metadata + encrypted refs only
+
+    Note over CALLER,AUDIT: 2. Reveal selected media
+    CALLER->>API: POST reveal(caseId, reasonCode, encrypted refs)
+    API->>API: Authorize, verify step-up and reason
+    API->>DB: Bind selected refs to verification and run
+    DB-->>API: All selected refs valid
+    API->>API: AES-GCM decrypt refs in memory
+    API->>STORAGE: Generate short-lived S3 GET URLs
+    STORAGE-->>API: Presigned URLs
+    API->>AUDIT: REVEAL_IDENTITY_MEDIA
+    AUDIT-->>API: Audit persisted
+    API-->>CALLER: Short-lived URLs
+
+    Note over API,AUDIT: Never log ciphertext, plaintext S3 path or presigned URL
 ```
+
+GET chỉ trả metadata và AES-GCM-encrypted S3 references; nó không trả plaintext
+path, media bytes hoặc download URL. POST reveal re-authorize caller, bind toàn bộ
+selected refs với đúng verification/run, decrypt reference trong memory và tạo
+short-lived S3 GET URL. Media object vẫn nằm trong private VHM S3 và được bảo vệ
+at rest bằng SSE-KMS; AES-GCM ở sequence này áp dụng cho object reference lưu DB.
+
+| **Failure/control** | **Required behavior** |
+| --- | --- |
+| Caller ngoài role/assignment/business-object/purpose scope | Từ chối và ghi PII-safe security-deny event; không làm lộ verification/media có tồn tại hay không. |
+| Request rỗng, vượt giới hạn hoặc có ref trùng | Validate limit và de-duplicate trước decrypt theo `REVIEW-01`. |
+| Có ref invalid, bị sửa hoặc thuộc verification/run khác | Fail toàn bộ request; không trả partial URL. |
+| AES-GCM/KMS hoặc presign lỗi | Fail closed; plaintext reference chỉ tồn tại transiently trong memory. |
+| Reveal audit không persist được | Không trả URL; alert audit pipeline. |
 
 `audit_logs` dùng `entity_type=IDENTITY_VERIFICATION`, `entity_id=verificationId`,
 actor, role, case ID, purpose, controlled reason code, authentication assurance,
 opaque ticket reference khi áp dụng, request/outcome và `changed_at`; phần media
-chỉ lưu types/logical parts/poses/count. Không ghi ciphertext, plaintext S3 path
-hoặc presigned URL. Invalid/foreign ciphertext không tạo business access
-audit để giữ contract hiện tại, nhưng phải phát PII-safe security-deny metric/log
-cho SIEM. URL chỉ được trả khi reveal audit ghi thành công; audit failure phải
-fail closed. Decision lifecycle verified/auto-failed/manual lưu tại `iv_histories`,
-không trộn với access audit.
+chỉ lưu types/logical parts/poses/count. Không ghi ciphertext, plaintext S3 path,
+presigned URL hoặc media content. Cache/presign fallback và error code cụ thể là
+chi tiết L3, không biểu diễn trong sequence L2. Decision lifecycle
+verified/auto-failed/manual lưu tại `iv_histories`, không trộn với access audit.
 
 ## 5.3. Failure Handling Matrix
 
