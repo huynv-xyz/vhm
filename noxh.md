@@ -105,18 +105,106 @@ Uses case: Trên Vinhome Agent Admin cần tạo danh sách biểu mẫu giấy 
 | Xây dựng mới chức năng “Biểu mẫu” và “Bộ Biểu mẫu” trên Vinhome Agent | - Thiết kế dynamic để sau này có thể sử dụng chung cho nhưng biểu mẫu khác cần tạo hồ sơ từ agent  - Sử dụng properties cho “Đối tượng áp dụng” và “Nhóm đối tượng đk” để linh hoạt trong việc query + sử dụng cho những hồ sơ về sau - Impliment trong service vhm-definetion-center-service quản lý tập trung | - Tốn thời gian impliment | **Yes** |
 |  |  |  |  |
 
-### Vấn đề 6: Flow OCR file CCCD
+### Vấn đề 6: Lựa chọn nền tảng tích hợp OCR tập trung
 
-- User case: Khi Agent đăng ký hồ sơ mua NOXH cần upload CCCD của khách hàng đăng ký hồ sơ. Do đó cần hỗ trợ Agent OCR thông tin trên CCCD để giảm tải nhập thông tin bằng tay
-- Yêu cầu: Khi Agent upload đủ CCCD mặt trước/sau lên form đăng ký mua NOXH sẽ thực hiện OCR và trả ra các thông tin OCR của khách hàng
+**User case:** Đại lý chụp CCCD mặt trước/sau trên Agent để hệ thống OCR và gợi ý thông tin khi tạo hồ sơ NOXH.
+
+**Hiện trạng:** Agent Backend tự tích hợp trực tiếp với OCR provider. Cách này đáp ứng nhanh cho một use case nhưng đưa logic đặc thù của provider, credential, xử lý lỗi và dữ liệu định danh vào Business Backend.
 
 | **Hướng tiếp cận** | **Ưu điểm** | **Nhược điểm** | **Lựa chọn (Yes/No)** |
 | --- | --- | --- | --- |
-| Client → Backend → encode base64 → OCR | - Dễ implement - Không cần storage trung gian | - Tăng size \~33% - Tốn CPU encode/decode - Không phù hợp ảnh lớn | **No** |
-| Client → Backend → forward file → OCR | - Nhanh hơn base64 - Không cần S3 | - Backend chịu tải lớn - Khó scale nếu traffic cao | **No** |
-| Client → Backend → upload S3 → gửi URL → OCR | - Tối ưu performance - OCR có thể pull async - Giảm tải backend | - Phức tạp hơn - Cần quản lý S3 + security | **Yes** |
+| **Agent Backend tích hợp trực tiếp FPT AI** | Ít thành phần; thời gian triển khai ban đầu ngắn | Business Backend phải xử lý luồng ảnh, credential, callback, retry và mã lỗi riêng của FPT AI; khó tái sử dụng cho hệ thống khác; thay đổi SDK/provider tác động trực tiếp nghiệp vụ NOXH; tăng tải và rủi ro dữ liệu định danh trên Agent Backend | **No** |
+| **VHM eKYC Service làm OCR Proxy trung tâm** | Tách OCR khỏi nghiệp vụ NOXH; quản lý tập trung credential, session, callback, retry, quota, audit và chuẩn hóa kết quả; dùng chung cho nhiều hệ thống; cô lập thay đổi SDK/provider; cho phép scale và vận hành độc lập | Thêm một service và một network hop; cần đầu tư monitoring, HA và đội vận hành riêng | **Yes** |
 
-- **Flow Diagram:**
+**Phương án chọn:** Sử dụng **VHM eKYC Service** làm OCR Proxy trung tâm. Agent Backend chỉ kiểm tra quyền nghiệp vụ, tạo yêu cầu OCR và nhận kết quả chuẩn hóa; không gọi trực tiếp hoặc phụ thuộc contract của FPT AI.
+
+```mermaid
+flowchart LR
+    subgraph CLIENT["Kênh người dùng"]
+        AGENT["Vinhomes Agent"]
+        SDK["FPT AI SDK<br/>Chụp CCCD trước/sau"]
+        AGENT --> SDK
+    end
+
+    subgraph VHM["Hạ tầng VHM"]
+        BFF["Agent BFF<br/>Xác thực và routing"]
+        NOXH["NOXH Backend<br/>Nghiệp vụ hồ sơ"]
+        PROXY["VHM eKYC Service / OCR Proxy<br/>Session · Provider Adapter · Callback<br/>Normalize · Retry · Audit"]
+        DB[("OCR Database<br/>Session và kết quả chuẩn hóa")]
+
+        BFF --> NOXH
+        BFF ==>|"Luồng SDK OCR"| PROXY
+        NOXH -->|"Tạo phiên / lấy kết quả"| PROXY
+        PROXY --> DB
+    end
+
+    subgraph FPT["Hạ tầng FPT AI"]
+        PROVIDER["FPT AI eKYC Backend"]
+    end
+
+    PROXY ==>|"OCR request<br/>credential phía server"| PROVIDER
+    PROVIDER -.->|"Callback kết quả"| PROXY
+
+```
+
+Giải pháp này tạo một integration boundary thống nhất cho dữ liệu định danh và tránh lặp lại tích hợp OCR tại từng Business Backend. Độ trễ tăng thêm một network hop được chấp nhận để đổi lấy khả năng kiểm soát, tái sử dụng và vận hành tập trung.
+
+**Trách nhiệm của OCR Proxy (VHM eKYC Service):**
+
+- Quản lý phiên OCR (`verificationId`, trạng thái, timeout và số lần thử lại) và liên kết với mã tham chiếu hồ sơ NOXH.
+- Là điểm tích hợp duy nhất với FPT AI: giữ credential, forward request SDK, nhận callback và gọi Get Result khi cần đối soát.
+- Xác thực callback, chống xử lý trùng và bảo đảm callback được lưu nhận trước khi trả thành công cho provider.
+- Chuẩn hóa payload và error code của FPT AI thành contract nội bộ ổn định, không trả raw provider payload cho NOXH.
+- Quản lý retry, timeout, circuit breaker, quota/rate limit và cô lập sự cố provider khỏi Business Backend.
+- Áp dụng kiểm soát truy cập, mã hóa dữ liệu nhạy cảm, masking, audit và chính sách lưu/xóa dữ liệu OCR.
+- Cung cấp API dùng chung để tạo phiên, tra cứu trạng thái và lấy kết quả OCR.
+
+**Cách hoạt động:**
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor DL as Đại lý
+    participant APP as Vinhomes Agent / SDK
+    participant BFF as Agent BFF
+    participant NOXH as NOXH Backend
+    participant OCR as VHM eKYC Service / OCR Proxy
+    participant FPT as FPT AI Backend
+
+    DL->>APP: Bắt đầu OCR CCCD
+    APP->>BFF: Yêu cầu tạo phiên OCR
+    BFF->>NOXH: Kiểm tra quyền hồ sơ và dự án
+    NOXH->>OCR: Create session (businessRef = dossierId)
+    OCR-->>NOXH: verificationId + SDK bootstrap
+    NOXH-->>BFF: Thông tin khởi tạo phiên
+    BFF-->>APP: verificationId + SDK bootstrap
+
+    DL->>APP: Chụp mặt trước và mặt sau
+    APP->>BFF: Luồng dữ liệu SDK + verificationId
+    BFF->>OCR: Forward luồng OCR đã xác thực
+    OCR->>FPT: OCR request + server credential
+    FPT-->>OCR: Response kỹ thuật cho SDK
+    OCR-->>BFF: Forward response kỹ thuật
+    BFF-->>APP: Response phục vụ UX
+
+    FPT-->>OCR: Callback kết quả chính thức
+    OCR->>OCR: Xác thực, chống trùng và chuẩn hóa
+    APP->>BFF: Lấy trạng thái / kết quả
+    BFF->>NOXH: Authorized result query
+    NOXH->>OCR: Get Canonical Result
+    OCR-->>NOXH: Trạng thái + dữ liệu chuẩn hóa
+    NOXH-->>BFF: Kết quả OCR theo contract NOXH
+    BFF-->>APP: Dữ liệu CCCD đã chuẩn hóa
+    APP-->>DL: Hiển thị để kiểm tra và xác nhận
+
+    alt Callback thất lạc hoặc quá SLA
+        OCR->>FPT: Get Result theo retry policy
+        FPT-->>OCR: Kết quả phiên OCR
+        OCR->>OCR: Chuẩn hóa và hoàn tất phiên
+    end
+```
+
+OCR Proxy chỉ chịu trách nhiệm xử lý OCR và dữ liệu định danh. Quyết định sử dụng kết quả, cập nhật khách hàng và phê duyệt hồ sơ vẫn thuộc NOXH Backend.
 
 ### Vấn đề 8: Quản lý Pipline/ Phase/ Stage
 
@@ -145,12 +233,12 @@ Yêu cầu: Từ mẫu template hợp đồng và thông tin hồ sơ trên hệ
 
 ### Vấn đề 10: Đối tác OCR CCCD của khách hàng
 
-UserCase: Khi Đại Lý thực hiện đăng ký hồ sơ NOXH cần upload CCCD của khác hàng lên hệ thống để thực hiện OCR và kiểm tra CCCD mặt trước/sau của khác hàng. Trường hợp thỏa mãn validate sẽ trả ra data OCR giúp Đại Lý giảm việc nhập tay sai sót
+**User case:** Khi Đại lý tạo hồ sơ NOXH, hệ thống cần OCR hai mặt CCCD và trả dữ liệu đã chuẩn hóa để giảm sai sót nhập liệu.
 
 | **Hướng tiếp cận** | **Ưu điểm** | **Nhược điểm** | **Lựa chọn (Yes/No)** |
 | --- | --- | --- | --- |
-| Sử dụng VinBigData để OCR | - Có thể validate được một số case như mặt trước/sau cùng khớp 1 CCCD, mờ, mất góc, vvv | - Cần chi phí cho phía VinBigdata | **Yes** |
-| Sử dụng service internal OCR | - Cùng cụm K8s call local qua k8s domain - Phương án backup cho trường hợp vinbigdata downtime | - Chưa validate được CCCD mặt trước/sau không khớp, vv | **No** |
+| Agent Backend gọi trực tiếp FPT AI | Triển khai nhanh cho riêng NOXH | Coupling Business Backend với SDK/provider; trùng lặp credential, callback và error mapping | **No** |
+| Gọi FPT AI thông qua VHM eKYC Service | Provider được quản lý tập trung; NOXH chỉ sử dụng contract chuẩn nội bộ | Phụ thuộc SLA của service trung tâm | **Yes** |
 
 ### Vấn đề 11: Authentication/ Authorization giữa hệ thống TTOL và Vinhome Agent
 
@@ -166,14 +254,9 @@ Hiện tại: Phía TTOL đang Authen bằng jwt từ service TTOL .Net quản l
 **Component diagram**
 
 
-### Vấn đề 12: Upload sync  OCR CCCD không phải tác vụ nhẹ 
+### Vấn đề 12: Cơ chế nhận kết quả OCR
 
-- User case: Khi Agent thực hiện tạo mới Khách Hàng, Tạo mới hồ sơ đăng ký mua NOXH cần upload CCCD trước/ sau, và tài liệu đính kèm khi tạo lập Hồ Sơ.
-
-| **Hướng tiếp cận** | **Ưu điểm** | **Nhược điểm** | **Lựa chọn (Yes/No)** |
-| --- | --- | --- | --- |
-| Sync (Agent chờ response OCR trực tiếp) | Code đơn giản nhất: một request-response, không cần state machine, không cần job queue, không cần notification channel. Một engineer mới onboard hiểu flow trong 5 phút.UX tuyến tính, dễ hiểu cho agent: bấm upload → thấy loading → thấy form được fill. Không có "ảo giác trạng thái" kiểu file đã upload nhưng chưa có data.Error handling trực tiếp: OCR fail → return lỗi ngay → agent thử lại. Không cần polling để biết job fail.Không cần infrastructure phụ: không Redis pub/sub, không SQS, không WebSocket server, không job worker. | Agent bị "stuck": trong 8 giây đó nếu đóng app/mất mạng → mất toàn bộ công việc, phải làm lại.Server bottleneck: mỗi OCR request giữ 1 thread + 1 connection pool slot trong 2-30s. 100 agent upload đồng thời = 100 connection bị pin. | No |
-| Async + SSE | Decoupling hoàn toàn: upload service, OCR worker, API gateway là 3 component riêng. Scale OCR worker theo queue depth độc lập với API traffic. Nếu OCR provider chậm, chỉ worker bị ảnh hưởng, API vẫn mượt.Agent có thể multitask: trong lúc OCR chạy nền, FE có thể cho agent nhập các field khác (SĐT, email, địa chỉ tạm trú). Khi OCR xong thì auto-fill các field CCCD còn trống. Giảm perceived latency xuống gần 0. | - Chưa validate được CCCD mặt trước/sau không khớp, vv | No |
+SDK có thể nhận response đồng bộ để phục vụ trải nghiệm người dùng, nhưng kết quả chính thức được VHM eKYC Service tiếp nhận và chuẩn hóa từ callback FPT AI. Khi callback thất lạc hoặc phiên quá SLA, service chủ động gọi Get Result để đối soát. Agent Backend chỉ lấy trạng thái/kết quả qua contract nội bộ và không tự xử lý retry với FPT AI.
 
 ### Vấn đề 13: Quản lý cấu hình ngày nghỉ lễ & Ngày làm việc bù
 
@@ -253,18 +336,11 @@ REJECTED
 
 Hệ thống phải tự động xác định đơn vị xử lý tiếp theo sau mỗi thao tác.
 
-```
-Đại lý Submit
-    ->
-Phòng KD
-
-Phòng KD Approve
-    ->
-Phòng TT
-
-Phòng TT Submit SOXD
-    ->
-Sở Xây dựng
+```mermaid
+flowchart LR
+    AGENT["Đại lý"] -->|"SUBMIT"| SALES["Phòng Kinh doanh"]
+    SALES -->|"APPROVE"| PROCEDURE["Phòng Thủ tục"]
+    PROCEDURE -->|"SUBMIT SOXD"| SXD["Sở Xây dựng"]
 ```
 
 **Yêu cầu 3: Bổ sung hồ sơ nhiều vòng**
@@ -585,52 +661,30 @@ requiresComment: false
 
 **Luồng xử lý chính**
 
-```
-draft
-  |
-  | SUBMIT
-  v
-salesUnderReview
-  |
-  | APPROVE
-  v
-procedurePending
-  |
-  | APPROVE
-  v
-sxdPending
-  |
-  | APPROVE
-  v
-approved
+```mermaid
+stateDiagram-v2
+    [*] --> draft
+    draft --> salesUnderReview: SUBMIT
+    salesUnderReview --> procedurePending: APPROVE
+    procedurePending --> sxdPending: APPROVE
+    sxdPending --> approved: APPROVE
+    approved --> [*]
 ```
 
 **Luồng bổ sung hồ sơ:**
 
-```
-salesUnderReview
-  |
-  | REQUEST_REVISION
-  v
-agentUpdateAtSales
-  |
-  | RESUBMIT
-  v
-salesUnderReview
+```mermaid
+stateDiagram-v2
+    salesUnderReview --> agentUpdateAtSales: REQUEST_REVISION
+    agentUpdateAtSales --> salesUnderReview: RESUBMIT
 ```
 
 Luồng PTT yêu cầu KD bổ sung:
 
-```
-procedurePending
-  |
-  | REQUEST_REVISION
-  v
-salesRevisionIntake
-  |
-  | APPROVE
-  v
-procedurePending
+```mermaid
+stateDiagram-v2
+    procedurePending --> salesRevisionIntake: REQUEST_REVISION
+    salesRevisionIntake --> procedurePending: APPROVE
 ```
 
 **Ownership Rule:**
@@ -797,18 +851,18 @@ Layer 3: Business validation
 
 **Flow tóm tắt:**
 
-```
-Đại lý SUBMIT
-  → Pipeline orchestrator transition draft → salesUnderReview (stage SALES)
-  → PkdAutoAssignService.autoAssignIfEligible()
-      1. enabled? + stage == SALES?            (không → skip)
-      2. Lookup grant (agencyId, projectId, SOCIAL_HOUSING) FOR UPDATE
-      3. BO = assignee_user_ids[rotation % size]; rotation++
-      4. UPSERT dossier_stage_reviewer:
-         reviewer_id = BO, assigned_by = SYSTEM_AUTO,
-         claimed_at = assigned_at  (active luôn, bỏ CLAIM)
-  → Commit cùng transaction với transition
-  (mọi lỗi ở 2–4 → log warn, hồ sơ giữ UNASSIGNED cho Lead assign tay)
+```mermaid
+flowchart TD
+    START["Đại lý SUBMIT"] --> TRANSITION["Transition draft → salesUnderReview<br/>stage SALES"]
+    TRANSITION --> CHECK{"Auto-assign bật<br/>và stage = SALES?"}
+    CHECK -->|"Không"| SKIP["Bỏ qua auto-assign"]
+    CHECK -->|"Có"| LOCK["Lock grant theo agencyId + projectId<br/>+ SOCIAL_HOUSING"]
+    LOCK --> SELECT["Chọn BO theo rotation % số assignee<br/>và tăng rotation"]
+    SELECT --> UPSERT["UPSERT dossier_stage_reviewer<br/>assigned_by = SYSTEM_AUTO<br/>claimed_at = assigned_at"]
+    UPSERT --> COMMIT["Commit cùng transaction với transition"]
+    LOCK -.->|"Lỗi"| FALLBACK["Log cảnh báo và giữ UNASSIGNED<br/>Lead phân công thủ công"]
+    SELECT -.->|"Lỗi"| FALLBACK
+    UPSERT -.->|"Lỗi"| FALLBACK
 ```
 
 ### Vấn đề 17: Cấu hình tự động nhắc nhở bổ sung hồ sơ theo dự án bằng file ConfigMap
@@ -853,14 +907,19 @@ spring.config.import=optional:file:/vhm-dossier-core-extra/reminder-overrides.pr
 
 **Cơ chế resolve:**
 
-```
-ReminderRuleResolver
-  ├─ default: rule trong pipeline YAML (state agentUpdateAtSales → sla.reminders[])
-  └─ override: ReminderOverrideProperties.find(projectId, reminderCode)
-       ├─ có entry  → phủ V/T (field nào null → giữ default field đó)
-       └─ không có  → dùng nguyên default
-  → cùng 1 kết quả dùng cho: job gửi mail nhắc, badge số ngày quá hạn,
-    filter revisionOverdue (search/export) và dashboard thống kê trễ hẹn
+```mermaid
+flowchart TD
+    DEFAULT["Rule mặc định trong pipeline YAML<br/>agentUpdateAtSales.sla.reminders"] --> RESOLVER["ReminderRuleResolver"]
+    OVERRIDE["ReminderOverrideProperties<br/>projectId + reminderCode"] --> RESOLVER
+    RESOLVER --> EXISTS{"Có override?"}
+    EXISTS -->|"Có"| MERGE["Phủ sendAt/deadline<br/>field null giữ giá trị mặc định"]
+    EXISTS -->|"Không"| KEEP["Giữ nguyên rule mặc định"]
+    MERGE --> RESULT["Effective Reminder Rule"]
+    KEEP --> RESULT
+    RESULT --> JOB["Job gửi thông báo"]
+    RESULT --> BADGE["Badge quá hạn"]
+    RESULT --> FILTER["Search / Export<br/>revisionOverdue"]
+    RESULT --> DASHBOARD["Dashboard SLA"]
 ```
 
 
