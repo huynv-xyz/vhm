@@ -1,107 +1,118 @@
-# L2 - VHM - eKYC Service
+# L2 - VHMKDO2O - eKYC Service
 
 > **TÀI LIỆU MẬT**  
 > Tài liệu mô tả thiết kế kỹ thuật cho năng lực OCR và xác thực danh tính điện tử
 > dùng chung trong hệ sinh thái VHM. Không chia sẻ ra ngoài phạm vi dự án khi chưa
 > được phê duyệt.
 
-| **Team/PIC** | Team Dự án: **TBD** \| Team Kiến trúc: **TBD** \| Team Data Privacy: **TBD** \| Team ANBM: **TBD** \| SDK Technical Contact: **TBD** |
+Quy tắc đặt tên Confluence page của tài liệu L2: **L2 - \<Tên P&L\> - \<Tên hệ thống\>**.
+
+| **Trường** | **Nội dung** |
 | --- | --- |
-| **Status** | **BẢN NHÁP** / ĐANG THẨM ĐỊNH / PHÊ DUYỆT / TỪ CHỐI |
+| **Status** | **ĐANG THẨM ĐỊNH (UNDER REVIEW)** |
+| **Version & Change Log** | `v0.9` — 07/08/2026 — Chuẩn hóa L2, hoàn thiện lifecycle, presigned media persistence, controlled reveal, security/privacy, recovery và risk register |
 | **Owner** | **TBD — một cá nhân chịu trách nhiệm tài liệu** |
-| **Reviewers/Approvers** | Product: TBD · Architecture: TBD · Integration: TBD · ANBM: TBD · Data Privacy/Legal: TBD · Operations: TBD |
-| **Sign-off/Approval Date** | TBD theo từng reviewer/approver |
 | **System Owner** | TBD |
+| **Team/PIC** | Team Dự án: **TBD** · Team Kiến trúc: **TBD** · Team Data Privacy: **TBD** · Team ANBM: **TBD** · SDK Technical Contact: **TBD** |
+| **Reviewers / Approvers** | Product: TBD · Architecture: TBD · Integration: TBD · ANBM: TBD · Data Privacy/Legal: TBD · Operations: TBD |
 | **L1 Document** | TBD — System Owner cung cấp trước Architecture Review |
-| **L3 Documents** | API Specification: TBD · Mobile integration spec: TBD · Web integration spec: TBD · Media upload/reveal specification: TBD · Provider integration pack: TBD · DB/Operations runbook: TBD |
-| **Referenced Standards** | L2 SAD template — bản đối chiếu 06/08/2026 · STD-DIAG — bản đối chiếu 06/08/2026 · VHM IAM/ANBM/Data Privacy/Observability standards: TBD version |
-| **Last Reviewed** | 06/08/2026 |
-
-| **Reviewer/Approver role** | **Name** | **Decision** | **Sign-off date** |
-| --- | --- | --- | --- |
-| Product/Business Owner | TBD | Pending | TBD |
-| Application/Solution Architecture | TBD | Pending | TBD |
-| Integration Architecture | TBD | Pending | TBD |
-| ANBM/Security | TBD | Pending | TBD |
-| Data Privacy/Legal | TBD | Pending | TBD |
-| Operations/Cloud/DBA | TBD | Pending | TBD |
-
-### Document completion gate
-
-Tài liệu chỉ được chuyển từ `BẢN NHÁP` sang `ĐANG THẨM ĐỊNH` khi toàn bộ trường
-dưới đây có giá trị và link evidence truy cập được. Không dùng `TBD`, tên team
-chung hoặc trao đổi miệng để thay cho owner/sign-off cụ thể.
-
-| **Hạng mục bắt buộc** | **Giá trị hiện tại** | **Owner cung cấp** | **Điều kiện qua gate** |
-| --- | --- | --- | --- |
-| Document Owner và System Owner | Chưa được cung cấp | Sponsor/Program Lead | Có họ tên, vai trò và đơn vị chịu trách nhiệm |
-| Reviewer/Approver | Chưa được cung cấp | Architecture Governance | Có cá nhân cho Product, Architecture, Integration, ANBM, Data Privacy và Operations |
-| L1 document | Chưa được cung cấp | System Owner | Link hợp lệ và scope/name nhất quán với TDD |
-| L3 API specification | Chưa được cung cấp | Backend Tech Lead | Link contract cho BFF, VHM eKYC Service, callback và Result API |
-| L3 Mobile/Web integration specifications | Chưa được cung cấp | Mobile/Web Tech Leads | Link SDK lifecycle, compatibility và failure-path specification |
-| L3 Media upload/reveal specification | Chưa được cung cấp | Backend/Client Tech Leads | Link contract cho presigned upload, media manifest, list/reveal và audit event schema |
-| L3 DB/Operations runbook | Chưa được cung cấp | DBA/Ops | Link migration, retention/purge, backup/restore và incident runbook |
-| Referenced-standard versions | Chưa đầy đủ | Architecture/ANBM/Data Privacy/Ops | Có version/link chính thức và deviation/exception nếu có |
+| **L3 Documents** | Theo L3 Artefact Register tại mục 0; bổ sung link mỗi khi artefact được tạo/cập nhật |
+| **Referenced standards** | L2 SAD template — bản đối chiếu 07/08/2026 · STD-DIAG — bản đối chiếu 07/08/2026 · VHM IAM/ANBM/Data Privacy/Observability standards: TBD version |
+| **Last reviewed** | 07/08/2026 |
+| **Mục lục** | Dùng Table of Contents macro khi publish lên Confluence; danh mục Markdown nằm ngay dưới metadata |
 
 ## Mục lục
 
+0. [Front Matter & Approvals](#0-front-matter--approvals)
 1. [Business Objectives & Scope](#1-business-objectives--scope)
 2. [Architecture Overview & Principles](#2-architecture-overview--principles)
 3. [Functional Requirements](#3-functional-requirements)
-4. [Integration Architecture](#4-integration-architecture)
-5. [Data Flow & Business Flow](#5-data-flow--business-flow)
-6. [Deployment, Technology & Observability](#6-deployment-technology--observability)
-7. [Security & Data Privacy](#7-security--data-privacy)
-8. [Backup, Recovery & Operational Readiness](#8-backup-recovery--operational-readiness)
-9. [Risks & Open Issues/Tech Debt](#9-risks--open-issuestech-debt)
-10. [Glossary](#glossary)
-11. [Appendix A — External Inputs & Confirmations](#appendix-a-external-inputs--confirmations)
-12. [Appendix B — ADR Log](#appendix-b-adr-log)
-13. [Appendix C — Go-live Checklist](#appendix-c-go-live-checklist)
+4. [Non-Functional Requirements](#4-non-functional-requirements)
+5. [Technology Stack & Justification](#5-technology-stack--justification)
+6. [Integration Architecture](#6-integration-architecture)
+7. [Data Architecture & Data Flow](#7-data-architecture--data-flow)
+8. [Business Flow Diagrams](#8-business-flow-diagrams)
+9. [Security & Compliance Architecture](#9-security--compliance-architecture)
+10. [Deployment & Infrastructure Topology](#10-deployment--infrastructure-topology)
+11. [Cost & Capacity/Performance](#11-cost--capacityperformance)
+12. [Scalability & Reliability](#12-scalability--reliability)
+13. [Observability & Monitoring](#13-observability--monitoring)
+14. [Operational Readiness](#14-operational-readiness)
+15. [Testing & Quality Strategy](#15-testing--quality-strategy)
+16. [Risks & Open Issues/Tech Debt](#16-risks--open-issuestech-debt)
+17. [Appendices](#appendix)
 
-### L2 template coverage index
+# 0. Front Matter & Approvals
 
-| **Chương chuẩn L2** | **Vị trí trong tài liệu này** |
+## 0.1 Review and approval gate
+
+| **Reviewer/Approver role** | **Name** | **Review scope** | **Decision** | **Sign-off date** |
+| --- | --- | --- | --- | --- |
+| Product/Business Owner | TBD | Scope, journey, outcome, purpose và business use | Pending Review | — |
+| Application/Solution Architecture | TBD | Architecture integrity, feasibility, NFR và ADR | Pending Review | — |
+| Integration Architecture | TBD | BFF/provider interfaces, callback, compatibility và contracts | Pending Review | — |
+| ANBM/Security | TBD | IAM, callback, encryption, media/reveal và threat controls | Pending Review | — |
+| Data Privacy/Legal | TBD | Consent, PII, purpose, residency, retention và data-subject rights | Pending Review | — |
+| Operations/Cloud/DBA | TBD | Capacity, deployment, observability, backup, recovery và runbooks | Pending Review | — |
+
+### Governance gates
+
+| **Transition** | **Entry criteria** |
 | --- | --- |
-| 1. Business Objectives & Scope | Mục 1 |
-| 2. Architecture Overview & Principles | Mục 2 |
-| 3. Functional Requirements | Mục 3 |
-| 4. Non-Functional Requirements | Mục 1.6 và 6.4 |
-| 5. Technology Stack & Justification/ADR | Mục 6.6 và Appendix B |
-| 6. Integration Architecture | Mục 2.2.2, 2.2.3 và 4 |
-| 7. Data Architecture & Data Flow | Mục 2.4, 5.1 và 7.2 |
-| 8. Business Flow Diagrams | Mục 5.2 |
-| 9. Security & Compliance | Mục 2.2.5 và 7 |
-| 10. Deployment & Infrastructure | Mục 6.1–6.5 |
-| 11. Cost & Capacity/Performance | Mục 6.4 |
-| 12. Scalability & Reliability | Mục 6.4.3 và 8.2.1 |
-| 13. Observability & Monitoring | Mục 6.8 |
-| 14. Operational Readiness | Mục 8.3–8.5 |
-| 15. Testing & Quality Strategy | Mục 6.5.2, 7.4 và 8.6 |
-| 16. Risks & Open Issues/Tech Debt | Mục 9 |
+| `DRAFT → UNDER REVIEW` | Nội dung L2 và diagram đã hoàn chỉnh ở mức reviewable; quyết định còn mở được ghi trong Risk/Open-Issue/External-Input register với owner role và gate; reviewer được mời review. L3 có thể ở trạng thái `PLANNED/DRAFT`. |
+| `UNDER REVIEW → APPROVED` | Có Document/System Owner và reviewer đích danh; L1/L3/standard link truy cập được; P1/approval blocker đã đóng hoặc có risk acceptance; quyết định reviewer và ngày sign-off được ghi nhận. |
+| `APPROVED → IMPLEMENTATION BASELINE` | Contract L3, capacity/cost baseline, security/privacy approval và implementation quality gates đã sẵn sàng theo gate tương ứng. |
 
-> **Quy ước trong tài liệu**
+## 0.2 L3 Artefact Register
+
+| **L3 artefact** | **Status** | **Owner** | **Required gate** | **Link** |
+| --- | --- | --- | --- | --- |
+| VHM API Specification | PLANNED | Backend Tech Lead | Trước API contract/implementation sign-off | TBD |
+| Mobile SDK Integration Specification | PLANNED | Mobile/SDK Tech Lead | Trước Mobile integration build | TBD |
+| Web SDK Integration Specification | PLANNED | Web/SDK Tech Lead | Trước Web integration build | TBD |
+| Provider & Callback Contract | PLANNED | Integration/Backend Tech Lead | Trước callback/provider implementation | TBD |
+| Media Upload, Manifest, Reveal & Audit Specification | PLANNED | Backend/Client/ANBM | Trước media/manual-review implementation | TBD |
+| Database Migration & Operations Runbook | PLANNED | DBA/Ops | Trước DB migration/OAT sign-off | TBD |
+
+## 0.3 L2 template coverage index
+
+| **L2 section** | **Content in this document** |
+| --- | --- |
+| 1. Business Objectives & Scope | Section 1 |
+| 2. Architecture Overview & Principles | Section 2 |
+| 3. Functional Requirements | Section 3 |
+| 4. Non-Functional Requirements | Section 4 |
+| 5. Technology Stack & Justification/ADR | Section 5 and Appendix D |
+| 6. Integration Architecture | Section 6 and component/context views in 2.2 |
+| 7. Data Architecture & Data Flow | Section 7 |
+| 8. Business Flow Diagrams | Section 8 |
+| 9. Security & Compliance | Section 9 |
+| 10. Deployment & Infrastructure | Section 10 |
+| 11. Cost & Capacity/Performance | Section 11 |
+| 12. Scalability & Reliability | Section 12 |
+| 13. Observability & Monitoring | Section 13 |
+| 14. Operational Readiness | Section 14 |
+| 15. Testing & Quality Strategy | Section 15 |
+| 16. Risks & Open Issues/Tech Debt | Section 16 |
+
+> **Document conventions**
 >
 > - **VHM Application**: ứng dụng Mobile và Web của VHM tích hợp eKYC SDK.
 > - **VHM eKYC Service**: service trung tâm nằm sau VHM BFF; quản lý session,
 >   policy, state, callback, reconciliation và Canonical Result; đồng thời là
 >   system of record và integration/proxy point tới eKYC Provider Backend.
-> - **eKYC SDK**: SDK chạy trên Mobile/Web, điều khiển camera, hỗ trợ kiểm tra chất
->   lượng đầu vào, thu thập dữ liệu và gọi endpoint eKYC qua VHM BFF.
-> - **eKYC Provider Backend**: hệ thống ngoài VHM khởi tạo/xử lý phiên SDK, OCR,
->   liveness và face matching; gửi kết quả tới callback endpoint của VHM eKYC
->   Service.
-> - **Provider Adapter**: lớp cô lập chi tiết SDK/API/payload/error khỏi contract nội bộ VHM.
+> - **eKYC SDK**: SDK chạy trên Mobile/Web, điều khiển camera, thu thập dữ liệu và
+>   gọi endpoint eKYC qua VHM BFF.
+> - **eKYC Provider Backend**: hệ thống ngoài VHM xử lý OCR/liveness/face matching
+>   và gửi provider result tới callback endpoint của VHM eKYC Service.
+> - **Provider Adapter**: lớp cô lập API/payload/error đặc thù provider khỏi contract nội bộ VHM.
 > - **Canonical Result**: mô hình kết quả chuẩn nội bộ, không phụ thuộc SDK/provider cụ thể.
-> - Nội dung đánh dấu **TBD** phải được xác nhận trước khi tài liệu được APPROVED.
-> - Các quyết định kỹ thuật trong bản DRAFT là baseline triển khai. Mọi thay đổi
->   phải cập nhật TDD/ADR, đánh giá tác động và được phê duyệt theo governance.
+> - Nội dung `TBD`, `PENDING`, `UNRESOLVED` hoặc `BLOCKING` phải được xử lý theo gate
+>   được ghi trong tài liệu; không được xem là giá trị để đội triển khai tự chọn.
 
----
+# 1. Business Objectives & Scope
 
-# **1. Business Objectives & Scope**
-
-## 1.1 Tên hệ thống
+## 1.1 System Name, Business Context & Objectives
 
 **VHM eKYC Service**.
 
@@ -153,9 +164,7 @@ một domain nghiệp vụ. Giải pháp gồm các thành phần logic sau:
 > manual review được upload riêng bằng presigned URL vào S3 do VHM sở hữu;
 > media bytes không đi qua VHM BFF/VHM eKYC Service application body.
 
-## 1.2 Vấn đề giải quyết/Mục đích của hệ thống
-
-### **1.2.1. Vấn đề hiện tại**
+### 1.1.1 Current Problems
 
 Nhiều hành trình trong VHM cần đọc giấy tờ và xác minh người thực hiện có đúng là
 chủ thể trên giấy tờ hay không:
@@ -184,7 +193,7 @@ Nếu từng domain tự tích hợp SDK, phát sinh thêm các rủi ro:
 - Dữ liệu OCR/sinh trắc bị sao chép vào DB, log, message bus hoặc analytics ngoài kiểm soát.
 - Không có một nơi quản lý consent, quota, retention, audit và chi phí tập trung.
 
-### **1.2.2. Mục đích**
+### 1.1.2 Objectives
 
 Xây dựng một nền tảng xác minh danh tính dùng chung nhằm:
 
@@ -204,7 +213,7 @@ Xây dựng một nền tảng xác minh danh tính dùng chung nhằm:
   sau authorization/scope check và audit.
 - Quản lý tập trung policy, cấu hình SDK, quota, retention, audit và monitoring.
 
-### **1.2.3. Phạm vi thực hiện**
+## 1.2 In Scope
 
 - Tích hợp eKYC SDK trên Mobile và Web.
 - Sử dụng một SDK/provider đã được phê duyệt.
@@ -227,7 +236,7 @@ Xây dựng một nền tảng xác minh danh tính dùng chung nhằm:
 - Audit, metrics, alert và runbook vận hành.
 - Bảo vệ credential, PII và dữ liệu sinh trắc.
 
-### **1.2.4. Ngoài phạm vi**
+## 1.3 Out of Scope
 
 - Huấn luyện/tinh chỉnh model OCR, liveness hoặc face matching.
 - Xây dựng kho nhận diện khuôn mặt hoặc tập huấn luyện sinh trắc học ngoài VHM
@@ -237,7 +246,7 @@ Xây dựng một nền tảng xác minh danh tính dùng chung nhằm:
 - Tự động áp một decision policy duy nhất cho mọi domain.
 - Đồng bộ/sửa dữ liệu master của domain ngoài contract đã thống nhất.
 
-### **1.2.5. Giả định và ràng buộc**
+## 1.4 Assumptions, Constraints & Dependencies
 
 | **ID** | **Giả định/Ràng buộc** | **Trạng thái** | **Ảnh hưởng nếu thay đổi** |
 | --- | --- | --- | --- |
@@ -256,7 +265,7 @@ Xây dựng một nền tảng xác minh danh tính dùng chung nhằm:
 | A-13 | Client xin presigned request qua VHM BFF rồi trực tiếp upload media vào S3 do VHM sở hữu; backend sync từ provider ngoài phạm vi phiên bản này | Quyết định kiến trúc | Thay đổi ingress path cần ADR, threat model và performance/privacy review |
 | A-14 | SDK/client cung cấp được media artifact và metadata cần thiết cho cả pass/fail | SDK capability — go-live blocker | Nếu SDK không expose media thì presigned upload và manual review evidence không hoàn tất |
 
-## 1.3 Đối tượng sử dụng
+## 1.5 Stakeholders & Personas
 
 - **Người dùng cuối**: thực hiện OCR/eKYC trong VHM Application.
 - **Người dùng/đối tác/đại diện pháp lý**: thực hiện định danh cho onboarding hoặc hồ sơ được phân quyền.
@@ -269,7 +278,7 @@ Xây dựng một nền tảng xác minh danh tính dùng chung nhằm:
 - **Security/Data Privacy/Auditor**: kiểm soát consent, retention, access và audit.
 - **eKYC Provider Backend**: hệ thống ngoài trust boundary gửi callback/cung cấp result API.
 
-## 1.4 Thu thập & xử lý dữ liệu cá nhân
+## 1.6 Personal Data Processing Summary
 
 [X] **Có:** Hệ thống xử lý dữ liệu cá nhân và có thể xử lý dữ liệu sinh trắc học.
 
@@ -288,7 +297,7 @@ Các nhóm dữ liệu dự kiến:
 
 Mục **7.2 Data Privacy** phải được APPROVED trước production.
 
-## 1.5 Mức độ quan trọng của hệ thống
+## 1.7 System Criticality
 
 - **Cấp độ hệ thống:** Tier 2 - Business Critical.
 - **Mô tả:** OCR/eKYC nằm trên các hành trình onboarding/xác minh quan trọng.
@@ -299,26 +308,7 @@ Mục **7.2 Data Privacy** phải được APPROVED trước production.
   - Không biến lỗi kỹ thuật thành kết luận người dùng không đạt.
   - Không bypass eKYC khi domain bắt buộc, trừ exception có thẩm quyền và audit.
 
-## 1.6 Non-Functional Requirements tổng quát
-
-| **Nhóm** | **Baseline** | **Trạng thái** |
-| --- | --- | --- |
-| Availability | Theo approved VHM platform availability SLO; dependency eKYC Provider Backend đo theo SLA riêng | Target chốt tại NFR sign-off |
-| Create VHM session | Đáp ứng approved VHM API SLO; không có synchronous eKYC Provider Backend call | Target p95 chốt tại NFR/Capacity sign-off |
-| Status/result query | Đáp ứng approved VHM read-API SLO với dữ liệu đã persist | Target p95 chốt tại NFR/Capacity sign-off |
-| Callback acknowledgement | Durable receive trước khi trả 2xx và nằm trong provider callback timeout với safety margin | Target chốt theo provider contract và NFR sign-off |
-| Scalability | Horizontal scale; không giữ session trong memory local | Bắt buộc |
-| Data integrity | Idempotency, optimistic locking và append-only history | Bắt buộc |
-| Security | TLS, secret manager, callback auth, schema validation, masking | Bắt buộc |
-| Sensitive media | Presigned upload có scope/checksum, private SSE-KMS S3, AES-GCM-encrypted reference và controlled reveal/audit | Bắt buộc |
-| Observability | Metrics, structured log đã mask, trace/correlation | Bắt buộc |
-| Recovery | Reconcile non-terminal session; không phụ thuộc callback duy nhất | Bắt buộc |
-| Compatibility | Mobile/Web client/SDK matrix và phased rollout | Implementation manifest bắt buộc trước build |
-| Maintainability | VHM contract không phụ thuộc SDK payload; policy versioned | Bắt buộc |
-
----
-
-# **2. Architecture Overview & Principles**
+# 2. Architecture Overview & Principles
 
 ## 2.1. Nguyên tắc thiết kế
 
@@ -348,7 +338,7 @@ tham chiếu control ID và chỉ mô tả chi tiết riêng của section.
 | `CRED-01` | Provider credential lưu trong Secret Manager và chỉ Provider Adapter của VHM eKYC Service được đọc/inject; không truyền xuống BFF, Mobile/Web hoặc SDK. | VHM eKYC Service/ANBM | IAM policy, secret scan và rotation test |
 | `RESULT-01` | Client/SDK result chỉ phục vụ UX; callback đã xác thực là provider-result ingress chính. Get Result chỉ được gọi bởi Reconciliation Job khi callback quá SLA hoặc session treo. | VHM eKYC Service | Callback/reconciliation contract test |
 | `CALLBACK-01` | Callback phải được token-authenticate, bind Client UUID/environment, replay/dedupe và durable inbox trước khi trả 2xx. | VHM eKYC Service/ANBM | Security, duplicate và crash-recovery test |
-| `DATA-01` | VHM chỉ lưu canonical fixed fields và purpose-approved media types; media object nằm trong private S3 Media Vault, AES-GCM-encrypted object reference/manifest nằm trong PostgreSQL, không dùng làm face template/training dataset và purge theo versioned retention policy tại mục 7.2.5. | VHM eKYC Service/Data Privacy | Data inventory, S3/DB scan, retention/purge evidence |
+| `DATA-01` | VHM chỉ lưu canonical fixed fields và purpose-approved media types; media object nằm trong private S3 Media Vault, AES-GCM-encrypted object reference/manifest nằm trong PostgreSQL, không dùng làm face template/training dataset và purge theo versioned retention policy tại mục 7.4.4. | VHM eKYC Service/Data Privacy | Data inventory, S3/DB scan, retention/purge evidence |
 | `AUTH-01` | VHM BFF authenticate caller, authorize `businessRef/subjectRef` và không tin business scope từ request body; VHM eKYC Service revalidate session/run/journey/media binding. | BFF/VHM eKYC Service | AuthN/AuthZ/IDOR test |
 | `RETRY-01` | Front/back thuộc cùng run; lỗi một bước làm fail whole attempt. Retry tạo attempt/run mới và không tái sử dụng media/result cũ. | Client/VHM eKYC Service | State-machine và retry E2E |
 | `REVIEW-01` | `GET /manual-review/verifications/{verificationId}/media` chỉ cho platform review role có active assignment/business-object/purpose scope, ghi `VIEW_IDENTITY_MEDIA` rồi trả encrypted refs. `POST /manual-review/verifications/{verificationId}/media/reveal` yêu cầu `caseId`, controlled `reasonCode`, phiên step-up còn hiệu lực và tối đa 16 ciphertext đã de-duplicate; bind toàn bộ với stored refs của đúng verification/run, decrypt ref/path rồi trả short-lived presigned URL. Foreign ref fail toàn bộ; exceptional access cần Supervisor/JIT approval và opaque `ticketRef`. Mỗi successful reveal ghi `REVEAL_IDENTITY_MEDIA`; audit PII-safe không chứa ciphertext/path/URL. | Business/Manual Review/ANBM/Data Privacy | Role/assignment/object IDOR, step-up/reason/exception approval, ciphertext binding, cap/dedupe, presign/cache expiry và append-only audit test |
@@ -438,7 +428,7 @@ Server-side boundary trong sơ đồ gồm VHM BFF và VHM eKYC Service. VHM BFF
 session/result, SDK ingress, create upload session và submit manifest;
 presigned media bytes đi trực tiếp từ client tới S3. VHM eKYC Service sở hữu
 trạng thái xác minh và tích hợp/proxy tới eKYC Provider Backend. Cấu trúc module
-bên trong service được mô tả riêng tại mục 2.4.
+bên trong service được mô tả ngay bên dưới tại mục 2.2.3.
 
 ### 2.2.3. Danh sách module và trách nhiệm
 
@@ -493,11 +483,11 @@ flowchart LR
 ```
 
 Đây là DFD L2: mũi tên chỉ biểu diễn dữ liệu từ producer tới nơi nhận, không biểu
-diễn thứ tự thực thi. Trình tự thời gian được mô tả tại mục 5.2.
+diễn thứ tự thực thi. Trình tự thời gian được mô tả tại mục 8.1.
 
 Luồng này phải tuân thủ `DP-01`, `MEDIA-01`, `MEDIA-STORE-01`, `CRED-01`,
 `RESULT-01`, `DATA-01`, `REVIEW-01` và `RETRY-01`. Network allowlist, TLS, SDK integrity, data location, retention,
-subprocessor và incident handling là các gate được chi tiết tại mục 7 và Appendix A.
+subprocessor và incident handling là các gate được chi tiết tại mục 9 và Appendix C.
 
 #### 2.2.4.1. Presigned Media Upload Flow — áp dụng cho SDK pass và fail
 
@@ -672,7 +662,7 @@ case đã được phê duyệt; client không được tự đổi flow.
 Đây là lifecycle state machine tối giản của một `IdentityVerification`. Lifecycle
 state được lưu bền trong PostgreSQL nhưng không chứa business outcome hoặc trạng
 thái kỹ thuật của submit/media/provider. Các milestone trực giao được mô tả tại
-mục 2.3.4 và là guard bắt buộc cho các sequence tại mục 5.2.
+mục 2.3.4 và là guard bắt buộc cho các sequence tại mục 8.1.
 
 ```mermaid
 stateDiagram-v2
@@ -720,97 +710,9 @@ stateDiagram-v2
 `providerResultStatus` và `reviewStatus`; client không được tự khai báo
 `mediaStatus=READY`, provider result hoặc final outcome.
 
+## 2.4. Concurrency, Idempotency và Transaction
 
-## 2.4. Data Model
-
-### 2.4.1. Logical Data Ownership (L2)
-
-```mermaid
-flowchart TB
-    subgraph CONSENT["VHM Consent System"]
-        CONSENT_DATA["Consent Evidence"]:::owned
-    end
-    subgraph EKYC_SERVICE["VHM eKYC Service — System of Record"]
-        SESSION["Verification Session<br/>Run / State · opaque business/subject refs"]:::owned
-        RESULT["Canonical Result<br/>Fixed Fields"]:::sensitive
-        INBOX["Encrypted Callback Inbox<br/>TTL"]:::sensitive
-        MANIFEST["Media Manifest / Review Case<br/>opaque media refs · state"]:::sensitive
-        HISTORY["State / Access History"]:::owned
-    end
-    subgraph MEDIA_VAULT["VHM S3 Media Vault"]
-        MEDIA["Private S3 Media Objects<br/>document · direct face · liveness"]:::sensitive
-    end
-    subgraph PROVIDER["eKYC Provider Backend (external)"]
-        PROVIDER_DATA["Document / Selfie / Liveness Media<br/>Raw Provider Result"]:::sensitive
-    end
-
-    SESSION -.->|"consentRef"| CONSENT_DATA
-    RESULT -.->|"verificationId"| SESSION
-    INBOX -.->|"verificationId"| SESSION
-    HISTORY -.->|"verificationId"| SESSION
-    MANIFEST -.->|"verificationId/runId"| SESSION
-    MEDIA -.->|"mediaId"| MANIFEST
-    PROVIDER_DATA -.->|"providerSessionId"| SESSION
-
-    classDef owned fill:#2d4a3e,stroke:#5fb37a,color:#fff;
-    classDef sensitive fill:#5a2d2d,stroke:#d96f6f,color:#fff;
-```
-
-| **Chủ sở hữu/System of Record** | **Dữ liệu sở hữu** | **Năng lực lưu trữ** | **Đặc tính bắt buộc** |
-| --- | --- | --- | --- |
-| VHM Consent System | Consent evidence | Consent-owned storage | Platform lưu reference/version/time phục vụ audit. |
-| VHM eKYC Service | Session, run, state, Canonical Result, media manifest/review case, inbox và history | PostgreSQL + encrypted inbox TTL | Transactional, idempotent, masking, retention và audit. |
-| VHM S3 Media Vault | Purpose-approved document/direct-face/liveness media objects | Private S3 + SSE-KMS; AES-GCM-encrypted object reference lưu tại PostgreSQL | VHM-owned; no public access/raw path; controlled reveal/presign, policy lifecycle và purge evidence. |
-| eKYC Provider Backend | Media SDK processing copy và raw provider result | Provider-managed storage | Provider retention/deletion vẫn theo hợp đồng; không phải source phục hồi media VHM trong happy path. |
-
-`businessRef/subjectRef` là opaque context đã được BFF authorize trước khi gửi VHM eKYC Service;
-VHM eKYC Service chỉ lưu reference trong session và không tạo FK vật lý tới dữ liệu nghiệp vụ.
-Các cạnh nét đứt là tham chiếu logic bằng ID, không phải FK vật lý xuyên system.
-
-### 2.4.2. Logical ERD (L2)
-
-```mermaid
-erDiagram
-    CONSENT_EVIDENCE ||--o{ VERIFICATION_SESSION : authorizes
-    VERIFICATION_SESSION o|--o{ VERIFICATION_SESSION : retry_chain
-    VERIFICATION_SESSION ||--o| VERIFICATION_RUN : executes
-    VERIFICATION_SESSION ||--o{ CALLBACK_INBOX : receives
-    VERIFICATION_SESSION ||--|{ STATE_ACCESS_HISTORY : records
-    VERIFICATION_SESSION ||--o{ RECONCILIATION_TASK : schedules
-    VERIFICATION_RUN ||--o| CANONICAL_RESULT : produces
-    CANONICAL_RESULT ||--o{ VERIFICATION_CHECK : contains
-    VERIFICATION_RUN ||--o{ MEDIA_ASSET : contains
-    VERIFICATION_SESSION ||--o{ MANUAL_REVIEW_CASE : may_require
-    MANUAL_REVIEW_CASE ||--o{ AUDIT_LOG : records_access
-    MANUAL_REVIEW_CASE ||--o{ MANUAL_REVIEW_DECISION : records
-    VERIFICATION_SESSION ||--o{ IV_HISTORY : records_decision_lifecycle
-```
-
-| **Logical entity** | **Vai trò trong mô hình** | **Cardinality/invariant chính** |
-| --- | --- | --- |
-| `CONSENT_EVIDENCE` | Bằng chứng consent do VHM Consent System sở hữu | Một consent có thể authorize nhiều session; VHM eKYC Service chỉ lưu logical reference |
-| `VERIFICATION_SESSION` | Aggregate root cho một attempt OCR/eKYC; sở hữu lifecycle status và completion milestones | Một session có tối đa một active run; lifecycle enum tách final outcome; whole-attempt retry tạo session mới và nối retry chain |
-| `VERIFICATION_RUN` | Vòng chạy SDK gắn với session | Chỉ được tạo khi session bắt đầu; không dùng lại cho retry session mới |
-| `CALLBACK_INBOX` | Durable ingress cho provider callback | Một session có thể nhận nhiều event do retry/duplicate/out-of-order; xử lý phải idempotent |
-| `CANONICAL_RESULT` | Kết quả provider đã chuẩn hóa cùng final outcome/reason sau finalization | Tối đa một provider result hiện hành; chỉ gán final outcome khi session `COMPLETED` và không bị client/callback trễ đảo ngược |
-| `VERIFICATION_CHECK` | Kết quả document, liveness, face match và quality check đã chuẩn hóa | Thuộc Canonical Result; không chứa media hoặc raw provider payload |
-| `MEDIA_ASSET` | Manifest và lifecycle của một document/direct-face/liveness object | Unique trên `(runId, mediaType, logicalPart)`; lưu checksum, object version, AES-GCM-encrypted reference, retention metadata và state; không lưu binary/plaintext path trong DB |
-| `MANUAL_REVIEW_CASE` | Case purpose-bound được assign cho reviewer | Không tự cấp quyền media; assignment và case state được revalidate mỗi request |
-| `MANUAL_REVIEW_DECISION` | Quyết định hậu kiểm và lý do | Append-only; không sửa provider result; override cần policy/approval riêng |
-| `AUDIT_LOG` | Access audit cho list/reveal media | Append-only `VIEW_IDENTITY_MEDIA`/`REVEAL_IDENTITY_MEDIA`, entity `IDENTITY_VERIFICATION`, `verificationId`, actor/role, case/purpose/reason/step-up context, request/outcome/time và media types/logical parts/poses/count; không chứa ciphertext/path/URL/PII |
-| `IV_HISTORY` | Decision lifecycle của verification | Lưu verified/auto-failed/manual decision events; tách khỏi media access audit |
-| `STATE_ACCESS_HISTORY` | Lịch sử lifecycle, milestone và final-outcome transition có audit | Append-only; một session có một hoặc nhiều record lịch sử |
-| `RECONCILIATION_TASK` | Lịch khôi phục result khi callback quá SLA/session treo | Có thể có nhiều lần chạy bounded; không polling liên tục |
-
-ERD biểu diễn quan hệ logic và invariant giữa các entity. Binary media không nằm
-trong PostgreSQL: `MEDIA_ASSET` chỉ giữ manifest/AES-GCM-encrypted object reference,
-còn object nằm trong private VHM Media Vault. Raw provider payload không được dùng thay
-media manifest hoặc lưu dài hạn.
-
-
-## 2.5. Concurrency, Idempotency và Transaction
-
-### 2.5.1. Tạo phiên đồng thời
+### 2.4.1. Tạo phiên đồng thời
 
 Rủi ro: double-click/client retry tạo hai session.
 
@@ -821,13 +723,13 @@ Kiểm soát:
 - Partial unique active index.
 - Nếu cùng idempotency và fingerprint, trả session hiện hữu.
 
-### 2.5.2. Callback đồng thời/trùng lặp
+### 2.4.2. Callback đồng thời/trùng lặp
 
 - Insert inbox với unique event/payload key.
 - Request thắng insert thực hiện durable receive.
 - Duplicate `PROCESSED/PROCESSING` trả 2xx để tránh retry storm.
 
-### 2.5.3. Client submit và callback cùng chạy
+### 2.4.3. Client submit và callback cùng chạy
 
 - Upload S3 hoàn tất ngoài DB transaction; presigned request không giữ session lock.
 - `POST submit` chỉ nhận server-issued `mediaId` và manifest fingerprint, kiểm tra
@@ -845,7 +747,7 @@ Kiểm soát:
 - Unique constraint cho submit fingerprint, media logical part và provider result
   ngăn duplicate; cùng idempotency key khác manifest trả conflict.
 
-### 2.5.4. Callback và reconciliation cùng chạy
+### 2.4.4. Callback và reconciliation cùng chạy
 
 - Cả hai gọi chung `processProviderResult()`.
 - Callback HTTP request chỉ authenticate, dedupe và durable-insert inbox; không
@@ -868,7 +770,7 @@ Giá trị lock/statement timeout và retry schedule phải được chốt bằ
 và approved DB/Operations baseline. Không được
 tăng timeout để che transaction dài hoặc network call nằm sai transaction boundary.
 
-### 2.5.5. Transaction boundary
+### 2.4.5. Transaction boundary
 
 Trong local transaction xử lý client submit:
 
@@ -888,7 +790,7 @@ Không gọi S3, KMS, eKYC Provider Backend hoặc dependency ngoài transaction
 boundary bên trong DB transaction. Media Upload Finalizer thực hiện I/O trước, sau đó
 commit `mediaStatus=READY` và gọi lại `evaluateFinalization()` trong transaction ngắn.
 
-# **3. Functional Requirements**
+# 3. Functional Requirements
 
 ## 3.1. VHM eKYC Service
 
@@ -977,16 +879,60 @@ commit `mediaStatus=READY` và gọi lại `evaluateFinalization()` trong transa
 
 ---
 
-# **4. Integration Architecture**
+# 4. Non-Functional Requirements
 
-## 4.1. Danh sách Interfaces
+| **Nhóm** | **Baseline** | **Trạng thái** |
+| --- | --- | --- |
+| Availability | Theo approved VHM platform availability SLO; dependency eKYC Provider Backend đo theo SLA riêng | Target chốt tại NFR sign-off |
+| Create VHM session | Đáp ứng approved VHM API SLO; không có synchronous eKYC Provider Backend call | Target p95 chốt tại NFR/Capacity sign-off |
+| Status/result query | Đáp ứng approved VHM read-API SLO với dữ liệu đã persist | Target p95 chốt tại NFR/Capacity sign-off |
+| Callback acknowledgement | Durable receive trước khi trả 2xx và nằm trong provider callback timeout với safety margin | Target chốt theo provider contract và NFR sign-off |
+| Scalability | Horizontal scale; không giữ session trong memory local | Bắt buộc |
+| Data integrity | Idempotency, optimistic locking và append-only history | Bắt buộc |
+| Security | TLS, secret manager, callback auth, schema validation, masking | Bắt buộc |
+| Sensitive media | Presigned upload có scope/checksum, private SSE-KMS S3, AES-GCM-encrypted reference và controlled reveal/audit | Bắt buộc |
+| Observability | Metrics, structured log đã mask, trace/correlation | Bắt buộc |
+| Recovery | Reconcile non-terminal session; không phụ thuộc callback duy nhất | Bắt buộc |
+| Compatibility | Mobile/Web client/SDK matrix và phased rollout | Implementation manifest bắt buộc trước build |
+| Maintainability | VHM contract không phụ thuộc SDK payload; policy versioned | Bắt buộc |
+
+---
+
+Các capacity/performance target chi tiết nằm tại mục 11; scaling/reliability tại mục 12; security/compliance tại mục 9; observability tại mục 13.
+
+# 5. Technology Stack & Justification
+
+| **Area** | **Selected approach** | **Rationale** | **Trade-off/alternative considered** | **Status** |
+| --- | --- | --- | --- | --- |
+| Backend | Java 25, Spring Boot 4.0.4, Spring Data JPA, Maven | Strong typing, transaction support và phù hợp state/idempotency-heavy service | Go/Node giảm footprint nhưng làm tăng divergence stack và không tạo lợi ích đủ lớn cho contract này | Selected |
+| Client integration | VHM Mobile, VHM Web và eKYC SDK được pin version | Hỗ trợ hai kênh đã chốt và cô lập implementation trong SDK | Tự xây capture/liveness bị loại do tăng security, UX và certification scope | Selected |
+| System of record | Amazon RDS PostgreSQL 17 Multi-AZ | ACID, unique constraint, locking, history và PITR phù hợp session/callback dedupe | DynamoDB/NoSQL giảm vận hành scale nhưng phức tạp transaction/query và consistency invariant | Selected |
+| Ephemeral cache | Amazon ElastiCache Redis 7.4 | Rate limit, replay guard và short-lived cache tách khỏi source of truth | Chỉ dùng PostgreSQL đơn giản hơn nhưng tăng contention/load; Redis không được giữ lifecycle/final outcome | Selected with boundary |
+| Runtime | Amazon EKS + Nginx Ingress Controller | Tách scale API/callback/worker, rolling/canary và dùng V-App cluster | VM/serverless giảm một số ops nhưng lệch runtime baseline và worker/connection model hiện tại | Selected |
+| CI/CD | Azure DevOps (TFS) + immutable artifact promotion | Có quality/security gates và không rebuild giữa environment | Manual deployment bị loại do thiếu repeatability/audit | Selected |
+| Secret/encryption | AWS Secrets Manager + KMS | Central lifecycle, workload access, encryption và audit | Secret trong ConfigMap/repo/image bị cấm | Selected |
+| Media upload/storage | VHM Application → VHM BFF/Media Upload API (xin presign, submit manifest) và VHM Application → S3 (media bytes) → Media Upload Finalizer | VHM BFF không proxy media bytes; VHM sở hữu lifecycle cho mọi pass/fail | Backend sync từ provider không được triển khai trong phiên bản này; mọi thay đổi cần ADR mới | Selected |
+| Media cryptography | S3 SSE-KMS cho object at rest; AES-256-GCM/KMS cho object reference/path lưu trong DB | Private object storage và authenticated encrypted reference; plaintext path chỉ transient trong trusted service | Application-encrypt toàn object tăng I/O/complexity và chưa phải contract dev hiện tại | Selected |
+| Manual Review delivery | GET trả encrypted refs; bounded POST reveal trả short-lived presigned S3 GET URL qua Private File Service và scoped cache | Platform-neutral role/assignment/object binding và PII-safe access audit | Gateway streaming kiểm soát mạnh hơn nhưng không phải contract hiện tại; residual bearer-URL risk giảm bằng expiry/scope/cache controls | Selected with controls |
+| Observability | Micrometer, Prometheus, Grafana, APM, Fluentd, Elasticsearch | Bao phủ metric/log/trace và error funnel theo channel/journey | Vendor-specific telemetry chỉ được dùng nếu vẫn bảo đảm masking/retention | Selected |
+| Resilience | Resilience4j + streaming HTTP client | Timeout, circuit breaker, bounded retry trước body và backpressure cho Provider Adapter | Transparent retry media bị cấm vì có thể gửi lặp/ghép sai attempt | Selected |
+| Region | AWS Singapore (`ap-southeast-1`) — V-App | Bám hạ tầng đã xác định trong solution baseline | Data residency/cross-border vẫn là Data Privacy approval gate | Selected pending privacy evidence |
+
+## 5.1 ADR Log
+
+Các quyết định kiến trúc chi tiết được lập chỉ mục tại [Appendix D — ADR Log](#d-adr-log).
+ADR là record quản trị riêng; bảng trong tài liệu này chỉ là index/rationale summary.
+
+# 6. Integration Architecture
+
+## 6.1. Danh sách Interfaces
 
 | **ID** | **Interface** | **Consumer → Provider** | **Mode** | **Mục đích/dữ liệu** | **Data & security baseline** | **L3 artefact** |
 | --- | --- | --- | --- | --- | --- | --- |
 | INT-01 | Session Lifecycle | VHM Application → VHM BFF → VHM eKYC Service | Synchronous control-plane | Tạo/đọc session, bootstrap, retry, consent và business context | Confidential/PII reference; user authentication và object authorization | VHM API Specification |
 | INT-02 | SDK Data-plane | eKYC SDK → VHM BFF → VHM eKYC Service → eKYC Provider Backend | Synchronous streaming | Init, OCR và liveness; document/biometric media chỉ transit | Restricted; VHM SDK token, workload/provider authentication, `MEDIA-01` và `DATA-01` | SDK Proxy/Provider Integration Contract |
 | INT-03 | Client Lifecycle Event | VHM Application → VHM BFF → VHM eKYC Service | Idempotent event/command | Started, cancelled và client error phục vụ lifecycle/UX; media-bearing submit thuộc INT-10 | Sensitive metadata; user authentication và session/run binding; không phải provider result hoặc final outcome | Mobile/Web Lifecycle Specification + VHM API Specification |
-| INT-04 | Callback Authentication | eKYC Provider Backend → VHM IAM | Synchronous control-plane | Lấy short-lived access token theo approved callback authentication contract | Secret; client credential, scope/environment binding và rotation theo mục 7.1 | Callback Security Contract |
+| INT-04 | Callback Authentication | eKYC Provider Backend → VHM IAM | Synchronous control-plane | Lấy short-lived access token theo approved callback authentication contract | Secret; client credential, scope/environment binding và rotation theo mục 9.1 | Callback Security Contract |
 | INT-05 | Provider Result Callback | eKYC Provider Backend → callback endpoint của VHM eKYC Service | Asynchronous callback | Truyền provider OCR/eKYC result server-to-server; không nhận media | Restricted result/PII; authentication, binding, replay/dedupe và durable receive | Callback API Specification |
 | INT-06 | Result Reconciliation | VHM eKYC Service → eKYC Provider Backend | Scheduled synchronous query | Get Result khi callback quá SLA hoặc session treo | Restricted; provider credential, bounded retry, quota guard và retention deadline | Provider Get Result Contract |
 | INT-07 | Result Query | VHM Application → VHM BFF → VHM eKYC Service | Synchronous query | Trả trạng thái, next action và masked Canonical Result | Restricted; object authorization, field allowlist, masking và access audit | Result API Specification |
@@ -996,7 +942,7 @@ commit `mediaStatus=READY` và gọi lại `evaluateFinalization()` trong transa
 | INT-11 | Manual Review List | Approved review role → `GET /manual-review/verifications/{verificationId}/media` | Privileged synchronous query | Resolve authorized verification/run/business-object/purpose scope; audit successful list và trả encrypted refs/types/logical parts/poses | `REVIEW-01`; active case assignment; no plaintext path/URL/PII in audit | Platform Reveal & Audit Specification |
 | INT-12 | Manual Review Reveal | Approved review role → `POST /manual-review/verifications/{verificationId}/media/reveal` | Privileged synchronous command | Nhận `caseId`, controlled `reasonCode`, optional/required-by-policy opaque `ticketRef`; verify recent step-up, de-duplicate/cap 16, bind all ciphertexts to verification/run refs, decrypt ref/path, prepare short-lived presigned URLs | Whole-call fail on stale step-up/foreign ref; AES-GCM/KMS, cache TTL < URL validity và PII-safe reveal audit; exceptional scope cần Supervisor/JIT approval | Platform Reveal & Audit Specification |
 
-## 4.2. Integration Contract Decisions
+## 6.2. Integration Contract Decisions
 
 | **Decision** | **Architecture requirement** | **Approval concern** |
 | --- | --- | --- |
@@ -1012,10 +958,10 @@ commit `mediaStatus=READY` và gọi lại `evaluateFinalization()` trong transa
 | Manual review delivery | GET list trả encrypted refs; POST reveal bind/decrypt toàn bộ refs rồi trả short-lived presigned GET URL từ Private File Service | URL là bearer capability: expiry ngắn, không cache/log URL ngoài controlled cache; audit trước response |
 | Compatibility | Mobile/Web SDK version và provider contract được pin, contract-test và rollout có kiểm soát | Tránh breaking change theo channel/version |
 
-Chi tiết callback token/signing/rotation thuộc mục 7.1; timeout, retry và backlog
-recovery thuộc mục 6.8 và 8.2.
+Chi tiết callback token/signing/rotation thuộc mục 9.1; timeout, retry và backlog
+recovery thuộc mục 13 và 12.2.2–12.2.4.
 
-## 4.3. Canonical Result Model
+## 6.3. Canonical Result Model
 
 | **Nhóm thông tin** | **Nội dung** | **Nguyên tắc sử dụng** |
 | --- | --- | --- |
@@ -1030,7 +976,7 @@ Provider result phải được normalize về Canonical Result trước khi lư
 cho consumer. `ocrOutcome` và `ekycOutcome` luôn tách riêng; tập field, schema,
 masking và reason-code mapping phải được version hóa và phê duyệt theo purpose.
 
-## 4.4. Outcome Mapping Baseline
+## 6.4. Outcome Mapping Baseline
 
 | **Condition** | **Lifecycle status** | **Final outcome** | **Architectural behavior** |
 | --- | --- | --- | --- |
@@ -1044,11 +990,97 @@ masking và reason-code mapping phải được version hóa và phê duyệt th
 Fixed decision mapping, threshold, canonical reason catalogue và UX message phải
 được Product/Risk/Architecture phê duyệt, version hóa và contract-test.
 
-# **5. Data Flow & Business Flow**
+# 7. Data Architecture & Data Flow
 
-## **5.1. Data Flow Diagram tổng quát**
+## 7.1 Data Model
 
-### 5.1.1. Control-plane VHM
+### 7.1.1. Logical Data Ownership (L2)
+
+```mermaid
+flowchart TB
+    subgraph CONSENT["VHM Consent System"]
+        CONSENT_DATA["Consent Evidence"]:::owned
+    end
+    subgraph EKYC_SERVICE["VHM eKYC Service — System of Record"]
+        SESSION["Verification Session<br/>Run / State · opaque business/subject refs"]:::owned
+        RESULT["Canonical Result<br/>Fixed Fields"]:::sensitive
+        INBOX["Encrypted Callback Inbox<br/>TTL"]:::sensitive
+        MANIFEST["Media Manifest / Review Case<br/>opaque media refs · state"]:::sensitive
+        HISTORY["State / Access History"]:::owned
+    end
+    subgraph MEDIA_VAULT["VHM S3 Media Vault"]
+        MEDIA["Private S3 Media Objects<br/>document · direct face · liveness"]:::sensitive
+    end
+    subgraph PROVIDER["eKYC Provider Backend (external)"]
+        PROVIDER_DATA["Document / Selfie / Liveness Media<br/>Raw Provider Result"]:::sensitive
+    end
+
+    SESSION -.->|"consentRef"| CONSENT_DATA
+    RESULT -.->|"verificationId"| SESSION
+    INBOX -.->|"verificationId"| SESSION
+    HISTORY -.->|"verificationId"| SESSION
+    MANIFEST -.->|"verificationId/runId"| SESSION
+    MEDIA -.->|"mediaId"| MANIFEST
+    PROVIDER_DATA -.->|"providerSessionId"| SESSION
+
+    classDef owned fill:#2d4a3e,stroke:#5fb37a,color:#fff;
+    classDef sensitive fill:#5a2d2d,stroke:#d96f6f,color:#fff;
+```
+
+| **Chủ sở hữu/System of Record** | **Dữ liệu sở hữu** | **Năng lực lưu trữ** | **Đặc tính bắt buộc** |
+| --- | --- | --- | --- |
+| VHM Consent System | Consent evidence | Consent-owned storage | Platform lưu reference/version/time phục vụ audit. |
+| VHM eKYC Service | Session, run, state, Canonical Result, media manifest/review case, inbox và history | PostgreSQL + encrypted inbox TTL | Transactional, idempotent, masking, retention và audit. |
+| VHM S3 Media Vault | Purpose-approved document/direct-face/liveness media objects | Private S3 + SSE-KMS; AES-GCM-encrypted object reference lưu tại PostgreSQL | VHM-owned; no public access/raw path; controlled reveal/presign, policy lifecycle và purge evidence. |
+| eKYC Provider Backend | Media SDK processing copy và raw provider result | Provider-managed storage | Provider retention/deletion vẫn theo hợp đồng; không phải source phục hồi media VHM trong happy path. |
+
+`businessRef/subjectRef` là opaque context đã được BFF authorize trước khi gửi VHM eKYC Service;
+VHM eKYC Service chỉ lưu reference trong session và không tạo FK vật lý tới dữ liệu nghiệp vụ.
+Các cạnh nét đứt là tham chiếu logic bằng ID, không phải FK vật lý xuyên system.
+
+### 7.1.2. Logical ERD (L2)
+
+```mermaid
+erDiagram
+    CONSENT_EVIDENCE ||--o{ VERIFICATION_SESSION : authorizes
+    VERIFICATION_SESSION o|--o{ VERIFICATION_SESSION : retry_chain
+    VERIFICATION_SESSION ||--o| VERIFICATION_RUN : executes
+    VERIFICATION_SESSION ||--o{ CALLBACK_INBOX : receives
+    VERIFICATION_SESSION ||--|{ STATE_ACCESS_HISTORY : records
+    VERIFICATION_SESSION ||--o{ RECONCILIATION_TASK : schedules
+    VERIFICATION_RUN ||--o| CANONICAL_RESULT : produces
+    CANONICAL_RESULT ||--o{ VERIFICATION_CHECK : contains
+    VERIFICATION_RUN ||--o{ MEDIA_ASSET : contains
+    VERIFICATION_SESSION ||--o{ MANUAL_REVIEW_CASE : may_require
+    MANUAL_REVIEW_CASE ||--o{ AUDIT_LOG : records_access
+    MANUAL_REVIEW_CASE ||--o{ MANUAL_REVIEW_DECISION : records
+    VERIFICATION_SESSION ||--o{ IV_HISTORY : records_decision_lifecycle
+```
+
+| **Logical entity** | **Vai trò trong mô hình** | **Cardinality/invariant chính** |
+| --- | --- | --- |
+| `CONSENT_EVIDENCE` | Bằng chứng consent do VHM Consent System sở hữu | Một consent có thể authorize nhiều session; VHM eKYC Service chỉ lưu logical reference |
+| `VERIFICATION_SESSION` | Aggregate root cho một attempt OCR/eKYC; sở hữu lifecycle status và completion milestones | Một session có tối đa một active run; lifecycle enum tách final outcome; whole-attempt retry tạo session mới và nối retry chain |
+| `VERIFICATION_RUN` | Vòng chạy SDK gắn với session | Chỉ được tạo khi session bắt đầu; không dùng lại cho retry session mới |
+| `CALLBACK_INBOX` | Durable ingress cho provider callback | Một session có thể nhận nhiều event do retry/duplicate/out-of-order; xử lý phải idempotent |
+| `CANONICAL_RESULT` | Kết quả provider đã chuẩn hóa cùng final outcome/reason sau finalization | Tối đa một provider result hiện hành; chỉ gán final outcome khi session `COMPLETED` và không bị client/callback trễ đảo ngược |
+| `VERIFICATION_CHECK` | Kết quả document, liveness, face match và quality check đã chuẩn hóa | Thuộc Canonical Result; không chứa media hoặc raw provider payload |
+| `MEDIA_ASSET` | Manifest và lifecycle của một document/direct-face/liveness object | Unique trên `(runId, mediaType, logicalPart)`; lưu checksum, object version, AES-GCM-encrypted reference, retention metadata và state; không lưu binary/plaintext path trong DB |
+| `MANUAL_REVIEW_CASE` | Case purpose-bound được assign cho reviewer | Không tự cấp quyền media; assignment và case state được revalidate mỗi request |
+| `MANUAL_REVIEW_DECISION` | Quyết định hậu kiểm và lý do | Append-only; không sửa provider result; override cần policy/approval riêng |
+| `AUDIT_LOG` | Access audit cho list/reveal media | Append-only `VIEW_IDENTITY_MEDIA`/`REVEAL_IDENTITY_MEDIA`, entity `IDENTITY_VERIFICATION`, `verificationId`, actor/role, case/purpose/reason/step-up context, request/outcome/time và media types/logical parts/poses/count; không chứa ciphertext/path/URL/PII |
+| `IV_HISTORY` | Decision lifecycle của verification | Lưu verified/auto-failed/manual decision events; tách khỏi media access audit |
+| `STATE_ACCESS_HISTORY` | Lịch sử lifecycle, milestone và final-outcome transition có audit | Append-only; một session có một hoặc nhiều record lịch sử |
+| `RECONCILIATION_TASK` | Lịch khôi phục result khi callback quá SLA/session treo | Có thể có nhiều lần chạy bounded; không polling liên tục |
+
+ERD biểu diễn quan hệ logic và invariant giữa các entity. Binary media không nằm
+trong PostgreSQL: `MEDIA_ASSET` chỉ giữ manifest/AES-GCM-encrypted object reference,
+còn object nằm trong private VHM Media Vault. Raw provider payload không được dùng thay
+media manifest hoặc lưu dài hạn.
+
+## 7.2 Data Flow Diagram
+
+### 7.2.1. Control-plane VHM
 
 ```mermaid
 flowchart TB
@@ -1079,7 +1111,7 @@ flowchart TB
 - Provider credential chỉ tồn tại trong VHM eKYC Service/Secret Manager; BFF không nhận credential.
 - Mobile/Web không gọi Provider Get Result API.
 
-### 5.1.2. Data-plane SDK
+### 7.2.2. Data-plane SDK
 
 ```mermaid
 flowchart LR
@@ -1105,8 +1137,218 @@ flowchart LR
 Chart này chỉ mô tả provider-processing data-plane. Durable media persistence
 được tách thành một luồng duy nhất tại mục 2.2.4.1 để tránh lặp và giao cắt mũi tên.
 
+## 7.3 Data Privacy & PII
 
-## 5.2. Data Flow quan trọng
+### 7.3.1 PII Declaration and Classification
+
+- [ ] Không xử lý dữ liệu cá nhân.
+- [x] **Có xử lý dữ liệu cá nhân**, bao gồm dữ liệu cơ bản và dữ liệu sinh trắc
+  học/định danh nhạy cảm trong hành trình `FULL_EKYC`.
+
+| **Loại dữ liệu** | **Phân nhóm thiết kế** | **Có xử lý?** | **Phạm vi** |
+| --- | --- | --- | --- |
+| Họ và tên | Dữ liệu cá nhân cơ bản | Có | Fixed OCR field nếu được Product/Data Privacy phê duyệt. |
+| Ngày sinh | Dữ liệu cá nhân cơ bản | Có | Fixed OCR field, mã hóa/masking theo purpose. |
+| Giới tính | Dữ liệu cá nhân cơ bản | Có điều kiện | Chỉ nhận nếu nằm trong approved fixed result set; mặc định không yêu cầu. |
+| Địa chỉ/nơi cư trú/quê quán | Dữ liệu cá nhân cơ bản | Có | Fixed OCR field theo use case; không dùng ngoài purpose. |
+| Số giấy tờ định danh | Dữ liệu cá nhân cơ bản; field tác động cao trong thiết kế | Có | Mã hóa, mask mặc định và object-level authorization. |
+| Opaque subject/business/device-linked ID | Dữ liệu cá nhân nếu liên kết được cá nhân | Có | Dùng correlation/authorization; không nhúng PII vào ID. |
+| Ảnh giấy tờ, direct-face/selfie, liveness video/frame | Dữ liệu cá nhân nhạy cảm/sinh trắc học | Có transit trên provider data-plane và lưu bền tại VHM cho approved purpose/manual review | Private VHM S3 Media Vault, SSE-KMS; encrypted reference, controlled reveal và policy-driven purge. |
+| Liveness/face-match status và score | Dữ liệu liên quan sinh trắc học | Có | VHM chỉ lưu canonical status/score tối thiểu theo policy được duyệt. |
+| Chủng tộc, quan điểm chính trị, tôn giáo, sức khỏe | Dữ liệu cá nhân nhạy cảm | Không | Không thuộc contract OCR/eKYC này. |
+| Điện thoại/email/payment data | Dữ liệu cá nhân/nghiệp vụ | Không trong capability này | Dữ liệu nằm ngoài VHM eKYC Service và không được đưa vào SDK result contract. |
+
+Phân loại pháp lý cuối cùng, lawful basis và DPIA/DPA phải được Data Privacy/Legal
+phê duyệt; mã hóa không làm dữ liệu mất tính chất dữ liệu cá nhân.
+
+| **Nhóm phê duyệt** | **Data thuộc nhóm** | **Control tối thiểu** | **Approval status** |
+| --- | --- | --- | --- |
+| Dữ liệu cá nhân cơ bản | Họ tên, ngày sinh, giới tính, địa chỉ và opaque reference liên kết được cá nhân | Purpose limitation, field allowlist, encryption, masking, object authorization | `PENDING — Data Privacy/Legal` |
+| Field định danh tác động cao | Số giấy tờ định danh | Field encryption, mask mặc định, unmask approval/audit, retention 7.4.4 | `PENDING — Data Privacy/Legal` |
+| Dữ liệu nhạy cảm/sinh trắc | Ảnh giấy tờ, selfie/direct-face, liveness video/frame và face/liveness result | Consent/purpose registry, private S3/SSE-KMS, AES-GCM-encrypted ref, role/assignment-scoped reveal audit, versioned retention/purge và provider DPA/DPIA | `PENDING — Data Privacy/Legal/ANBM` |
+| Ngoài contract | Chủng tộc, chính trị, tôn giáo, sức khỏe, payment, phone/email | Reject/redact; không thêm field nếu chưa đổi fixed contract và privacy approval | Không được xử lý |
+
+### 7.3.2 Data Inventory
+
+| **Data** | **Nguồn** | **Purpose** | **VHM persistence** | **Provider** | **Retention** |
+| --- | --- | --- | --- | --- | --- |
+| Business/subject opaque ref | VHM BFF | Correlation/authorization | Có | External ref nếu cần | Tối đa 90 ngày sau terminal |
+| Consent ref/version/time | VHM Application/Consent | Legal basis/audit | Chỉ reference | Theo contract | Consent System policy; link evidence bắt buộc |
+| Document fields | eKYC Provider Backend | OCR/autofill/verification | Fixed fields, encrypted/masked | Có xử lý | Tối đa 90 ngày sau terminal |
+| Document image front/back | SDK | OCR/verification, manual review và approved dispute/evidence purpose | Private VHM S3; encrypted ref trong DB | Có xử lý | VHM versioned retention class; duration ngoài TDD. Provider theo approved contract |
+| Direct-face/selfie/video/frame | SDK | Liveness/face matching, manual review và approved dispute/evidence purpose | Private VHM S3; encrypted ref trong DB | Có xử lý | VHM versioned retention class; duration ngoài TDD. Provider theo approved contract |
+| Liveness/face status | eKYC Provider Backend | Identity decision | Canonical status tối thiểu | Có xử lý | Tối đa 90 ngày sau terminal |
+| Provider session/event refs | eKYC Provider Backend | Correlation/dedupe | Có | Có | Tối đa 90 ngày sau terminal |
+| Callback payload | eKYC Provider Backend | Async normalization | Encrypted inbox; không lưu media | N/A | Processed 24 giờ; failed/quarantine 7 ngày |
+| App/SDK/channel metadata | Client | Compatibility/operations | Tối thiểu | SDK-dependent | Masked log tối đa 30 ngày |
+| Media access audit | VHM Reveal API | Traceability/compliance | PII-safe type/part/pose only; không ciphertext/path/URL/media | Không cần | Theo approved audit standard |
+| Decision history | VHM | Verified/auto-failed/manual lifecycle | `iv_histories`; không lưu raw payload/media | Không cần | Theo approved decision/audit standard |
+
+## 7.4 Data Privacy
+
+### 7.4.1 Data Privacy Processing Summary
+
+| **Thông tin yêu cầu** | **Baseline của giải pháp** | **Owner/status** |
+| --- | --- | --- |
+| Chủ thể dữ liệu | Người dùng VHM thực hiện OCR/eKYC trên Mobile/Web | Product/Data Privacy — xác nhận theo use case |
+| Vị trí VHM xử lý/lưu trữ | AWS Singapore `ap-southeast-1` | `PENDING` evidence/sign-off theo matrix dưới đây |
+| Vị trí eKYC Provider Backend/subprocessor | Theo DPA và data-location evidence của eKYC Provider Backend | Legal/Data Privacy — go-live blocker |
+| Số lượng chủ thể/bản ghi | Chưa có forecast — `BLOCKING` | Product/Ops — worksheet 11.1.2 |
+| Tổng dung lượng lưu trữ | Chưa có media mix/versioned retention policy/capacity input — `BLOCKING` | Cloud/Ops/Data Privacy |
+| Truyền sang tổ chức khác | Có — eKYC Provider Backend xử lý document/liveness/face data | DPA, purpose, subprocessor và incident SLA bắt buộc |
+| Luồng vị trí | Provider data-plane và upload control-plane/manifest qua BFF/eKYC Service; durable media bytes client→VHM S3 bằng presigned request; callback/result qua service; authorized reveal qua Private File Service | Architecture/Data Privacy review |
+| Dữ liệu thu thập | Front/back document, direct-face/selfie/liveness video/frame và fixed canonical fields | Media type/fixed field set: `PENDING` Product/Data Privacy approval |
+| Mục đích | OCR/autofill, xác minh danh tính, manual review và purpose cụ thể trong approved registry/consent | Product/Legal approval; không dùng generic “nhiều mục đích” |
+| Mã hóa lưu trữ | RDS/KMS, field/inbox AES-GCM, S3 SSE-KMS và AES-GCM-encrypted object references | ANBM approval |
+| Quản lý/xoay khóa | AWS KMS/Secrets Manager; rotation period theo approved standard | ANBM/Cloud — standard version `PENDING` |
+| Mã hóa đường truyền | TLS 1.2 minimum, TLS 1.3 preferred; mTLS nơi contract hỗ trợ/yêu cầu | ANBM/Integration |
+| Masking | Document number `******1234`; field khác theo role/purpose matrix mục 9.1.4 | Data Privacy/Product approval |
+| Retention và tự động xóa | Baseline và purge mechanism tại mục 7.4.4 | Data Privacy/Product/Ops sign-off bắt buộc |
+| Data-subject request | Export/delete/anonymize qua BFF-authorized subject/business mapping và provider coordination | Data Privacy/Product/eKYC Provider Backend |
+| Anonymization | Chỉ giữ aggregate telemetry không định danh; canonical record xử lý theo retention/legal hold | Data Privacy/Ops |
+
+### 7.4.2 DPIA and Data-Residency Evidence Matrix
+
+Việc cấu hình resource ở `ap-southeast-1` không tự động chứng minh data residency.
+Các evidence dưới đây phải được đính kèm và ký duyệt; mọi dòng `PENDING` chặn
+`APPROVED` và production go-live.
+
+| **Phạm vi** | **Residency baseline** | **Evidence bắt buộc** | **Owner** | **Status** |
+| --- | --- | --- | --- | --- |
+| EKS runtime, RDS primary/standby, Redis | AWS Singapore `ap-southeast-1` | IaC plan, deployed-resource inventory và AWS Config/export | Cloud/Ops | `PENDING` |
+| RDS backup/PITR/snapshot/DR copy | Singapore; cross-region chỉ khi có approval riêng | Backup policy, KMS key region và restore evidence | DBA/Cloud/Data Privacy | `PENDING` |
+| S3 Intake/Media Vault/replica/version | AWS Singapore `ap-southeast-1`; cross-region/account chỉ theo approved DR/privacy policy | Bucket inventory/config, object region, KMS key, lifecycle/version/replication và access-analyzer evidence | Cloud/ANBM/Data Privacy | `PENDING — GO-LIVE BLOCKER` |
+| Logs, APM, metrics và audit | Singapore hoặc approved VHM observability location | Sink/index/bucket region, retention và field allowlist | Ops/ANBM/Data Privacy | `PENDING` |
+| eKYC Provider Backend processing/media/result | Theo signed DPA; không suy đoán từ endpoint | Provider data-flow, region, subprocessor list, backup/DR location và deletion SLA | Legal/Data Privacy/Provider | `PENDING — GO-LIVE BLOCKER` |
+| Provider/support remote access | Chỉ approved location/role/purpose | Support-access matrix, privileged-access audit và incident SLA | Legal/ANBM/Provider | `PENDING — GO-LIVE BLOCKER` |
+| Cross-border transfer | Chỉ theo lawful basis và approved transfer mechanism | Legal assessment/DPA annex và Data Privacy sign-off | Legal/Data Privacy | `PENDING — GO-LIVE BLOCKER` |
+| DPIA | Bao phủ Mobile/Web, SDK data-plane, callback, reconciliation, backup và data-subject request | DPIA document ID/link, risk treatment và approver/sign-off date | Data Privacy/Legal/ANBM | `PENDING — GO-LIVE BLOCKER` |
+
+### 7.4.3 Data Lifecycle DFD — Durable Media & Controlled Reveal
+
+```mermaid
+flowchart LR
+    APP(["Người dùng qua<br/>VHM Application"]):::entity
+    REVIEWER(["Authorized Review Caller"]):::entity
+    CAPTURE(("P1 · Mobile/Web SDK Capture")):::process
+    BFF(("P2 · VHM BFF<br/>auth / bounded stream")):::process
+    UPLOAD(("P6 · Media Upload Control<br/>& Finalizer")):::process
+    REVEAL(("P7 · Controlled Media Reveal<br/>authorize · decrypt ref · presign")):::process
+    MEDIA_META[("D3 · Media Metadata DB<br/>AES-GCM encrypted refs")]:::sensitive
+    MEDIA[("D4 · Private VHM S3 Media Vault<br/>SSE-KMS media objects")]:::sensitive
+    AUDIT[("D5 · audit_logs / iv_histories")]:::sensitive
+
+    APP -->|"1. consent-bound capture data"| CAPTURE
+    CAPTURE <-->|"2. upload control metadata"| BFF
+    BFF <-->|"3. authorized slot / manifest control"| UPLOAD
+    CAPTURE ==>|"4. exact presigned PUT/multipart<br/>MEDIA BYTES · pass/fail"| MEDIA
+    UPLOAD -->|"5. validate object / checksum / version"| MEDIA
+    UPLOAD -->|"6. sealed manifest +<br/>AES-GCM encrypted ref"| MEDIA_META
+    UPLOAD -.->|"media lifecycle events"| AUDIT
+    REVIEWER <-->|"7. GET list / POST reveal<br/>encrypted refs hoặc short-lived URL"| REVEAL
+    MEDIA_META -->|"8. bound encrypted refs + metadata"| REVEAL
+    REVEAL -.->|"9. PII-safe VIEW / REVEAL events"| AUDIT
+    REVIEWER ==>|"10. short-lived presigned GET<br/>MEDIA BYTES"| MEDIA
+
+    classDef entity fill:#3a3320,stroke:#d9b84a,color:#fff;
+    classDef process fill:#1f3a5f,stroke:#4a90d9,color:#fff;
+    classDef sensitive fill:#5a2d2d,stroke:#d96f6f,color:#fff;
+```
+
+- Sơ đồ này chỉ tập trung vào durable media và manual-review reveal. Provider
+  processing data-plane/callback đã được mô tả tại mục 2.2.4 và tuân thủ
+  `MEDIA-01`; durable upload/reveal tuân thủ `MEDIA-STORE-01`, `DATA-01` và
+  `REVIEW-01`.
+- P6 và P7 là hai logical module/security boundary trong VHM eKYC Service, không
+  mặc định là hai microservice. P6 có write/finalize capability; P7 có privileged
+  read/reveal capability. Media bytes không đi qua BFF, P6 hoặc P7.
+- S3 chỉ giữ media object mã hóa SSE-KMS. PostgreSQL Media Metadata giữ manifest
+  và AES-GCM-encrypted object reference; plaintext path chỉ tồn tại transiently
+  trong P7 sau authorization/binding.
+- Provider media/raw result retention tối đa `24 giờ` và phải đủ cho reconciliation.
+- Callback payload chỉ lưu mã hóa tạm thời để async process.
+- Canonical sensitive field chỉ lưu nếu nằm trong fixed approved result set.
+
+### 7.4.4 Retention and Purge Policy
+
+Các giá trị sau là technical maximum baseline. Data Privacy/Legal có quyền yêu cầu
+thời hạn ngắn hơn. Mọi yêu cầu kéo dài phải có purpose, lawful basis, owner,
+approval và cập nhật DPIA/DPA trước khi thay đổi cấu hình.
+
+| **Dữ liệu** | **Retention tính từ** | **Thời hạn tối đa** | **Purge mechanism** | **Owner/approval** |
+| --- | --- | --- | --- | --- |
+| Verification session/run và Canonical Result fixed fields | `terminalAt` | `90 ngày` | Xóa encrypted sensitive fields/check details; giữ tombstone tối thiểu không chứa PII để chống xử lý lặp | Product + Data Privacy/Legal — phải ratify trước go-live |
+| State/access history có PII reference | `terminalAt` | `90 ngày` | Xóa/anonymize subject/business reference; giữ aggregate không định danh | Product + Data Privacy/Legal |
+| Callback Inbox payload — `PROCESSED` | `processedAt` | `24 giờ` | Batch hard-delete ciphertext sau khi result/history commit thành công | Ops + Data Privacy |
+| Callback Inbox payload — `FAILED/QUARANTINED` | `lastFailedAt` | `7 ngày` | Retry có giới hạn, export troubleshooting bị cấm; hết hạn hard-delete và ghi purge audit | Ops + ANBM + Data Privacy |
+| Callback event metadata/hash không chứa PII | `receivedAt` | `90 ngày` | Batch delete theo partition/date; terminal guard vẫn là lớp chống duplicate cuối | Ops/ANBM |
+| Masked application/security log | `eventTime` | `30 ngày` | Index lifecycle deletion; không archive body/PII | Ops/ANBM/Data Privacy |
+| Audit record không chứa payload/media | `eventTime` | `365 ngày` | Delete/anonymize theo audit standard; extension cần compliance approval | ANBM/Audit/Data Privacy |
+| VHM Media Vault object + encrypted reference | Theo terminal/review/legal event của approved policy class | Không hard-code trong TDD; `retainUntil` được tính từ versioned purpose-bound policy | Delete object/version/derived artifact/encrypted ref; expire cached/presigned access; legal hold cần owner/reason/expiry | Product + Legal/Data Privacy + ANBM/Ops — go-live policy gate |
+| S3 Intake/orphan/incomplete multipart | Upload-session creation/last part | Short operational window theo approved upload policy; không dùng làm business retention | Abort multipart, delete orphan/unsubmitted object và ghi purge metric/audit | Cloud/Ops/ANBM |
+| eKYC Provider Backend media/raw result | Provider completion | Theo signed provider contract/DPA | Provider lifecycle/deletion API hoặc contract evidence; VHM copy tuân thủ policy riêng | Legal/Data Privacy/Provider — DPA sign-off bắt buộc |
+| RDS automated backup/PITR chứa record chưa purge | Backup creation | `35 ngày` | Hết backup window tự xóa; restore phải chạy purge/tombstone replay trước mở truy cập | DBA/Ops/Data Privacy |
+
+Purge implementation bắt buộc:
+
+- Job chạy tối thiểu mỗi ngày, batch `<= 500` rows, dùng lease/`SKIP LOCKED`, có
+  rate limit và không khóa bảng dài.
+- Eligibility dùng server timestamp và approved policy version; legal hold loại
+  record khỏi purge nhưng phải có owner, reason và expiry.
+- Callback payload purge chỉ chạy khi canonical transaction đã commit hoặc record
+  đã hết quarantine window; không giữ ciphertext để debug vô thời hạn.
+- Canonical purge xóa field/check nhạy cảm và subject reference; tombstone chỉ giữ
+  `verificationId`, terminal status, policy version, purge time và non-PII hash cần
+  cho idempotency/audit.
+- Provider deletion phải có request/response hoặc contractual lifecycle evidence;
+  lỗi deletion vào retry queue và alert theo SLA.
+- Metrics: eligible/deleted/failed rows, oldest eligible age, legal-hold count và
+  provider-deletion backlog. Purge failure quá `24 giờ` phải alert Data Privacy/Ops.
+- Restore từ backup phải chạy retention sweep trước khi cho application traffic;
+  backup expiry không được dùng để kéo dài live-data retention.
+- Media purge phải xóa S3 current/noncurrent versions, derived object, encrypted
+  DB reference và cached reveal entry; presigned URL còn hiệu lực phải được giảm
+  rủi ro bằng short validity/bucket emergency deny runbook.
+- Mỗi media record lưu `retentionPolicyId`, `retentionClass`, `retainUntil` và
+  legal-hold state. Duration nằm trong external approved policy, không hard-code
+  hoặc suy ra từ generic “manual review”.
+
+### 7.4.5 Data Subject Request
+
+- Xác minh requester và scope trước export/delete.
+- Tìm theo opaque subject/business mapping đã được BFF authorize.
+- Export chỉ field được phép, đã mask theo legal/privacy rule.
+- Delete/anonymize session/result theo retention/legal hold và ghi audit.
+- Xóa Media Vault object/version/encrypted reference theo retention/legal hold và
+  invalidate reveal cache; không export raw URL trong data-subject response.
+- Gửi provider deletion request khi contract/purpose yêu cầu.
+- Backup deletion xử lý theo backup expiry/tombstone policy đã phê duyệt.
+
+### 7.4.6 Access Controls
+
+- Service access theo least privilege và business-object scope.
+- DBA không mặc định đọc plaintext sensitive fields.
+- Unmask và bulk export cần elevated role, reason, approval/audit theo policy.
+- Production support không được xem raw callback/media; chỉ approved Manual Review
+  role trong assigned object scope được list/reveal media theo `REVIEW-01`.
+- Periodic access review và key/secret rotation evidence bắt buộc.
+
+## 7.5 Data Stores and Ownership
+
+| **Thành phần** | **Công nghệ** | **Dữ liệu** | **Control** |
+| --- | --- | --- | --- |
+| Verification DB | PostgreSQL Multi-AZ | Session, run, checks, fixed fields, result, history, callback inbox | TLS, KMS, PITR, RBAC |
+| Redis | Redis | Rate limit, replay cache và ephemeral state | TTL, private network; không source of truth |
+| Secret storage | AWS Secrets Manager/KMS | Provider credential, callback token/client-secret refs, encryption keys | Rotation, workload identity, audit |
+| Application memory | Process memory | VHM SDK session token và bounded network chunks | Clear token sau completion/cancel/expiry |
+| Provider data-plane media | Transient tại BFF/VHM eKYC Service | Document image, selfie, liveness video/frame gửi provider | `MEDIA-01`; không persist/body log/disk spool trong application path |
+| S3 Intake | Amazon S3 + SSE-KMS | Client-uploaded media chờ validate/finalize | Private, exact presigned write, no client read/list, short orphan lifecycle |
+| VHM Media Vault | Amazon S3 + SSE-KMS | Document front/back, direct-face image và liveness video/frame objects | Workload-only access, versioned retention policy, no public/raw path; short-lived presigned GET only after Reveal API |
+| Media/review metadata | PostgreSQL | Manifest, checksum, object version, AES-GCM-encrypted object ref, retention metadata, review/decision/audit links | Transactional, opaque/encrypted refs, no plaintext path/media |
+
+# 8. Business Flow Diagrams
+
+## 8.1 Critical Business Flows and Sequence Diagrams
 
 | **Actor/System thực hiện** | **Hành động nghiệp vụ** | **Thành phần thực hiện** | **Mô tả** |
 | --- | --- | --- | --- |
@@ -1121,7 +1363,7 @@ Chart này chỉ mô tả provider-processing data-plane. Durable media persiste
 | VHM Application | Tra cứu và sử dụng kết quả | BFF + Result API | Nhận fixed, authorized, masked outcome/next action theo purpose. |
 | Operations | Khôi phục callback thất lạc | Reconciliation Worker | Chỉ Get Result khi callback quá SLA/session treo, theo bounded backoff/quota. |
 
-### **5.2.1. Khởi tạo session — Sequence L2**
+### **8.1.1. Khởi tạo session — Sequence L2**
 
 ```mermaid
 sequenceDiagram
@@ -1147,7 +1389,7 @@ Create-session failure rules:
 - DB/internal failure không được trả bootstrap nếu session chưa persist durable.
 - VHM SDK session token ngắn hạn, bind session/run/journey/channel/environment.
 
-### **5.2.2. OCR_ONLY trên Mobile/Web — Sequence L2**
+### **8.1.2. OCR_ONLY trên Mobile/Web — Sequence L2**
 
 ```mermaid
 sequenceDiagram
@@ -1207,7 +1449,7 @@ Two-side processing là hành vi cố định theo contract của SDK/provider v
 Attempt sau phải capture lại từ đầu; không giữ front/back đã pass để ghép với ảnh
 của attempt khác.
 
-### **5.2.3. FULL_EKYC trên Mobile — Sequence L2**
+### **8.1.3. FULL_EKYC trên Mobile — Sequence L2**
 
 ```mermaid
 sequenceDiagram
@@ -1245,7 +1487,7 @@ sequenceDiagram
     BFF-->>APP: status=COMPLETED + final outcome/nextAction
 ```
 
-### **5.2.4. FULL_EKYC trên Web — Sequence L2**
+### **8.1.4. FULL_EKYC trên Web — Sequence L2**
 
 ```mermaid
 sequenceDiagram
@@ -1287,7 +1529,7 @@ Refresh/reopen/multi-tab phải query backend status. Web không lưu VHM SDK se
 dài hạn và không tự tạo run mới khi lease còn active.
 
 
-### **5.2.5. Callback đến trước client submit — Sequence L2**
+### **8.1.5. Callback đến trước client submit — Sequence L2**
 
 ```mermaid
 sequenceDiagram
@@ -1312,7 +1554,7 @@ media manifest. Không sử dụng last-write-wins; callback và submit cập nh
 milestone độc lập rồi hội tụ tại finalization guard.
 
 
-### **5.2.6. User cancel/client close**
+### **8.1.6. User cancel/client close**
 
 | **Tình huống** | **Client event** | **Backend action** |
 | --- | --- | --- |
@@ -1322,7 +1564,7 @@ milestone độc lập rồi hội tụ tại finalization guard.
 | Mất mạng | Có thể không có event | Session timeout/reconcile theo policy |
 | Provider result đến sau cancel | Late result | Lưu late-result audit; không đảo `status=CANCELLED` |
 
-### **5.2.7. Retry session — Sequence L2**
+### **8.1.7. Retry session — Sequence L2**
 
 ```mermaid
 sequenceDiagram
@@ -1340,7 +1582,7 @@ sequenceDiagram
 Attempt mới không reuse Client UUID, provider session, result, history, token hoặc
 ảnh của attempt cũ.
 
-### **5.2.8. Manual Review media access — Sequence L2**
+### **8.1.8. Manual Review media access — Sequence L2**
 
 ```mermaid
 sequenceDiagram
@@ -1396,7 +1638,7 @@ presigned URL hoặc media content. Cache/presign fallback và error code cụ t
 chi tiết L3, không biểu diễn trong sequence L2. Decision lifecycle
 verified/auto-failed/manual lưu tại `iv_histories`, không trộn với access audit.
 
-## 5.3. Failure Handling Matrix
+## 8.2 Failure Handling Matrix
 
 | **Tình huống** | **Detection** | **Platform state** | **Recovery/User action** | **Ops** |
 | --- | --- | --- | --- | --- |
@@ -1411,7 +1653,7 @@ verified/auto-failed/manual lưu tại `iv_histories`, không trộn với acces
 | Callback schema invalid | Schema validation | Không finalize | Provider sửa contract/payload | High alert |
 | DB lỗi trước durable inbox | Insert failure | Chưa nhận callback | Provider retry | DB alert |
 | DB lỗi sau durable inbox | Worker/inbox status | Giữ inbox pending/failed | Worker reprocess | Backlog alert |
-| Session row lock timeout/deadlock | PostgreSQL `lock_timeout`/SQLSTATE | Rollback, không đổi session/result/manifest | Inbox/submit giữ retryable; worker backoff theo mục 2.5.3–2.5.4 | Lock-timeout/retry alert |
+| Session row lock timeout/deadlock | PostgreSQL `lock_timeout`/SQLSTATE | Rollback, không đổi session/result/manifest | Inbox/submit giữ retryable; worker backoff theo mục 2.4.3–2.4.4 | Lock-timeout/retry alert |
 | Presigned URL hết hạn/chưa upload | S3/client upload result | Giữ media `CREATED/UPLOADING`; không final | Xin upload session mới cho cùng server-issued media slot theo policy | Upload-expiry/failure metric |
 | Upload sai key/type/size/checksum | S3 policy/HeadObject/finalizer | Reject/quarantine media; không final | Client whole-attempt recovery theo error class; không accept arbitrary URL | Security/DLP alert nếu lặp |
 | Upload xong nhưng không submit | Orphan lifecycle/manifest scan | Không gắn media vào result | Resume submit nếu run còn hợp lệ; hết window purge orphan | Orphan count/oldest-age alert |
@@ -1428,7 +1670,7 @@ verified/auto-failed/manual lưu tại `iv_histories`, không trộn với acces
 | Concurrent create | Unique/idempotency guard | Một active session | Trả session hiện hữu/conflict | Metric |
 | Result API access sai scope | Authorization | Không đổi state | `403/404` | Security audit |
 
-## 5.4. Data Normalization
+## 8.3 Data Normalization
 
 - Unicode normalization, trim và collapse whitespace.
 - Họ tên giữ dấu; có `searchValue` riêng nếu use case được phê duyệt.
@@ -1440,421 +1682,13 @@ verified/auto-failed/manual lưu tại `iv_histories`, không trộn với acces
 - Boolean/string parse strict allowlist, không dùng truthy coercion.
 - Không dùng `N/A`, empty string và null như cùng một nghĩa nếu contract không quy định.
 
-# **6. Deployment, Technology & Observability**
+# 9. Security & Compliance Architecture
 
-## 6.1. Environments
+> Security và Data Privacy là approval/go-live gate. ANBM, Data Privacy và Legal phải phê duyệt control/evidence tương ứng.
 
-| **Environment** | **Purpose** | **Availability** | **Infrastructure** | **Internet exposure** | **Data type** | **HA/DR** | **Key differences/constraints** |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| Development | Phát triển và unit/component integration | Theo giờ làm việc/platform standard | VHM non-production AWS/EKS | Không public; egress sandbox theo allowlist | Synthetic only | Không yêu cầu DR | Có thể dùng provider mock; không dùng production credential/data. |
-| SIT | Contract, DB integration, callback và security integration | Theo test window được duyệt | Isolated non-production AWS/EKS | Ingress restricted; provider staging only | Synthetic/masked test data | Restore test theo kế hoạch | Callback key/endpoint riêng; cấu hình gần production. |
-| UAT | Product/UX/Risk/Privacy acceptance trên Mobile và Web | Theo UAT plan | Production-like non-production environment | Restricted tester access | Synthetic hoặc approved masked data | Theo platform non-prod standard | Provider staging; fixed journey/document/profile như production candidate. |
-| Production | Vận hành OCR/eKYC chính thức | Theo SLA/SLO được phê duyệt | AWS Singapore, EKS, RDS/Redis managed services | WAF/API ingress; workload/data private | Production personal data theo approved purpose | Multi-AZ, PITR và DR policy | Provider production endpoint; mọi thay đổi qua approval/canary/rollback. |
+## 9.1 Security Layers
 
-Availability window chi tiết, quyền truy cập và platform-standard version là
-approval input tại Appendix A; không được dùng production data ở non-production
-nếu chưa có phê duyệt Data Privacy bằng văn bản.
-
-## **6.2. Production Deployment Diagram**
-
-```mermaid
-flowchart TB
-    CLIENT(["VHM Mobile / Web<br/>+ eKYC SDK"]):::entity
-    PROVIDER(["eKYC Provider Backend (ext)"]):::entity
-
-    subgraph LZ["AWS Landing Zone — Singapore (ap-southeast-1)"]
-        subgraph ACCOUNT["VHM Production Account"]
-            subgraph VPC["V-App VPC — trust boundary · Multi-AZ"]
-                subgraph AZ["Availability Zone đại diện (×2)"]
-                    subgraph EDGE["DMZ / Public subnet"]
-                        GATEWAY["CDN / WAF / API Gateway<br/>Nginx Ingress"]:::infra
-                    end
-                    subgraph APPZONE["Private subnet — Amazon EKS"]
-                        BFF["VHM BFF<br/>control + streaming ingress"]:::bc
-                        EKYC_SERVICE["VHM eKYC Service<br/>API · SDK proxy adapter · Callback · Workers"]:::bc
-                        UPLOAD_WORKLOAD["P6 Media Upload Control<br/>/ Finalizer"]:::bc
-                        REVEAL_WORKLOAD["P7 Controlled Media Reveal<br/>/ Private File Adapter"]:::bc
-                    end
-                    subgraph DATAZONE["Data subnet — isolated"]
-                        RDS[("eKYC PostgreSQL<br/>RDS Multi-AZ")]:::datastore
-                        REDIS[("ElastiCache Redis<br/>ephemeral only")]:::datastore
-                    end
-                end
-            end
-            subgraph SHARED["Regional shared managed services"]
-                SECRET["Secrets Manager / KMS"]:::infra
-                S3[("S3 Intake / Encrypted Media Vault")]:::datastore
-                OBS["Metrics / Logs / APM"]:::infra
-            end
-        end
-    end
-
-    CLIENT -->|session / SDK / status / result| GATEWAY
-    CLIENT -->|upload session / manifest| GATEWAY
-    CLIENT -->|short-lived exact presigned PUT/multipart| S3
-    PROVIDER -->|provider callback result| GATEWAY
-    GATEWAY -->|route VHM and SDK requests| BFF
-    GATEWAY -->|route provider callback| EKYC_SERVICE
-    GATEWAY -->|route authorized media reveal| REVEAL_WORKLOAD
-    BFF -->|workload identity + bounded stream| EKYC_SERVICE
-    EKYC_SERVICE -->|read/write/claim| RDS
-    EKYC_SERVICE -->|rate/replay state| REDIS
-    EKYC_SERVICE -->|provider credential/key ref| SECRET
-    EKYC_SERVICE -->|verification/result milestone context| UPLOAD_WORKLOAD
-    UPLOAD_WORKLOAD -->|validate/finalize media| S3
-    UPLOAD_WORKLOAD -->|encrypt object reference| SECRET
-    UPLOAD_WORKLOAD -->|manifest + encrypted ref| RDS
-    REVEAL_WORKLOAD -->|prepare short-lived GET| S3
-    REVEAL_WORKLOAD -->|decrypt object reference| SECRET
-    REVEAL_WORKLOAD -->|read metadata + append access audit| RDS
-    REVEAL_WORKLOAD -->|scoped ephemeral cache| REDIS
-    BFF -.->|metadata-only telemetry| OBS
-    EKYC_SERVICE -.->|masked telemetry| OBS
-    EKYC_SERVICE ==>|init/OCR/liveness stream + Get Result| PROVIDER
-
-    classDef bc fill:#1f3a5f,stroke:#4a90d9,color:#fff;
-    classDef entity fill:#3a3320,stroke:#d9b84a,color:#fff;
-    classDef datastore fill:#3a2d4a,stroke:#a06fd9,color:#fff;
-    classDef infra fill:#444,stroke:#aaa,color:#fff;
-```
-
-Sơ đồ vẽ một AZ đại diện; production trải tối thiểu hai AZ. RDS là datastore do
-VHM eKYC Service sở hữu. `==>` biểu diễn egress từ VHM trust boundary
-tới eKYC Provider Backend; chi tiết giao thức/cổng nằm trong Network Flow Matrix.
-P6 và P7 có thể dùng chung codebase/release train nhưng chạy thành deployment unit
-và Kubernetes service account riêng trong cùng EKS: P6 chỉ có write/finalize
-capability, còn P7 chỉ có privileged read/reveal capability với audit fail-closed.
-
-### 6.2.1. Network topology
-
-- VHM API và callback ingress đi qua WAF/API Gateway/Nginx Ingress.
-- VHM BFF và VHM eKYC Service chạy private trong EKS; chỉ ingress được expose
-  qua WAF/API Gateway. Presigned media bytes đi từ client thẳng tới S3.
-- RDS, Redis và Secrets/KMS chỉ truy cập qua private network control.
-- S3 Intake/Vault bật public-access block; Intake chỉ nhận exact presigned write.
-  P6 dùng workload IAM write/finalize riêng; P7 dùng workload IAM read/reveal
-  riêng qua private endpoint, không dùng chung quyền S3/KMS.
-- Chỉ callback route được public cho eKYC Provider Backend và phải có strong authentication.
-- Egress tới eKYC Provider Backend dùng allowlist, timeout, circuit breaker và audit.
-
-### 6.2.2. Network Flow Matrix
-
-| **Source** | **Destination** | **Protocol** | **Data** | **Control** |
-| --- | --- | --- | --- | --- |
-| Mobile/Web | VHM BFF | HTTPS 443 | Session/status/retry/result | JWT, WAF, rate limit |
-| Mobile/Web SDK | VHM BFF | HTTPS 443 | Init/OCR/liveness stream | SDK session token, Client UUID/run binding, body-size limit |
-| Mobile/Web | VHM S3 Intake | HTTPS 443 | Document/direct-face/liveness upload | Exact short-lived presigned PUT/multipart, size/MIME/checksum, no read/list |
-| VHM BFF | VHM eKYC Service | HTTPS/mTLS | Authorized command/query và SDK media stream | Workload identity, timeout, backpressure |
-| VHM eKYC Service | eKYC Provider Backend | HTTPS 443 | Init/OCR/liveness stream, Get Result | Provider authentication, allowlist, circuit breaker |
-| eKYC Provider Backend | Platform ingress → Callback API của VHM eKYC Service | HTTPS 443 | Provider result | Callback authentication, WAF, replay/dedupe; không qua VHM BFF |
-| VHM eKYC Service/Worker | PostgreSQL | TLS | Session/result/inbox/audit | Security group, DB role, KMS |
-| VHM eKYC Service | Redis | TLS | Rate limit/replay/ephemeral cache | Private endpoint, auth, TTL |
-| P6 Media Upload Control/Finalizer | S3 Intake/Vault + KMS | HTTPS 443/private endpoint | Validate object, seal AES-GCM-encrypted reference và lifecycle metadata | Write/finalize-only workload IAM, KMS encrypt grant, no plaintext path log/persistence |
-| Authorized manual-review caller | Platform ingress → P7 Controlled Media Reveal | HTTPS 443 | Encrypted-ref list, bounded reveal request và short-lived presigned download | IAM, platform role, assignment/business-object scope, cap/binding, URL expiry/cache control và access audit |
-| P7 Controlled Media Reveal | PostgreSQL + S3 Media Vault + KMS | TLS/HTTPS 443/private endpoint | Read media metadata, decrypt selected object refs và prepare short-lived GET | Read/reveal-only workload IAM, KMS decrypt grant, audit fail closed; không có quyền upload/finalize |
-| Services | Monitoring/Logging | TLS | Masked telemetry | No PII/secret, access control |
-
-## 6.3. Thành phần lưu trữ dữ liệu
-
-| **Thành phần** | **Công nghệ** | **Dữ liệu** | **Control** |
-| --- | --- | --- | --- |
-| Verification DB | PostgreSQL Multi-AZ | Session, run, checks, fixed fields, result, history, callback inbox | TLS, KMS, PITR, RBAC |
-| Redis | Redis | Rate limit, replay cache và ephemeral state | TTL, private network; không source of truth |
-| Secret storage | AWS Secrets Manager/KMS | Provider credential, callback token/client-secret refs, encryption keys | Rotation, workload identity, audit |
-| Application memory | Process memory | VHM SDK session token và bounded network chunks | Clear token sau completion/cancel/expiry |
-| Provider data-plane media | Transient tại BFF/VHM eKYC Service | Document image, selfie, liveness video/frame gửi provider | `MEDIA-01`; không persist/body log/disk spool trong application path |
-| S3 Intake | Amazon S3 + SSE-KMS | Client-uploaded media chờ validate/finalize | Private, exact presigned write, no client read/list, short orphan lifecycle |
-| VHM Media Vault | Amazon S3 + SSE-KMS | Document front/back, direct-face image và liveness video/frame objects | Workload-only access, versioned retention policy, no public/raw path; short-lived presigned GET only after Reveal API |
-| Media/review metadata | PostgreSQL | Manifest, checksum, object version, AES-GCM-encrypted object ref, retention metadata, review/decision/audit links | Transactional, opaque/encrypted refs, no plaintext path/media |
-
-## 6.4. Cost & Capacity/Performance
-
-### 6.4.1. Capacity/Performance targets
-
-| **Metric** | **Target value** | **Status/remarks** |
-| --- | --- | --- |
-| Platform availability | Theo approved VHM platform availability SLO | Target chốt tại NFR sign-off; provider SLA đo riêng. |
-| Create session latency | Đo p95 qua BFF/VHM eKYC Service/DB; không có synchronous eKYC Provider Backend call | Target theo approved VHM API SLO — `PENDING NFR SIGN-OFF`. |
-| Status/Result API latency | Đo p95/p99 với dữ liệu đã persist | Target theo approved VHM read-API SLO — `PENDING NFR SIGN-OFF`. |
-| Callback durable acknowledgement | Durable receive trước khi trả 2xx; không chờ normalize/finalize | Target phải nằm trong provider callback timeout với approved safety margin — `PENDING PROVIDER CONTRACT`. |
-| Callback durable→Canonical Result | Đo p95/p99 và oldest inbox age | Target cùng warning/critical threshold chốt tại NFR/Ops sign-off. |
-| Reconciliation recovery deadline | Hoàn tất trước provider retention với approved safety margin | Backlog ceiling phụ thuộc measured throughput/quota; margin chốt tại recovery sign-off. |
-| Concurrent sessions Mobile/Web | Chưa có input — `BLOCKING` | Bắt buộc điền worksheet 6.4.2 trước capacity sign-off. |
-| Peak create/status/result TPS | Chưa có input — `BLOCKING` | Bắt buộc điền worksheet 6.4.2 trước capacity sign-off. |
-| Callback burst TPS/payload p95-p99 | Chưa có input — `BLOCKING` | eKYC Provider Backend/Ops cung cấp và xác nhận bằng callback load test. |
-| Concurrent SDK media streams | Chưa có input — `BLOCKING` | Đo riêng BFF và VHM eKYC Service trong streaming load test. |
-| Media size/upload duration p95-p99 | Theo security ceiling mục 7.1.4; phân phối thực tế chưa có — `BLOCKING` | Dùng để chốt timeout, bandwidth, HPA và memory budget. |
-| Streaming memory per connection | Theo `MEDIA-01`, không tỷ lệ theo body size | Load/memory/disk evidence. |
-| Presigned upload success/duration | Đo theo media type/channel và multipart video | Target chốt theo upload UX/NFR; không dùng mediaId/PII làm label. |
-| Media finalize latency/backlog | Upload accepted → validated object + encrypted ref `READY`, p95/p99 và oldest age | Phải nằm trong finalization/evidence-ready SLO trước terminal exposure. |
-| Manual Review reveal latency/concurrency | Encrypted-ref list, decrypt/presign duration, URL issuance và cache hit/fallback | Target chốt theo OAT; cache không được vượt URL validity hoặc scope. |
-| Data volume/growth | Chưa có media volume/retention-policy input — `BLOCKING` | Data Privacy/Ops/Cloud xác nhận bằng policy class và sizing model. |
-
-### 6.4.2. Capacity inputs bắt buộc trước production
-
-| **Input bắt buộc** | **Đơn vị** | **Design value** | **Evidence yêu cầu** | **Owner** |
-| --- | --- | --- | --- | --- |
-| Daily session Mobile/Web | session/ngày theo channel | `UNRESOLVED` | Product forecast được phê duyệt | Product/Ops |
-| Peak concurrent active session | session đồng thời theo channel | `UNRESOLVED` | Forecast + journey-duration p95/p99 | Product/Ops |
-| Peak create/status/result | TPS p95/p99 và burst duration | `UNRESOLVED` | Access pattern/forecast | Product/Ops |
-| Callback burst | TPS, duration, payload p95/p99 | `UNRESOLVED` | Provider contract hoặc staging measurement | eKYC Provider Backend/Ops |
-| Concurrent media stream | stream đồng thời | `UNRESOLVED` | Mobile/Web concurrency model | Product/Client/Ops |
-| Media distribution | byte và upload duration p50/p95/p99 | `UNRESOLVED` | SDK staging measurement cho OCR/liveness | Client/eKYC Provider Backend |
-| Media type mix | object/attempt, image/video byte p50/p95/p99, multipart rate | `UNRESOLVED` | SDK fixture và UAT/performance measurement | Client/Product/Ops |
-| Media retention classes | policy class mix và planning horizon; TDD không hard-code duration | `UNRESOLVED` | Approved purpose-bound retention policy + capacity scenario | Data Privacy/Legal/Product/Cloud |
-| Manual Review workload | cases/day, concurrent reviewer, views/case, video playback/egress | `UNRESOLVED` | Operations forecast/OAT | Business Ops/Cloud |
-| Journey/retry mix | `% OCR_ONLY`, `% FULL_EKYC`, retry rate | `UNRESOLVED` | Product funnel forecast | Product/Risk |
-| Reconciliation workload | due session/phút, sustainable Get Result throughput, retry budget | `UNRESOLVED` | Callback SLA, retention, provider quota và load test để tính backlog ceiling | Ops/eKYC Provider Backend |
-| Provider quota/SLA | request/TPS/concurrency/maintenance | `UNRESOLVED` | Contract/SLA evidence | Procurement/Ops |
-| Data growth | record/day, byte/record, retention | `UNRESOLVED` | Fixed field set + retention decision | Product/Data Privacy/DBA |
-
-`UNRESOLVED` là approval blocker, không phải giá trị mặc định để dev tự chọn.
-Sizing phải dùng tối thiểu các công thức sau và đính kèm spreadsheet/load-test
-evidence:
-
-- `peakConcurrency = peakArrivalRate × journeyDurationP99 × safetyFactor`.
-- `requiredReplicas = ceil(peakConcurrentWork / measuredCapacityPerPod) + HA headroom`.
-- RDS storage/IOPS/connection sizing dựa trên measured write amplification,
-  callback burst, retention và restore-window requirement.
-- Safety factor và HA headroom do Architecture/Ops ký duyệt; không lấy production
-  replica count từ sample hoặc môi trường SIT.
-
-### 6.4.3. Scaling design
-
-| **Component** | **Scale** | **Signal** |
-| --- | --- | --- |
-| VHM BFF | HPA; route/pool riêng cho control và SDK data-plane | Request rate, active streams, network throughput, p95 latency, memory |
-| Verification API | HPA | CPU, request rate, p95 latency |
-| SDK Proxy Adapter của VHM eKYC Service | HPA/pool riêng trong VHM eKYC Service deployment | Active streams, upstream latency, timeout, network throughput, bounded-buffer memory |
-| Callback API | HPA độc lập | Callback TPS, ack latency, 5xx |
-| Inbox Worker | Horizontal worker | Pending count, oldest age, processing latency |
-| Reconciliation Worker | Horizontal + bounded lease | Due count/age, provider quota, lock wait |
-| P6 Media Upload Control/Finalizer | Horizontal + bounded claim | Uploaded/failed count, oldest age, bytes, crypto/S3 latency và terminal-blocked sessions |
-| P7 Controlled Media Reveal/Private File Adapter | Horizontal/pool riêng | List/reveal rate, capped batch, authorization deny, cache hit/fallback, presign latency/error |
-| PostgreSQL | Multi-AZ + connection pool | CPU, IOPS, connection, lock wait, table/index growth |
-| Redis | Managed scale | Memory, eviction, connection, command latency |
-
-Worker claim batch bằng row lock/`SKIP LOCKED` hoặc lease tương đương. Mọi batch
-phải bounded và tôn trọng provider quota; không dùng unbounded polling.
-
-### 6.4.4. Cost estimate
-
-| **Component** | **Description/mode** | **Capacity/count** | **Cost** | **Owner/status** |
-| --- | --- | --- | --- | --- |
-| EKS workload | VHM BFF, VHM eKYC Service API/SDK proxy adapter, Callback API và workers | TBD theo peak control/upload-control TPS + concurrent provider streams | TBD | Platform/Ops — trước production readiness |
-| RDS PostgreSQL | Multi-AZ, encrypted storage, PITR | TBD theo data volume/IOPS | TBD | DBA/Ops |
-| ElastiCache Redis | Rate limit, replay và ephemeral cache | TBD theo peak request/replay window | TBD | Platform/Ops |
-| WAF/API Gateway/Ingress | API/upload control-plane, SDK provider-processing stream và callback ingress | TBD theo request volume/bandwidth | TBD | Cloud/Ops |
-| Network data transfer | Media transit SDK → BFF → VHM eKYC Service → eKYC Provider Backend | TBD theo media size, retry và volume | TBD | Cloud/Ops/Finance |
-| S3 Intake/Media Vault | Presigned upload, ciphertext object/version, lifecycle, request và retrieval | TBD theo media mix + versioned retention policy | TBD | Cloud/Ops/Data Privacy/Finance |
-| Network data transfer — media | Client→S3 upload, finalizer read/write và manual-review stream/video | TBD theo media size, retry, review workload và lifecycle | TBD | Cloud/Ops/Finance |
-| Secrets/KMS | Credential, callback key, field encryption và media data-key wrap/unwrap | TBD theo key/request count | TBD | ANBM/Cloud |
-| Monitoring/Logging/APM | Masked metrics, logs, traces và audit | TBD theo ingestion/retention | TBD | Ops/Data Privacy |
-| SDK/provider usage | OCR/eKYC transaction theo journey/attempt | TBD theo volume và retry rate | TBD | Product/Procurement |
-| **Total monthly estimate** | AWS + provider usage | — | **TBD** | Finance/Product approval gate |
-
-**Công cụ bắt buộc:** [AWS Pricing Calculator](https://calculator.aws/).
-
-| **Cost approval artefact** | **Giá trị/link** | **Owner** | **Gate** |
-| --- | --- | --- | --- |
-| AWS estimate share/export | `UNRESOLVED` | Cloud/Ops | Bắt buộc trước Architecture/Finance sign-off |
-| Tổng AWS monthly estimate | `UNRESOLVED` USD/tháng | Cloud/Ops/Finance | Phải khớp capacity worksheet 6.4.2 |
-| Provider pricing model và monthly estimate | `UNRESOLVED` | Product/Procurement/Finance | Phải gồm OCR/FULL_EKYC/retry/reconciliation usage |
-| Cost assumptions | `UNRESOLVED` | Cloud/Ops | Region, hours/month, data transfer, log retention, backup và headroom |
-| Budget/quota/alert threshold | `UNRESOLVED` | Product/Ops/Finance | Có dashboard, owner và stop-create/escalation rule |
-
-Không được dùng bảng `TBD` phía trên như cost estimate. Tài liệu chỉ qua cost gate
-khi có calculator export/share link, provider quotation và tổng chi phí tháng đã
-được Finance/Product ký duyệt.
-
-## 6.5. CI/CD Architecture
-
-### 6.5.1. DevSecOps gates
-
-- Compile/unit test và dependency lock validation.
-- SCA/license scan cho backend, Mobile, Web và SDK artifact.
-- Secret scan, SAST và IaC scan.
-- Container vulnerability scan.
-- DB migration compatibility/integration test.
-- API/provider contract test.
-- Mobile/Web client E2E evidence.
-- Security/privacy approval gates.
-- Immutable artifact promotion; không rebuild giữa environment.
-
-### 6.5.2. Quality gates
-
-| **Layer** | **Nội dung** | **Gate** |
-| --- | --- | --- |
-| Unit | Lifecycle/outcome/milestone guard, idempotency, mapping, masking và retry rules | Critical branches `>=80%` |
-| DB Integration | Constraint, index, locking, inbox, history, reconciliation query | Bắt buộc pass |
-| Provider Contract | SDK init/OCR/liveness proxy, callback, Get Result và error fixtures | Bắt buộc pass |
-| Mobile SDK | Permission, lifecycle, front/back, result page OFF, compatibility matrix | Bắt buộc pass |
-| Web SDK | Camera permission, refresh/reopen/multi-tab, front/back, result page OFF | Bắt buộc pass |
-| API Security | Authn/authz, domain/object scope, SDK session token, masking, body/rate limit | Bắt buộc pass |
-| Media Storage | Presign scope/expiry/reuse, exact key, checksum, multipart, orphan purge, S3/KMS policy và encrypted-reference round-trip | Bắt buộc pass |
-| Manual Review | Platform role/assignment/object IDOR, cap/dedupe, foreign ciphertext all-or-nothing, AES-GCM ref decrypt, cache/URL expiry và PII-safe append-only audit | Bắt buộc pass |
-| E2E | Mobile/Web SDK ↔ BFF ↔ VHM eKYC Service ↔ eKYC Provider Backend staging | Happy + failure paths |
-| Performance | Control API + concurrent media streaming + callback burst/reconciliation | Đạt NFR và `MEDIA-01` |
-| Recovery | DB/provider outage, callback lost, worker restart, PITR | Bắt buộc pass |
-
-### 6.5.3. Deployment strategy
-
-| **Component/service** | **Deployment type** | **Expected downtime** | **Rollback strategy** | **Deployment window** | **Approval required** |
-| --- | --- | --- | --- | --- | --- |
-| VHM BFF | Canary hoặc rolling | Không dự kiến | Stop rollout, route về immutable artifact trước; giữ route contract tương thích | Theo standard release window | BFF Owner/Ops |
-| VHM eKYC Service Verification/Result/SDK Proxy API | Canary hoặc rolling | Không dự kiến | Stop rollout, route về immutable artifact trước; không retry media đang gửi | Theo standard release window | Service Owner/Ops |
-| Callback API | Canary/rolling độc lập | Không dự kiến; callback ingress phải luôn available | Route về artifact trước, giữ inbox schema backward-compatible | Tránh provider maintenance window | Service Owner/Ops |
-| Inbox/Reconciliation Workers | Rolling với bounded drain | Không ảnh hưởng API; backlog có kiểm soát | Dừng worker mới, deploy artifact trước, resume lease an toàn | Bất kỳ khi backlog trong threshold | Service Owner/Ops |
-| P6 Media Upload Control/Finalizer | Rolling với bounded drain | Upload tiếp tục vào Intake trong bounded capacity; finalization backlog có kiểm soát | Stop rollout, giữ encrypted-ref format backward-compatible, deploy artifact trước và resume bounded finalizer | Theo service window/backlog threshold | Service Owner/ANBM/Ops |
-| P7 Controlled Media Reveal/Private File Adapter | Canary hoặc rolling | Không ảnh hưởng upload; khi lỗi phải fail closed và không trả URL | Stop rollout, route về artifact trước; revoke hoặc để hết hạn URL đã cấp theo runbook | Theo service window | Service Owner/ANBM/Ops |
-| S3 bucket/KMS policy | IaC staged change | Không dự kiến | Revert policy/version; break-glass chỉ theo approved runbook | Security change window | Cloud + ANBM + Data Privacy |
-| Database schema | Expand/contract phased migration | Không hoặc minimal theo approved plan | Backward-compatible code/schema; restore chỉ là phương án cuối | Maintenance window nếu có lock risk | DBA + Architecture |
-| Mobile/Web SDK/profile | Controlled cohort theo compatibility matrix | Không downtime backend | Dừng cohort, rollback app/web/config version | Client release window | Product + Client Owner |
-| Provider credential/callback token | Overlap rotation | Không dự kiến | Giữ old/new material trong overlap, revoke sau evidence | Coordinated security window | ANBM + eKYC Provider Backend |
-
-Khi incident dependency, có thể dừng create session nhưng tiếp tục nhận callback và
-reconciliation nếu các control bảo mật/toàn vẹn vẫn an toàn.
-
-## 6.6. Technology Stack & Justification
-
-| **Area** | **Selected approach** | **Rationale** | **Trade-off/alternative considered** | **Status** |
-| --- | --- | --- | --- | --- |
-| Backend | Java 25, Spring Boot 4.0.4, Spring Data JPA, Maven | Strong typing, transaction support và phù hợp state/idempotency-heavy service | Go/Node giảm footprint nhưng làm tăng divergence stack và không tạo lợi ích đủ lớn cho contract này | Selected |
-| Client integration | VHM Mobile, VHM Web và eKYC SDK được pin version | Hỗ trợ hai kênh đã chốt và cô lập implementation trong SDK | Tự xây capture/liveness bị loại do tăng security, UX và certification scope | Selected |
-| System of record | Amazon RDS PostgreSQL 17 Multi-AZ | ACID, unique constraint, locking, history và PITR phù hợp session/callback dedupe | DynamoDB/NoSQL giảm vận hành scale nhưng phức tạp transaction/query và consistency invariant | Selected |
-| Ephemeral cache | Amazon ElastiCache Redis 7.4 | Rate limit, replay guard và short-lived cache tách khỏi source of truth | Chỉ dùng PostgreSQL đơn giản hơn nhưng tăng contention/load; Redis không được giữ lifecycle/final outcome | Selected with boundary |
-| Runtime | Amazon EKS + Nginx Ingress Controller | Tách scale API/callback/worker, rolling/canary và dùng V-App cluster | VM/serverless giảm một số ops nhưng lệch runtime baseline và worker/connection model hiện tại | Selected |
-| CI/CD | Azure DevOps (TFS) + immutable artifact promotion | Có quality/security gates và không rebuild giữa environment | Manual deployment bị loại do thiếu repeatability/audit | Selected |
-| Secret/encryption | AWS Secrets Manager + KMS | Central lifecycle, workload access, encryption và audit | Secret trong ConfigMap/repo/image bị cấm | Selected |
-| Media upload/storage | VHM Application → VHM BFF/Media Upload API (xin presign, submit manifest) và VHM Application → S3 (media bytes) → Media Upload Finalizer | VHM BFF không proxy media bytes; VHM sở hữu lifecycle cho mọi pass/fail | Backend sync từ provider không được triển khai trong phiên bản này; mọi thay đổi cần ADR mới | Selected |
-| Media cryptography | S3 SSE-KMS cho object at rest; AES-256-GCM/KMS cho object reference/path lưu trong DB | Private object storage và authenticated encrypted reference; plaintext path chỉ transient trong trusted service | Application-encrypt toàn object tăng I/O/complexity và chưa phải contract dev hiện tại | Selected |
-| Manual Review delivery | GET trả encrypted refs; bounded POST reveal trả short-lived presigned S3 GET URL qua Private File Service và scoped cache | Platform-neutral role/assignment/object binding và PII-safe access audit | Gateway streaming kiểm soát mạnh hơn nhưng không phải contract hiện tại; residual bearer-URL risk giảm bằng expiry/scope/cache controls | Selected with controls |
-| Observability | Micrometer, Prometheus, Grafana, APM, Fluentd, Elasticsearch | Bao phủ metric/log/trace và error funnel theo channel/journey | Vendor-specific telemetry chỉ được dùng nếu vẫn bảo đảm masking/retention | Selected |
-| Resilience | Resilience4j + streaming HTTP client | Timeout, circuit breaker, bounded retry trước body và backpressure cho Provider Adapter | Transparent retry media bị cấm vì có thể gửi lặp/ghép sai attempt | Selected |
-| Region | AWS Singapore (`ap-southeast-1`) — V-App | Bám hạ tầng đã xác định trong solution baseline | Data residency/cross-border vẫn là Data Privacy approval gate | Selected pending privacy evidence |
-
-### 6.6.1. ADR index
-
-Các quyết định kiến trúc chi tiết được lập chỉ mục tại [Appendix B — ADR Log](#appendix-b-adr-log).
-ADR là record quản trị riêng; bảng trong tài liệu này chỉ là index/rationale summary.
-
-## 6.7. Configuration Management
-
-
-### 6.7.1. SDK configuration baseline
-
-| **Nhóm** | **Baseline** | **Owner** |
-| --- | --- | --- |
-| Channels | Mobile và Web | Product/Client Teams |
-| Journeys | `OCR_ONLY`, `FULL_EKYC` | Product/Risk |
-| Document | `NATIONAL_ID_CHIP`, front/back | Product/SDK Team |
-| Result page | `OFF`; VHM Application sở hữu post-SDK screen | Product/UX |
-| Guidance/progress | `ON` | Product/UX |
-| Liveness | Bắt buộc trong `FULL_EKYC` | Product/Risk/Security |
-| Screenshot/capture security | Block/detect nơi SDK hỗ trợ | Security/Client Teams |
-| Session timeout | Theo approved journey/session policy, đồng bộ backend | Backend/SDK Team |
-| Client compatibility | Mobile/Web/SDK matrix được pin version | Client/SDK Teams |
-| Required media | Type/part theo journey/outcome; document front/back, direct-face và feature-gated liveness video | Product/SDK/Data Privacy |
-| Upload | Presigned expiry, size/MIME/checksum/multipart policy theo operation | Backend/Client/ANBM/Ops |
-| Retention | Versioned purpose-bound policy ID/class; duration không hard-code trong TDD | Product/Legal/Data Privacy/Ops |
-
-### 6.7.2. Change governance
-
-1. Tạo change ticket và mô tả business/security/privacy impact.
-2. Update versioned config/schema/contract fixture.
-3. Review Product/Risk/Architect/Security/Privacy theo loại thay đổi.
-4. Test sandbox/SIT/UAT trên Mobile và Web liên quan.
-5. Canary/controlled rollout và theo dõi metric.
-6. Rollback về config/artifact version trước nếu breach threshold.
-7. Lưu approval, evidence và effective time.
-
-## 6.8. Observability
-
-### 6.8.1. Metrics
-
-| **Metric** | **Type** | **Labels cho phép** |
-| --- | --- | --- |
-| `identity_verification_sessions_total` | Counter | journey, channel, status, domain |
-| `identity_verification_duration_seconds` | Histogram | journey, channel, final_status |
-| `identity_verification_sdk_event_total` | Counter | channel, event, outcome, app_version, sdk_version |
-| `identity_verification_callback_total` | Counter | auth_result, processing_result |
-| `identity_verification_callback_latency_seconds` | Histogram | provider |
-| `identity_verification_callback_duplicate_total` | Counter | provider |
-| `identity_verification_provider_request_total` | Counter | operation, outcome |
-| `identity_verification_provider_latency_seconds` | Histogram | operation |
-| `identity_verification_sdk_proxy_active_streams` | Gauge | component, operation, channel |
-| `identity_verification_sdk_proxy_bytes` | Histogram | direction, operation, channel |
-| `identity_verification_sdk_proxy_duration_seconds` | Histogram | component, operation, outcome |
-| `identity_verification_sdk_proxy_buffer_bytes` | Gauge | component |
-| `identity_verification_reconciliation_due` | Gauge | provider |
-| `identity_verification_retry_total` | Counter | journey, channel, reason_category |
-| `identity_verification_inbox_failed` | Gauge | failure_category |
-| `identity_verification_media_upload_total` | Counter | channel, media_type, outcome |
-| `identity_verification_media_finalize_duration_seconds` | Histogram | media_type, outcome |
-| `identity_verification_media_finalize_backlog` | Gauge | state, media_type |
-| `identity_verification_media_orphan_total` | Gauge | media_type, age_bucket |
-| `identity_verification_manual_view_total` | Counter | role, media_type, authorization_result, outcome |
-| `identity_verification_manual_view_stream_seconds` | Histogram | media_type, outcome |
-
-Không dùng verification ID, business/subject reference hoặc PII làm metric label.
-
-### 6.8.2. Logging
-
-Log cho phép: timestamp, service/environment/version, internal verification ID theo
-access policy, trace ID, operation, canonical error, provider HTTP status/duration,
-channel và app/SDK version. Không log credential, token, CCCD, normalized fields,
-media, raw callback, resource URL hoặc biometric score gắn với danh tính.
-
-### 6.8.3. Alerts
-
-| **Alert** | **Trigger** | **Severity** |
-| --- | --- | --- |
-| Callback authentication/replay failure | Bất kỳ production hoặc tăng đột biến | Critical/High |
-| Provider authentication failure | 401/403 liên tục | Critical |
-| Provider availability | Error rate vượt threshold/evaluation window theo approved provider SLO và alert policy | High |
-| Callback schema/mapping error | Có lỗi kéo dài hoặc sau provider change | High |
-| Callback Inbox backlog — warning | Oldest unprocessed age chạm warning threshold trong approved callback-processing SLO | Medium |
-| Callback Inbox backlog — critical | Oldest unprocessed age vượt critical threshold hoặc estimated drain time vượt recovery budget | Critical |
-| Reconciliation backlog — warning | Estimated drain time chạm recovery deadline hoặc approved safety margin | High |
-| Reconciliation backlog — critical | Bất kỳ session có nguy cơ vượt provider retention trước khi Get Result hoàn tất | Critical |
-| SDK init/crash spike | Tăng theo channel/app/sdk version | High/Medium |
-| SDK proxy saturation | Active streams/network/memory hoặc timeout vượt threshold | High |
-| Media control violation | Phát hiện body log, temp file/disk spool hoặc buffer vượt hard limit | Critical |
-| Presigned upload abuse | Wrong key/checksum/type, denied/reused request spike hoặc unexpected source pattern | High/Critical |
-| Media finalizer backlog | Oldest uploaded media/finalize latency vượt evidence-ready SLO | High/Critical |
-| Media integrity/encryption failure | Checksum mismatch, encrypted-reference AES-GCM authentication fail hoặc KMS deny/error | Critical |
-| Manual Review anomalous access | Denied/unassigned/bulk view spike, expired presigned URL reuse hoặc export attempt | High/Critical |
-| Retry/error spike | Vượt journey/channel baseline | Medium/High |
-| DB connection/lock saturation | Vượt infrastructure threshold | High |
-
-### 6.8.4. Monitoring standard and SLI/SLO
-
-Referenced VHM monitoring/logging standard và version phải được gắn tại metadata;
-cho tới khi artefact này được cung cấp, các SLI/SLO dưới đây là solution baseline.
-
-| **Critical journey/service** | **SLI** | **SLO/target** | **Measurement/exclusion** |
-| --- | --- | --- | --- |
-| Create verification session | Successful authorized requests và p95 latency | Availability/p95 theo approved VHM platform SLO và mục 6.4.1 | Chỉ gồm BFF/VHM eKYC Service/DB; không có synchronous eKYC Provider Backend call. |
-| SDK data-plane proxy | Successful upstream response, active streams, upload/upstream latency và timeout | Target cụ thể theo mục 6.4.1/provider SLA | Đo riêng BFF và VHM eKYC Service; không dùng media/body/PII làm metric label. |
-| Presigned media persistence | Upload success, finalize success/latency, oldest backlog, orphan/integrity failure | Required media đạt `READY` trong approved evidence-ready SLO | Đo riêng Intake và Vault; terminal-blocked session là critical business signal. |
-| Manual Review media access | Encrypted-ref list/reveal success, authorization deny, presign/cache latency/fallback và audit-write success | Theo approved OAT/Security policy | Không metric label chứa actor/verification/ciphertext/path/URL/PII; restricted audit giữ actor/entity correlation. |
-| Status/Result API | Success rate, p95/p99 và authorization deny rate | Theo approved VHM read-API SLO | Không tính caller cancellation; 4xx business/auth đo riêng; target cụ thể chốt tại NFR sign-off. |
-| Callback ingress | Durable acknowledgement rate/latency | Durable receive và trả 2xx trong provider callback timeout với approved safety margin | Duplicate hợp lệ đo riêng, không tính là business failure. |
-| Callback processing | Callback durable→Canonical Result latency, oldest inbox age, processing success và quarantine count | Theo approved callback-processing SLO và Ops alert policy | Không dùng PII/provider session làm metric label; durable-ack và processing là hai SLI riêng. |
-| Reconciliation | Due backlog age, estimated drain time, recovered-session rate và provider error rate | Hoàn tất trước provider retention với approved safety margin | Số item backlog tối đa = sustainable Get Result throughput × thời gian còn lại trước recovery deadline; throughput/quota phải được load test/provider xác nhận. |
-| Mobile/Web journey | Start→submit→final outcome funnel theo channel/version | Baseline và alert threshold TBD sau UAT/performance test | Không gửi OCR field/media/token vào analytics. |
-
-Telemetry volume, retention và cost phải nằm trong cost estimate; sai lệch khỏi
-monitoring standard cần Architecture/Ops/Data Privacy phê duyệt.
-
-# **7. Security & Data Privacy**
-
-> Security và Data Privacy là go-live gate. Tài liệu chỉ xác định baseline kỹ thuật;
-> ANBM, Data Privacy và Legal phải phê duyệt control/evidence tương ứng.
-
-## 7.1. Security Layers
-
-### 7.1.1. Infrastructure & Network Security
+### 9.1.1. Infrastructure & Network Security
 
 - Mobile/Web API và callback ingress đi qua WAF/API Gateway.
 - SDK init/OCR/liveness ingress có route/body-size/timeout riêng và được stream qua BFF/VHM eKYC Service.
@@ -1879,7 +1713,7 @@ monitoring standard cần Architecture/Ops/Data Privacy phê duyệt.
 | S3 media protection | S3 Block Public Access, bucket-owner-enforced, TLS-only policy, SSE-KMS | Intake chỉ exact presigned write; Vault workload read; deny ACL/public/list và log data events theo policy | S3 Intake/Media Vault |
 | Presigned request policy | SigV4 + temporary workload credential | Short expiry, exact method/key, signed content headers/checksum; cache/URL validity config fail closed | Upload PUT/multipart và reveal GET |
 
-### 7.1.2. Identity & Access Management
+### 9.1.2. Identity & Access Management
 
 #### Authentication
 
@@ -1900,8 +1734,8 @@ monitoring standard cần Architecture/Ops/Data Privacy phê duyệt.
 - Không dùng shared Basic Auth cho internal S2S.
 - Không đưa provider API key/app secret xuống BFF, Mobile/Web hoặc SDK.
 - VHM SDK session token TTL ngắn, bind session/run/journey/channel/environment.
-- Callback credential rotation tuân thủ quyết định tích hợp tại mục 4.2 và baseline
-  Security tại mục 7.1.3: planned rotation không downtime; emergency rotation đáp
+- Callback credential rotation tuân thủ quyết định tích hợp tại mục 6.2 và baseline
+  Security tại mục 9.1.3: planned rotation không downtime; emergency rotation đáp
   ứng approved ANBM incident-response SLO. Token TTL/overlap và rotation RTO phải
   được eKYC Provider Backend và ANBM xác nhận bằng contract/security test.
 
@@ -1953,7 +1787,7 @@ monitoring standard cần Architecture/Ops/Data Privacy phê duyệt.
 | P7 Private File Adapter/Presign cache | Read/reveal-only workload IAM + scoped cache key/TTL | Plaintext path transient; URL validity ngắn; audit success trước response; cache không dùng chéo security scope. |
 | PostgreSQL/Redis/Secrets | Workload IAM/DB role/network policy | Least privilege theo workload; support/DBA không mặc định đọc plaintext sensitive field. |
 
-### 7.1.3. Secrets & Credential Management
+### 9.1.3. Secrets & Credential Management
 
 | **Secret/credential** | **Storage** | **Consumer** | **Rotation/revocation** | **Control** |
 | --- | --- | --- | --- | --- |
@@ -1964,7 +1798,7 @@ monitoring standard cần Architecture/Ops/Data Privacy phê duyệt.
 | Media-reference encryption key | KMS-CMK/keyring | P6 encrypt-only; P7 decrypt-only qua key grant tách biệt | Versioned rotation/re-encryption runbook theo ANBM standard | AES-256-GCM authenticated encryption; encryption context dùng opaque verification/run/media ID, không chứa PII. |
 | VHM SDK session token | Chỉ process/client memory | VHM Application/eKYC SDK, BFF validation | TTL ngắn; hết hạn hoặc revoke theo session/run | Bind environment, journey, channel và run; không lưu dài hạn. |
 
-### 7.1.4. Application Security & Data Protection
+### 9.1.4. Application Security & Data Protection
 
 #### Zero Trust cho client result
 
@@ -1977,8 +1811,8 @@ monitoring standard cần Architecture/Ops/Data Privacy phê duyệt.
 
 #### Callback Security
 
-- Áp `CALLBACK-01`; yêu cầu tích hợp được nêu tại mục 4.2, còn cơ chế
-  token, replay, durable-ack và rotation được kiểm soát tại mục 7.1.2–7.1.3.
+- Áp `CALLBACK-01`; yêu cầu tích hợp được nêu tại mục 6.2, còn cơ chế
+  token, replay, durable-ack và rotation được kiểm soát tại mục 9.1.2–9.1.3.
 - Callback payload hiện không được ký số. Control bù trừ bắt buộc gồm TLS, Dynamic
   Bearer Token, binding Client UUID/session/environment, schema validation và
   replay/dedupe. Nếu provider không hỗ trợ JWS/HMAC, ANBM phải phê duyệt residual
@@ -2141,7 +1975,7 @@ Media access audit contract:
 - Verified/auto-failed/manual decision events thuộc `iv_histories`; `audit_logs`
   chỉ lưu access events nêu trên.
 
-### 7.1.5. Governance & Compliance
+### 9.1.5. Governance & Compliance
 
 - Consent phải purpose-bound, versioned và kiểm tra trước create session.
 - DPA/DPIA, data location, subprocessor, retention và deletion evidence là go-live gates.
@@ -2151,221 +1985,7 @@ Media access audit contract:
 - Presigned upload/reveal, media retention class và manual-review purpose phải có
   owner/approval; generic “nhiều mục đích” không thay cho purpose registry.
 
-## **7.2. Data Privacy**
-
-### 7.2.1. PII declaration and classification
-
-- [ ] Không xử lý dữ liệu cá nhân.
-- [x] **Có xử lý dữ liệu cá nhân**, bao gồm dữ liệu cơ bản và dữ liệu sinh trắc
-  học/định danh nhạy cảm trong hành trình `FULL_EKYC`.
-
-| **Loại dữ liệu** | **Phân nhóm thiết kế** | **Có xử lý?** | **Phạm vi** |
-| --- | --- | --- | --- |
-| Họ và tên | Dữ liệu cá nhân cơ bản | Có | Fixed OCR field nếu được Product/Data Privacy phê duyệt. |
-| Ngày sinh | Dữ liệu cá nhân cơ bản | Có | Fixed OCR field, mã hóa/masking theo purpose. |
-| Giới tính | Dữ liệu cá nhân cơ bản | Có điều kiện | Chỉ nhận nếu nằm trong approved fixed result set; mặc định không yêu cầu. |
-| Địa chỉ/nơi cư trú/quê quán | Dữ liệu cá nhân cơ bản | Có | Fixed OCR field theo use case; không dùng ngoài purpose. |
-| Số giấy tờ định danh | Dữ liệu cá nhân cơ bản; field tác động cao trong thiết kế | Có | Mã hóa, mask mặc định và object-level authorization. |
-| Opaque subject/business/device-linked ID | Dữ liệu cá nhân nếu liên kết được cá nhân | Có | Dùng correlation/authorization; không nhúng PII vào ID. |
-| Ảnh giấy tờ, direct-face/selfie, liveness video/frame | Dữ liệu cá nhân nhạy cảm/sinh trắc học | Có transit trên provider data-plane và lưu bền tại VHM cho approved purpose/manual review | Private VHM S3 Media Vault, SSE-KMS; encrypted reference, controlled reveal và policy-driven purge. |
-| Liveness/face-match status và score | Dữ liệu liên quan sinh trắc học | Có | VHM chỉ lưu canonical status/score tối thiểu theo policy được duyệt. |
-| Chủng tộc, quan điểm chính trị, tôn giáo, sức khỏe | Dữ liệu cá nhân nhạy cảm | Không | Không thuộc contract OCR/eKYC này. |
-| Điện thoại/email/payment data | Dữ liệu cá nhân/nghiệp vụ | Không trong capability này | Dữ liệu nằm ngoài VHM eKYC Service và không được đưa vào SDK result contract. |
-
-Phân loại pháp lý cuối cùng, lawful basis và DPIA/DPA phải được Data Privacy/Legal
-phê duyệt; mã hóa không làm dữ liệu mất tính chất dữ liệu cá nhân.
-
-| **Nhóm phê duyệt** | **Data thuộc nhóm** | **Control tối thiểu** | **Approval status** |
-| --- | --- | --- | --- |
-| Dữ liệu cá nhân cơ bản | Họ tên, ngày sinh, giới tính, địa chỉ và opaque reference liên kết được cá nhân | Purpose limitation, field allowlist, encryption, masking, object authorization | `PENDING — Data Privacy/Legal` |
-| Field định danh tác động cao | Số giấy tờ định danh | Field encryption, mask mặc định, unmask approval/audit, retention 7.2.5 | `PENDING — Data Privacy/Legal` |
-| Dữ liệu nhạy cảm/sinh trắc | Ảnh giấy tờ, selfie/direct-face, liveness video/frame và face/liveness result | Consent/purpose registry, private S3/SSE-KMS, AES-GCM-encrypted ref, role/assignment-scoped reveal audit, versioned retention/purge và provider DPA/DPIA | `PENDING — Data Privacy/Legal/ANBM` |
-| Ngoài contract | Chủng tộc, chính trị, tôn giáo, sức khỏe, payment, phone/email | Reject/redact; không thêm field nếu chưa đổi fixed contract và privacy approval | Không được xử lý |
-
-### 7.2.2. Data inventory
-
-| **Data** | **Nguồn** | **Purpose** | **VHM persistence** | **Provider** | **Retention** |
-| --- | --- | --- | --- | --- | --- |
-| Business/subject opaque ref | VHM BFF | Correlation/authorization | Có | External ref nếu cần | Tối đa 90 ngày sau terminal |
-| Consent ref/version/time | VHM Application/Consent | Legal basis/audit | Chỉ reference | Theo contract | Consent System policy; link evidence bắt buộc |
-| Document fields | eKYC Provider Backend | OCR/autofill/verification | Fixed fields, encrypted/masked | Có xử lý | Tối đa 90 ngày sau terminal |
-| Document image front/back | SDK | OCR/verification, manual review và approved dispute/evidence purpose | Private VHM S3; encrypted ref trong DB | Có xử lý | VHM versioned retention class; duration ngoài TDD. Provider theo approved contract |
-| Direct-face/selfie/video/frame | SDK | Liveness/face matching, manual review và approved dispute/evidence purpose | Private VHM S3; encrypted ref trong DB | Có xử lý | VHM versioned retention class; duration ngoài TDD. Provider theo approved contract |
-| Liveness/face status | eKYC Provider Backend | Identity decision | Canonical status tối thiểu | Có xử lý | Tối đa 90 ngày sau terminal |
-| Provider session/event refs | eKYC Provider Backend | Correlation/dedupe | Có | Có | Tối đa 90 ngày sau terminal |
-| Callback payload | eKYC Provider Backend | Async normalization | Encrypted inbox; không lưu media | N/A | Processed 24 giờ; failed/quarantine 7 ngày |
-| App/SDK/channel metadata | Client | Compatibility/operations | Tối thiểu | SDK-dependent | Masked log tối đa 30 ngày |
-| Media access audit | VHM Reveal API | Traceability/compliance | PII-safe type/part/pose only; không ciphertext/path/URL/media | Không cần | Theo approved audit standard |
-| Decision history | VHM | Verified/auto-failed/manual lifecycle | `iv_histories`; không lưu raw payload/media | Không cần | Theo approved decision/audit standard |
-
-### 7.2.3. Data Privacy processing summary
-
-| **Thông tin yêu cầu** | **Baseline của giải pháp** | **Owner/status** |
-| --- | --- | --- |
-| Chủ thể dữ liệu | Người dùng VHM thực hiện OCR/eKYC trên Mobile/Web | Product/Data Privacy — xác nhận theo use case |
-| Vị trí VHM xử lý/lưu trữ | AWS Singapore `ap-southeast-1` | `PENDING` evidence/sign-off theo matrix dưới đây |
-| Vị trí eKYC Provider Backend/subprocessor | Theo DPA và data-location evidence của eKYC Provider Backend | Legal/Data Privacy — go-live blocker |
-| Số lượng chủ thể/bản ghi | Chưa có forecast — `BLOCKING` | Product/Ops — worksheet 6.4.2 |
-| Tổng dung lượng lưu trữ | Chưa có media mix/versioned retention policy/capacity input — `BLOCKING` | Cloud/Ops/Data Privacy |
-| Truyền sang tổ chức khác | Có — eKYC Provider Backend xử lý document/liveness/face data | DPA, purpose, subprocessor và incident SLA bắt buộc |
-| Luồng vị trí | Provider data-plane và upload control-plane/manifest qua BFF/eKYC Service; durable media bytes client→VHM S3 bằng presigned request; callback/result qua service; authorized reveal qua Private File Service | Architecture/Data Privacy review |
-| Dữ liệu thu thập | Front/back document, direct-face/selfie/liveness video/frame và fixed canonical fields | Media type/fixed field set: `PENDING` Product/Data Privacy approval |
-| Mục đích | OCR/autofill, xác minh danh tính, manual review và purpose cụ thể trong approved registry/consent | Product/Legal approval; không dùng generic “nhiều mục đích” |
-| Mã hóa lưu trữ | RDS/KMS, field/inbox AES-GCM, S3 SSE-KMS và AES-GCM-encrypted object references | ANBM approval |
-| Quản lý/xoay khóa | AWS KMS/Secrets Manager; rotation period theo approved standard | ANBM/Cloud — standard version `PENDING` |
-| Mã hóa đường truyền | TLS 1.2 minimum, TLS 1.3 preferred; mTLS nơi contract hỗ trợ/yêu cầu | ANBM/Integration |
-| Masking | Document number `******1234`; field khác theo role/purpose matrix mục 7.1.4 | Data Privacy/Product approval |
-| Retention và tự động xóa | Baseline và purge mechanism tại mục 7.2.5 | Data Privacy/Product/Ops sign-off bắt buộc |
-| Data-subject request | Export/delete/anonymize qua BFF-authorized subject/business mapping và provider coordination | Data Privacy/Product/eKYC Provider Backend |
-| Anonymization | Chỉ giữ aggregate telemetry không định danh; canonical record xử lý theo retention/legal hold | Data Privacy/Ops |
-
-#### DPIA và data-residency evidence matrix
-
-Việc cấu hình resource ở `ap-southeast-1` không tự động chứng minh data residency.
-Các evidence dưới đây phải được đính kèm và ký duyệt; mọi dòng `PENDING` chặn
-`APPROVED` và production go-live.
-
-| **Phạm vi** | **Residency baseline** | **Evidence bắt buộc** | **Owner** | **Status** |
-| --- | --- | --- | --- | --- |
-| EKS runtime, RDS primary/standby, Redis | AWS Singapore `ap-southeast-1` | IaC plan, deployed-resource inventory và AWS Config/export | Cloud/Ops | `PENDING` |
-| RDS backup/PITR/snapshot/DR copy | Singapore; cross-region chỉ khi có approval riêng | Backup policy, KMS key region và restore evidence | DBA/Cloud/Data Privacy | `PENDING` |
-| S3 Intake/Media Vault/replica/version | AWS Singapore `ap-southeast-1`; cross-region/account chỉ theo approved DR/privacy policy | Bucket inventory/config, object region, KMS key, lifecycle/version/replication và access-analyzer evidence | Cloud/ANBM/Data Privacy | `PENDING — GO-LIVE BLOCKER` |
-| Logs, APM, metrics và audit | Singapore hoặc approved VHM observability location | Sink/index/bucket region, retention và field allowlist | Ops/ANBM/Data Privacy | `PENDING` |
-| eKYC Provider Backend processing/media/result | Theo signed DPA; không suy đoán từ endpoint | Provider data-flow, region, subprocessor list, backup/DR location và deletion SLA | Legal/Data Privacy/Provider | `PENDING — GO-LIVE BLOCKER` |
-| Provider/support remote access | Chỉ approved location/role/purpose | Support-access matrix, privileged-access audit và incident SLA | Legal/ANBM/Provider | `PENDING — GO-LIVE BLOCKER` |
-| Cross-border transfer | Chỉ theo lawful basis và approved transfer mechanism | Legal assessment/DPA annex và Data Privacy sign-off | Legal/Data Privacy | `PENDING — GO-LIVE BLOCKER` |
-| DPIA | Bao phủ Mobile/Web, SDK data-plane, callback, reconciliation, backup và data-subject request | DPIA document ID/link, risk treatment và approver/sign-off date | Data Privacy/Legal/ANBM | `PENDING — GO-LIVE BLOCKER` |
-
-### 7.2.4. Data Lifecycle DFD (L2)
-
-```mermaid
-flowchart TB
-    APP(["Người dùng qua<br/>VHM Application"]):::entity
-    REVIEWER(["Authorized Review Caller"]):::entity
-    BACKEND(["eKYC Provider Backend"]):::entity
-    CAPTURE(("P1 · Mobile/Web SDK Capture")):::process
-    BFF(("P2 · VHM BFF<br/>auth / bounded stream")):::process
-    EKYC_SERVICE_PROXY(("P3 · VHM eKYC Service<br/>SDK Proxy<br/>credential injection")):::process
-    RESULT_PROCESS(("P4 · VHM eKYC Service<br/>Callback &<br/>Result Processing")):::process
-    RESULT_API(("P5 · Authorized Result API")):::process
-    UPLOAD(("P6 · Media Upload Control<br/>& Finalizer")):::process
-    REVEAL(("P7 · Controlled<br/>Media Reveal")):::process
-    INBOX[("D1 · Encrypted Inbox<br/>24h / 7d")]:::sensitive
-    RESULT[("D2 · Canonical Result<br/>fixed fields · final outcome")]:::sensitive
-    MEDIA_META[("D3 · Media Metadata DB<br/>AES-GCM encrypted refs")]:::sensitive
-    MEDIA[("D4 · Private VHM S3 Media Vault<br/>SSE-KMS media objects")]:::sensitive
-    AUDIT[("D5 · audit_logs / iv_histories")]:::sensitive
-
-    APP -->|"1. consent-bound capture data"| CAPTURE
-    CAPTURE -->|"2. media stream"| BFF
-    CAPTURE -->|"request upload slots / submit manifest"| BFF
-    BFF -->|"authorized upload metadata / manifest"| UPLOAD
-    UPLOAD -->|"mediaId + presigned PUT/multipart"| BFF
-    BFF -->|"upload slots"| CAPTURE
-    CAPTURE ==>|"presigned MEDIA BYTES pass/fail"| MEDIA
-    UPLOAD -->|"validate object / checksum / version"| MEDIA
-    UPLOAD -->|"sealed manifest + AES-GCM encrypted ref"| MEDIA_META
-    BFF -->|"3. authenticated bounded stream"| EKYC_SERVICE_PROXY
-    EKYC_SERVICE_PROXY -->|"4. server credential + stream"| BACKEND
-    BACKEND -->|"5. authenticated provider callback result"| RESULT_PROCESS
-    RESULT_PROCESS -->|"7. encrypted minimal payload"| INBOX
-    INBOX -->|"8. claimed provider result"| RESULT_PROCESS
-    RESULT_PROCESS -->|"9. canonical fixed fields"| RESULT
-    RESULT_PROCESS -.->|"lifecycle / result audit events"| AUDIT
-    APP -->|"10. status/result query"| BFF
-    BFF -->|"11. authorized result query"| RESULT_API
-    RESULT -->|"12. scoped canonical fields"| RESULT_API
-    RESULT_API -->|"13. masked canonical result"| BFF
-    BFF -->|"14. outcome/next action"| APP
-    REVIEWER -->|"15. GET media list / POST reveal"| REVEAL
-    REVEAL -->|"16. load and bind encrypted refs"| MEDIA_META
-    MEDIA_META -->|"17. types/parts + encrypted refs"| REVEAL
-    REVEAL -->|"18. decrypt ref + prepare short-lived S3 GET"| MEDIA
-    REVEAL -->|"19. GET encrypted refs / POST short-lived URLs"| REVIEWER
-    REVEAL -.->|"20. PII-safe VIEW / REVEAL events"| AUDIT
-
-    classDef entity fill:#3a3320,stroke:#d9b84a,color:#fff;
-    classDef process fill:#1f3a5f,stroke:#4a90d9,color:#fff;
-    classDef sensitive fill:#5a2d2d,stroke:#d96f6f,color:#fff;
-```
-
-- Provider transit tuân thủ `MEDIA-01`; durable upload/reveal tuân thủ
-  `MEDIA-STORE-01`, `DATA-01` và `REVIEW-01`.
-- P6 và P7 là hai logical module/security boundary trong VHM eKYC Service, không
-  mặc định là hai microservice. P6 có write/finalize capability; P7 có privileged
-  read/reveal capability. Media bytes không đi qua BFF, P6 hoặc P7.
-- S3 chỉ giữ media object mã hóa SSE-KMS. PostgreSQL Media Metadata giữ manifest
-  và AES-GCM-encrypted object reference; plaintext path chỉ tồn tại transiently
-  trong P7 sau authorization/binding.
-- Provider media/raw result retention tối đa `24 giờ` và phải đủ cho reconciliation.
-- Callback payload chỉ lưu mã hóa tạm thời để async process.
-- Canonical sensitive field chỉ lưu nếu nằm trong fixed approved result set.
-
-### 7.2.5. Retention and purge policy
-
-Các giá trị sau là technical maximum baseline. Data Privacy/Legal có quyền yêu cầu
-thời hạn ngắn hơn. Mọi yêu cầu kéo dài phải có purpose, lawful basis, owner,
-approval và cập nhật DPIA/DPA trước khi thay đổi cấu hình.
-
-| **Dữ liệu** | **Retention tính từ** | **Thời hạn tối đa** | **Purge mechanism** | **Owner/approval** |
-| --- | --- | --- | --- | --- |
-| Verification session/run và Canonical Result fixed fields | `terminalAt` | `90 ngày` | Xóa encrypted sensitive fields/check details; giữ tombstone tối thiểu không chứa PII để chống xử lý lặp | Product + Data Privacy/Legal — phải ratify trước go-live |
-| State/access history có PII reference | `terminalAt` | `90 ngày` | Xóa/anonymize subject/business reference; giữ aggregate không định danh | Product + Data Privacy/Legal |
-| Callback Inbox payload — `PROCESSED` | `processedAt` | `24 giờ` | Batch hard-delete ciphertext sau khi result/history commit thành công | Ops + Data Privacy |
-| Callback Inbox payload — `FAILED/QUARANTINED` | `lastFailedAt` | `7 ngày` | Retry có giới hạn, export troubleshooting bị cấm; hết hạn hard-delete và ghi purge audit | Ops + ANBM + Data Privacy |
-| Callback event metadata/hash không chứa PII | `receivedAt` | `90 ngày` | Batch delete theo partition/date; terminal guard vẫn là lớp chống duplicate cuối | Ops/ANBM |
-| Masked application/security log | `eventTime` | `30 ngày` | Index lifecycle deletion; không archive body/PII | Ops/ANBM/Data Privacy |
-| Audit record không chứa payload/media | `eventTime` | `365 ngày` | Delete/anonymize theo audit standard; extension cần compliance approval | ANBM/Audit/Data Privacy |
-| VHM Media Vault object + encrypted reference | Theo terminal/review/legal event của approved policy class | Không hard-code trong TDD; `retainUntil` được tính từ versioned purpose-bound policy | Delete object/version/derived artifact/encrypted ref; expire cached/presigned access; legal hold cần owner/reason/expiry | Product + Legal/Data Privacy + ANBM/Ops — go-live policy gate |
-| S3 Intake/orphan/incomplete multipart | Upload-session creation/last part | Short operational window theo approved upload policy; không dùng làm business retention | Abort multipart, delete orphan/unsubmitted object và ghi purge metric/audit | Cloud/Ops/ANBM |
-| eKYC Provider Backend media/raw result | Provider completion | Theo signed provider contract/DPA | Provider lifecycle/deletion API hoặc contract evidence; VHM copy tuân thủ policy riêng | Legal/Data Privacy/Provider — DPA sign-off bắt buộc |
-| RDS automated backup/PITR chứa record chưa purge | Backup creation | `35 ngày` | Hết backup window tự xóa; restore phải chạy purge/tombstone replay trước mở truy cập | DBA/Ops/Data Privacy |
-
-Purge implementation bắt buộc:
-
-- Job chạy tối thiểu mỗi ngày, batch `<= 500` rows, dùng lease/`SKIP LOCKED`, có
-  rate limit và không khóa bảng dài.
-- Eligibility dùng server timestamp và approved policy version; legal hold loại
-  record khỏi purge nhưng phải có owner, reason và expiry.
-- Callback payload purge chỉ chạy khi canonical transaction đã commit hoặc record
-  đã hết quarantine window; không giữ ciphertext để debug vô thời hạn.
-- Canonical purge xóa field/check nhạy cảm và subject reference; tombstone chỉ giữ
-  `verificationId`, terminal status, policy version, purge time và non-PII hash cần
-  cho idempotency/audit.
-- Provider deletion phải có request/response hoặc contractual lifecycle evidence;
-  lỗi deletion vào retry queue và alert theo SLA.
-- Metrics: eligible/deleted/failed rows, oldest eligible age, legal-hold count và
-  provider-deletion backlog. Purge failure quá `24 giờ` phải alert Data Privacy/Ops.
-- Restore từ backup phải chạy retention sweep trước khi cho application traffic;
-  backup expiry không được dùng để kéo dài live-data retention.
-- Media purge phải xóa S3 current/noncurrent versions, derived object, encrypted
-  DB reference và cached reveal entry; presigned URL còn hiệu lực phải được giảm
-  rủi ro bằng short validity/bucket emergency deny runbook.
-- Mỗi media record lưu `retentionPolicyId`, `retentionClass`, `retainUntil` và
-  legal-hold state. Duration nằm trong external approved policy, không hard-code
-  hoặc suy ra từ generic “manual review”.
-
-### 7.2.6. Data subject request
-
-- Xác minh requester và scope trước export/delete.
-- Tìm theo opaque subject/business mapping đã được BFF authorize.
-- Export chỉ field được phép, đã mask theo legal/privacy rule.
-- Delete/anonymize session/result theo retention/legal hold và ghi audit.
-- Xóa Media Vault object/version/encrypted reference theo retention/legal hold và
-  invalidate reveal cache; không export raw URL trong data-subject response.
-- Gửi provider deletion request khi contract/purpose yêu cầu.
-- Backup deletion xử lý theo backup expiry/tombstone policy đã phê duyệt.
-
-### 7.2.7. Access controls
-
-- Service access theo least privilege và business-object scope.
-- DBA không mặc định đọc plaintext sensitive fields.
-- Unmask và bulk export cần elevated role, reason, approval/audit theo policy.
-- Production support không được xem raw callback/media; chỉ approved Manual Review
-  role trong assigned object scope được list/reveal media theo `REVIEW-01`.
-- Periodic access review và key/secret rotation evidence bắt buộc.
-
-## 7.3. Threat Model
+## 9.2 Threat Model
 
 | **Threat** | **Vector** | **Mitigation** |
 | --- | --- | --- |
@@ -2390,7 +2010,521 @@ Purge implementation bắt buộc:
 | DB restore duplicate | Inbox/result xử lý lại | Unique keys, terminal guard, idempotent worker |
 | Dependency outage | Provider/DB unavailable | Circuit breaker, reconciliation, Multi-AZ, backup/recovery |
 
-## 7.4. Security Test Cases tối thiểu
+# 10. Deployment & Infrastructure Topology
+
+## 10.1 Environments
+
+| **Environment** | **Purpose** | **Availability** | **Infrastructure** | **Internet exposure** | **Data type** | **HA/DR** | **Key differences/constraints** |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Development | Phát triển và unit/component integration | Theo giờ làm việc/platform standard | VHM non-production AWS/EKS | Không public; egress sandbox theo allowlist | Synthetic only | Không yêu cầu DR | Có thể dùng provider mock; không dùng production credential/data. |
+| SIT | Contract, DB integration, callback và security integration | Theo test window được duyệt | Isolated non-production AWS/EKS | Ingress restricted; provider staging only | Synthetic/masked test data | Restore test theo kế hoạch | Callback key/endpoint riêng; cấu hình gần production. |
+| UAT | Product/UX/Risk/Privacy acceptance trên Mobile và Web | Theo UAT plan | Production-like non-production environment | Restricted tester access | Synthetic hoặc approved masked data | Theo platform non-prod standard | Provider staging; fixed journey/document/profile như production candidate. |
+| Production | Vận hành OCR/eKYC chính thức | Theo SLA/SLO được phê duyệt | AWS Singapore, EKS, RDS/Redis managed services | WAF/API ingress; workload/data private | Production personal data theo approved purpose | Multi-AZ, PITR và DR policy | Provider production endpoint; mọi thay đổi qua approval/canary/rollback. |
+
+Availability window chi tiết, quyền truy cập và platform-standard version là
+approval input tại Appendix C; không được dùng production data ở non-production
+nếu chưa có phê duyệt Data Privacy bằng văn bản.
+
+## 10.2 Production Deployment Diagram
+
+```mermaid
+flowchart TB
+    CLIENT(["VHM Mobile / Web<br/>+ eKYC SDK"]):::entity
+    PROVIDER(["eKYC Provider Backend (ext)"]):::entity
+
+    subgraph LZ["AWS Landing Zone — Singapore (ap-southeast-1)"]
+        subgraph ACCOUNT["VHM Production Account"]
+            subgraph VPC["V-App VPC — trust boundary · Multi-AZ"]
+                subgraph AZ["Availability Zone đại diện (×2)"]
+                    subgraph EDGE["DMZ / Public subnet"]
+                        GATEWAY["CDN / WAF / API Gateway<br/>Nginx Ingress"]:::infra
+                    end
+                    subgraph APPZONE["Private subnet — Amazon EKS"]
+                        BFF["VHM BFF<br/>control + streaming ingress"]:::bc
+                        EKYC_SERVICE["VHM eKYC Service<br/>API · SDK proxy adapter · Callback · Workers"]:::bc
+                        UPLOAD_WORKLOAD["P6 Media Upload Control<br/>/ Finalizer"]:::bc
+                        REVEAL_WORKLOAD["P7 Controlled Media Reveal<br/>/ Private File Adapter"]:::bc
+                    end
+                    subgraph DATAZONE["Data subnet — isolated"]
+                        RDS[("eKYC PostgreSQL<br/>RDS Multi-AZ")]:::datastore
+                        REDIS[("ElastiCache Redis<br/>ephemeral only")]:::datastore
+                    end
+                end
+            end
+            subgraph SHARED["Regional shared managed services"]
+                SECRET["Secrets Manager / KMS"]:::infra
+                S3[("S3 Intake / Encrypted Media Vault")]:::datastore
+                OBS["Metrics / Logs / APM"]:::infra
+            end
+        end
+    end
+
+    CLIENT -->|session / SDK / status / result| GATEWAY
+    CLIENT -->|upload session / manifest| GATEWAY
+    CLIENT -->|short-lived exact presigned PUT/multipart| S3
+    PROVIDER -->|provider callback result| GATEWAY
+    GATEWAY -->|route VHM and SDK requests| BFF
+    GATEWAY -->|route provider callback| EKYC_SERVICE
+    GATEWAY -->|route authorized media reveal| REVEAL_WORKLOAD
+    BFF -->|workload identity + bounded stream| EKYC_SERVICE
+    EKYC_SERVICE -->|read/write/claim| RDS
+    EKYC_SERVICE -->|rate/replay state| REDIS
+    EKYC_SERVICE -->|provider credential/key ref| SECRET
+    EKYC_SERVICE -->|verification/result milestone context| UPLOAD_WORKLOAD
+    UPLOAD_WORKLOAD -->|validate/finalize media| S3
+    UPLOAD_WORKLOAD -->|encrypt object reference| SECRET
+    UPLOAD_WORKLOAD -->|manifest + encrypted ref| RDS
+    REVEAL_WORKLOAD -->|prepare short-lived GET| S3
+    REVEAL_WORKLOAD -->|decrypt object reference| SECRET
+    REVEAL_WORKLOAD -->|read metadata + append access audit| RDS
+    REVEAL_WORKLOAD -->|scoped ephemeral cache| REDIS
+    BFF -.->|metadata-only telemetry| OBS
+    EKYC_SERVICE -.->|masked telemetry| OBS
+    EKYC_SERVICE ==>|init/OCR/liveness stream + Get Result| PROVIDER
+
+    classDef bc fill:#1f3a5f,stroke:#4a90d9,color:#fff;
+    classDef entity fill:#3a3320,stroke:#d9b84a,color:#fff;
+    classDef datastore fill:#3a2d4a,stroke:#a06fd9,color:#fff;
+    classDef infra fill:#444,stroke:#aaa,color:#fff;
+```
+
+Sơ đồ vẽ một AZ đại diện; production trải tối thiểu hai AZ. RDS là datastore do
+VHM eKYC Service sở hữu. `==>` biểu diễn egress từ VHM trust boundary
+tới eKYC Provider Backend; chi tiết giao thức/cổng nằm trong Network Flow Matrix.
+P6 và P7 có thể dùng chung codebase/release train nhưng chạy thành deployment unit
+và Kubernetes service account riêng trong cùng EKS: P6 chỉ có write/finalize
+capability, còn P7 chỉ có privileged read/reveal capability với audit fail-closed.
+
+### 10.2.1. Network topology
+
+- VHM API và callback ingress đi qua WAF/API Gateway/Nginx Ingress.
+- VHM BFF và VHM eKYC Service chạy private trong EKS; chỉ ingress được expose
+  qua WAF/API Gateway. Presigned media bytes đi từ client thẳng tới S3.
+- RDS, Redis và Secrets/KMS chỉ truy cập qua private network control.
+- S3 Intake/Vault bật public-access block; Intake chỉ nhận exact presigned write.
+  P6 dùng workload IAM write/finalize riêng; P7 dùng workload IAM read/reveal
+  riêng qua private endpoint, không dùng chung quyền S3/KMS.
+- Chỉ callback route được public cho eKYC Provider Backend và phải có strong authentication.
+- Egress tới eKYC Provider Backend dùng allowlist, timeout, circuit breaker và audit.
+
+### 10.2.2. Network Flow Matrix
+
+| **Source** | **Destination** | **Protocol** | **Data** | **Control** |
+| --- | --- | --- | --- | --- |
+| Mobile/Web | VHM BFF | HTTPS 443 | Session/status/retry/result | JWT, WAF, rate limit |
+| Mobile/Web SDK | VHM BFF | HTTPS 443 | Init/OCR/liveness stream | SDK session token, Client UUID/run binding, body-size limit |
+| Mobile/Web | VHM S3 Intake | HTTPS 443 | Document/direct-face/liveness upload | Exact short-lived presigned PUT/multipart, size/MIME/checksum, no read/list |
+| VHM BFF | VHM eKYC Service | HTTPS/mTLS | Authorized command/query và SDK media stream | Workload identity, timeout, backpressure |
+| VHM eKYC Service | eKYC Provider Backend | HTTPS 443 | Init/OCR/liveness stream, Get Result | Provider authentication, allowlist, circuit breaker |
+| eKYC Provider Backend | Platform ingress → Callback API của VHM eKYC Service | HTTPS 443 | Provider result | Callback authentication, WAF, replay/dedupe; không qua VHM BFF |
+| VHM eKYC Service/Worker | PostgreSQL | TLS | Session/result/inbox/audit | Security group, DB role, KMS |
+| VHM eKYC Service | Redis | TLS | Rate limit/replay/ephemeral cache | Private endpoint, auth, TTL |
+| P6 Media Upload Control/Finalizer | S3 Intake/Vault + KMS | HTTPS 443/private endpoint | Validate object, seal AES-GCM-encrypted reference và lifecycle metadata | Write/finalize-only workload IAM, KMS encrypt grant, no plaintext path log/persistence |
+| Authorized manual-review caller | Platform ingress → P7 Controlled Media Reveal | HTTPS 443 | Encrypted-ref list, bounded reveal request và short-lived presigned download | IAM, platform role, assignment/business-object scope, cap/binding, URL expiry/cache control và access audit |
+| P7 Controlled Media Reveal | PostgreSQL + S3 Media Vault + KMS | TLS/HTTPS 443/private endpoint | Read media metadata, decrypt selected object refs và prepare short-lived GET | Read/reveal-only workload IAM, KMS decrypt grant, audit fail closed; không có quyền upload/finalize |
+| Services | Monitoring/Logging | TLS | Masked telemetry | No PII/secret, access control |
+
+## 10.3 CI/CD and Deployment Strategy
+
+### 10.3.1 DevSecOps Gates
+
+- Compile/unit test và dependency lock validation.
+- SCA/license scan cho backend, Mobile, Web và SDK artifact.
+- Secret scan, SAST và IaC scan.
+- Container vulnerability scan.
+- DB migration compatibility/integration test.
+- API/provider contract test.
+- Mobile/Web client E2E evidence.
+- Security/privacy approval gates.
+- Immutable artifact promotion; không rebuild giữa environment.
+
+### 10.3.2 Deployment Strategy
+
+| **Component/service** | **Deployment type** | **Expected downtime** | **Rollback strategy** | **Deployment window** | **Approval required** |
+| --- | --- | --- | --- | --- | --- |
+| VHM BFF | Canary hoặc rolling | Không dự kiến | Stop rollout, route về immutable artifact trước; giữ route contract tương thích | Theo standard release window | BFF Owner/Ops |
+| VHM eKYC Service Verification/Result/SDK Proxy API | Canary hoặc rolling | Không dự kiến | Stop rollout, route về immutable artifact trước; không retry media đang gửi | Theo standard release window | Service Owner/Ops |
+| Callback API | Canary/rolling độc lập | Không dự kiến; callback ingress phải luôn available | Route về artifact trước, giữ inbox schema backward-compatible | Tránh provider maintenance window | Service Owner/Ops |
+| Inbox/Reconciliation Workers | Rolling với bounded drain | Không ảnh hưởng API; backlog có kiểm soát | Dừng worker mới, deploy artifact trước, resume lease an toàn | Bất kỳ khi backlog trong threshold | Service Owner/Ops |
+| P6 Media Upload Control/Finalizer | Rolling với bounded drain | Upload tiếp tục vào Intake trong bounded capacity; finalization backlog có kiểm soát | Stop rollout, giữ encrypted-ref format backward-compatible, deploy artifact trước và resume bounded finalizer | Theo service window/backlog threshold | Service Owner/ANBM/Ops |
+| P7 Controlled Media Reveal/Private File Adapter | Canary hoặc rolling | Không ảnh hưởng upload; khi lỗi phải fail closed và không trả URL | Stop rollout, route về artifact trước; revoke hoặc để hết hạn URL đã cấp theo runbook | Theo service window | Service Owner/ANBM/Ops |
+| S3 bucket/KMS policy | IaC staged change | Không dự kiến | Revert policy/version; break-glass chỉ theo approved runbook | Security change window | Cloud + ANBM + Data Privacy |
+| Database schema | Expand/contract phased migration | Không hoặc minimal theo approved plan | Backward-compatible code/schema; restore chỉ là phương án cuối | Maintenance window nếu có lock risk | DBA + Architecture |
+| Mobile/Web SDK/profile | Controlled cohort theo compatibility matrix | Không downtime backend | Dừng cohort, rollback app/web/config version | Client release window | Product + Client Owner |
+| Provider credential/callback token | Overlap rotation | Không dự kiến | Giữ old/new material trong overlap, revoke sau evidence | Coordinated security window | ANBM + eKYC Provider Backend |
+
+Khi incident dependency, có thể dừng create session nhưng tiếp tục nhận callback và
+reconciliation nếu các control bảo mật/toàn vẹn vẫn an toàn.
+
+## 10.4 Configuration Management
+
+### 10.4.1. SDK configuration baseline
+
+| **Nhóm** | **Baseline** | **Owner** |
+| --- | --- | --- |
+| Channels | Mobile và Web | Product/Client Teams |
+| Journeys | `OCR_ONLY`, `FULL_EKYC` | Product/Risk |
+| Document | `NATIONAL_ID_CHIP`, front/back | Product/SDK Team |
+| Result page | `OFF`; VHM Application sở hữu post-SDK screen | Product/UX |
+| Guidance/progress | `ON` | Product/UX |
+| Liveness | Bắt buộc trong `FULL_EKYC` | Product/Risk/Security |
+| Screenshot/capture security | Block/detect nơi SDK hỗ trợ | Security/Client Teams |
+| Session timeout | Theo approved journey/session policy, đồng bộ backend | Backend/SDK Team |
+| Client compatibility | Mobile/Web/SDK matrix được pin version | Client/SDK Teams |
+| Required media | Type/part theo journey/outcome; document front/back, direct-face và feature-gated liveness video | Product/SDK/Data Privacy |
+| Upload | Presigned expiry, size/MIME/checksum/multipart policy theo operation | Backend/Client/ANBM/Ops |
+| Retention | Versioned purpose-bound policy ID/class; duration không hard-code trong TDD | Product/Legal/Data Privacy/Ops |
+
+### 10.4.2. Change governance
+
+1. Tạo change ticket và mô tả business/security/privacy impact.
+2. Update versioned config/schema/contract fixture.
+3. Review Product/Risk/Architect/Security/Privacy theo loại thay đổi.
+4. Test sandbox/SIT/UAT trên Mobile và Web liên quan.
+5. Canary/controlled rollout và theo dõi metric.
+6. Rollback về config/artifact version trước nếu breach threshold.
+7. Lưu approval, evidence và effective time.
+
+## 10.5 Infrastructure & Network Security
+
+Infrastructure/network controls được mô tả tại mục 9.1.1 và Network Flow Matrix tại mục 10.2.2; không lặp lại platform-standard control tại đây.
+
+## 10.6 Migration Strategy
+
+Không có data migration từ hệ thống legacy trong phạm vi hiện tại. Mọi migration/backfill dữ liệu eKYC hiện hữu phải có scope, privacy assessment và ADR riêng.
+
+# 11. Cost & Capacity/Performance
+
+## 11.1 Capacity/Performance
+
+### 11.1.1 Capacity/Performance Targets
+
+| **Metric** | **Target value** | **Status/remarks** |
+| --- | --- | --- |
+| Platform availability | Theo approved VHM platform availability SLO | Target chốt tại NFR sign-off; provider SLA đo riêng. |
+| Create session latency | Đo p95 qua BFF/VHM eKYC Service/DB; không có synchronous eKYC Provider Backend call | Target theo approved VHM API SLO — `PENDING NFR SIGN-OFF`. |
+| Status/Result API latency | Đo p95/p99 với dữ liệu đã persist | Target theo approved VHM read-API SLO — `PENDING NFR SIGN-OFF`. |
+| Callback durable acknowledgement | Durable receive trước khi trả 2xx; không chờ normalize/finalize | Target phải nằm trong provider callback timeout với approved safety margin — `PENDING PROVIDER CONTRACT`. |
+| Callback durable→Canonical Result | Đo p95/p99 và oldest inbox age | Target cùng warning/critical threshold chốt tại NFR/Ops sign-off. |
+| Reconciliation recovery deadline | Hoàn tất trước provider retention với approved safety margin | Backlog ceiling phụ thuộc measured throughput/quota; margin chốt tại recovery sign-off. |
+| Concurrent sessions Mobile/Web | Chưa có input — `BLOCKING` | Bắt buộc điền worksheet 11.1.2 trước capacity sign-off. |
+| Peak create/status/result TPS | Chưa có input — `BLOCKING` | Bắt buộc điền worksheet 11.1.2 trước capacity sign-off. |
+| Callback burst TPS/payload p95-p99 | Chưa có input — `BLOCKING` | eKYC Provider Backend/Ops cung cấp và xác nhận bằng callback load test. |
+| Concurrent SDK media streams | Chưa có input — `BLOCKING` | Đo riêng BFF và VHM eKYC Service trong streaming load test. |
+| Media size/upload duration p95-p99 | Theo security ceiling mục 9.1.4; phân phối thực tế chưa có — `BLOCKING` | Dùng để chốt timeout, bandwidth, HPA và memory budget. |
+| Streaming memory per connection | Theo `MEDIA-01`, không tỷ lệ theo body size | Load/memory/disk evidence. |
+| Presigned upload success/duration | Đo theo media type/channel và multipart video | Target chốt theo upload UX/NFR; không dùng mediaId/PII làm label. |
+| Media finalize latency/backlog | Upload accepted → validated object + encrypted ref `READY`, p95/p99 và oldest age | Phải nằm trong finalization/evidence-ready SLO trước terminal exposure. |
+| Manual Review reveal latency/concurrency | Encrypted-ref list, decrypt/presign duration, URL issuance và cache hit/fallback | Target chốt theo OAT; cache không được vượt URL validity hoặc scope. |
+| Data volume/growth | Chưa có media volume/retention-policy input — `BLOCKING` | Data Privacy/Ops/Cloud xác nhận bằng policy class và sizing model. |
+
+### 11.1.2 Capacity Inputs Required Before Production
+
+| **Input bắt buộc** | **Đơn vị** | **Design value** | **Evidence yêu cầu** | **Owner** |
+| --- | --- | --- | --- | --- |
+| Daily session Mobile/Web | session/ngày theo channel | `UNRESOLVED` | Product forecast được phê duyệt | Product/Ops |
+| Peak concurrent active session | session đồng thời theo channel | `UNRESOLVED` | Forecast + journey-duration p95/p99 | Product/Ops |
+| Peak create/status/result | TPS p95/p99 và burst duration | `UNRESOLVED` | Access pattern/forecast | Product/Ops |
+| Callback burst | TPS, duration, payload p95/p99 | `UNRESOLVED` | Provider contract hoặc staging measurement | eKYC Provider Backend/Ops |
+| Concurrent media stream | stream đồng thời | `UNRESOLVED` | Mobile/Web concurrency model | Product/Client/Ops |
+| Media distribution | byte và upload duration p50/p95/p99 | `UNRESOLVED` | SDK staging measurement cho OCR/liveness | Client/eKYC Provider Backend |
+| Media type mix | object/attempt, image/video byte p50/p95/p99, multipart rate | `UNRESOLVED` | SDK fixture và UAT/performance measurement | Client/Product/Ops |
+| Media retention classes | policy class mix và planning horizon; TDD không hard-code duration | `UNRESOLVED` | Approved purpose-bound retention policy + capacity scenario | Data Privacy/Legal/Product/Cloud |
+| Manual Review workload | cases/day, concurrent reviewer, views/case, video playback/egress | `UNRESOLVED` | Operations forecast/OAT | Business Ops/Cloud |
+| Journey/retry mix | `% OCR_ONLY`, `% FULL_EKYC`, retry rate | `UNRESOLVED` | Product funnel forecast | Product/Risk |
+| Reconciliation workload | due session/phút, sustainable Get Result throughput, retry budget | `UNRESOLVED` | Callback SLA, retention, provider quota và load test để tính backlog ceiling | Ops/eKYC Provider Backend |
+| Provider quota/SLA | request/TPS/concurrency/maintenance | `UNRESOLVED` | Contract/SLA evidence | Procurement/Ops |
+| Data growth | record/day, byte/record, retention | `UNRESOLVED` | Fixed field set + retention decision | Product/Data Privacy/DBA |
+
+`UNRESOLVED` là approval blocker, không phải giá trị mặc định để dev tự chọn.
+Sizing phải dùng tối thiểu các công thức sau và đính kèm spreadsheet/load-test
+evidence:
+
+- `peakConcurrency = peakArrivalRate × journeyDurationP99 × safetyFactor`.
+- `requiredReplicas = ceil(peakConcurrentWork / measuredCapacityPerPod) + HA headroom`.
+- RDS storage/IOPS/connection sizing dựa trên measured write amplification,
+  callback burst, retention và restore-window requirement.
+- Safety factor và HA headroom do Architecture/Ops ký duyệt; không lấy production
+  replica count từ sample hoặc môi trường SIT.
+
+## 11.2 Cost
+
+| **Component** | **Description/mode** | **Capacity/count** | **Cost** | **Owner/status** |
+| --- | --- | --- | --- | --- |
+| EKS workload | VHM BFF, VHM eKYC Service API/SDK proxy adapter, Callback API và workers | TBD theo peak control/upload-control TPS + concurrent provider streams | TBD | Platform/Ops — trước production readiness |
+| RDS PostgreSQL | Multi-AZ, encrypted storage, PITR | TBD theo data volume/IOPS | TBD | DBA/Ops |
+| ElastiCache Redis | Rate limit, replay và ephemeral cache | TBD theo peak request/replay window | TBD | Platform/Ops |
+| WAF/API Gateway/Ingress | API/upload control-plane, SDK provider-processing stream và callback ingress | TBD theo request volume/bandwidth | TBD | Cloud/Ops |
+| Network data transfer | Media transit SDK → BFF → VHM eKYC Service → eKYC Provider Backend | TBD theo media size, retry và volume | TBD | Cloud/Ops/Finance |
+| S3 Intake/Media Vault | Presigned upload, ciphertext object/version, lifecycle, request và retrieval | TBD theo media mix + versioned retention policy | TBD | Cloud/Ops/Data Privacy/Finance |
+| Network data transfer — media | Client→S3 upload, finalizer read/write và manual-review stream/video | TBD theo media size, retry, review workload và lifecycle | TBD | Cloud/Ops/Finance |
+| Secrets/KMS | Credential, callback key, field encryption và media data-key wrap/unwrap | TBD theo key/request count | TBD | ANBM/Cloud |
+| Monitoring/Logging/APM | Masked metrics, logs, traces và audit | TBD theo ingestion/retention | TBD | Ops/Data Privacy |
+| SDK/provider usage | OCR/eKYC transaction theo journey/attempt | TBD theo volume và retry rate | TBD | Product/Procurement |
+| **Total monthly estimate** | AWS + provider usage | — | **TBD** | Finance/Product approval gate |
+
+**Công cụ bắt buộc:** [AWS Pricing Calculator](https://calculator.aws/).
+
+| **Cost approval artefact** | **Giá trị/link** | **Owner** | **Gate** |
+| --- | --- | --- | --- |
+| AWS estimate share/export | `UNRESOLVED` | Cloud/Ops | Bắt buộc trước Architecture/Finance sign-off |
+| Tổng AWS monthly estimate | `UNRESOLVED` USD/tháng | Cloud/Ops/Finance | Phải khớp capacity worksheet 11.1.2 |
+| Provider pricing model và monthly estimate | `UNRESOLVED` | Product/Procurement/Finance | Phải gồm OCR/FULL_EKYC/retry/reconciliation usage |
+| Cost assumptions | `UNRESOLVED` | Cloud/Ops | Region, hours/month, data transfer, log retention, backup và headroom |
+| Budget/quota/alert threshold | `UNRESOLVED` | Product/Ops/Finance | Có dashboard, owner và stop-create/escalation rule |
+
+Không được dùng bảng `TBD` phía trên như cost estimate. Tài liệu chỉ qua cost gate
+khi có calculator export/share link, provider quotation và tổng chi phí tháng đã
+được Finance/Product ký duyệt.
+
+# 12. Scalability & Reliability
+
+## 12.1 Scaling Strategy
+
+| **Component** | **Scale** | **Signal** |
+| --- | --- | --- |
+| VHM BFF | HPA; route/pool riêng cho control và SDK data-plane | Request rate, active streams, network throughput, p95 latency, memory |
+| Verification API | HPA | CPU, request rate, p95 latency |
+| SDK Proxy Adapter của VHM eKYC Service | HPA/pool riêng trong VHM eKYC Service deployment | Active streams, upstream latency, timeout, network throughput, bounded-buffer memory |
+| Callback API | HPA độc lập | Callback TPS, ack latency, 5xx |
+| Inbox Worker | Horizontal worker | Pending count, oldest age, processing latency |
+| Reconciliation Worker | Horizontal + bounded lease | Due count/age, provider quota, lock wait |
+| P6 Media Upload Control/Finalizer | Horizontal + bounded claim | Uploaded/failed count, oldest age, bytes, crypto/S3 latency và terminal-blocked sessions |
+| P7 Controlled Media Reveal/Private File Adapter | Horizontal/pool riêng | List/reveal rate, capped batch, authorization deny, cache hit/fallback, presign latency/error |
+| PostgreSQL | Multi-AZ + connection pool | CPU, IOPS, connection, lock wait, table/index growth |
+| Redis | Managed scale | Memory, eviction, connection, command latency |
+
+Worker claim batch bằng row lock/`SKIP LOCKED` hoặc lease tương đương. Mọi batch
+phải bounded và tôn trọng provider quota; không dùng unbounded polling.
+
+## 12.2 Reliability
+
+### 12.2.1 Backup Scope
+
+Backup:
+
+- `identity_verification` và retry links.
+- Verification run, checks, fixed normalized fields và Canonical Result.
+- Callback inbox metadata/encrypted payload còn trong TTL.
+- Media manifest, AES-GCM-encrypted object references, retention/legal-hold metadata,
+  manual-review access audit và decision history.
+- Media Vault objects/versions/replicas nằm trong approved media DR policy; backup
+  không được kéo dài retention hoặc phục hồi object đã purge hợp lệ.
+- State/access history và reconciliation schedule.
+- Versioned non-secret configuration/policy metadata.
+- Secret/key references và rotation metadata theo Secret Manager/KMS strategy.
+
+Không backup như business source:
+
+- Mobile/Web/SDK cache.
+- Redis ephemeral rate-limit/replay entries.
+- VHM SDK session/callback access token.
+- S3 Intake/orphan/incomplete multipart media chưa được submit/finalize.
+- Presigned upload/download URL và Caffeine/Redis presign cache.
+- Raw provider payload ngoài encrypted Callback Inbox TTL.
+
+### 12.2.2 Backup Strategy
+
+- RDS Multi-AZ, automated backup và PITR.
+- Backup encryption bằng KMS và access role riêng.
+- Cross-account/cross-region copy theo VHM DR policy nếu được phê duyệt.
+- Retention backup phù hợp Data Privacy; không giữ sensitive data vô hạn.
+- Restore test định kỳ trên isolated environment với masked/synthetic validation.
+- Config versioned repository và immutable artifact registry là nguồn phục hồi deployment.
+- Secret/key recovery theo Secrets Manager/KMS runbook; không export plaintext key.
+- S3 Media Vault dùng versioning/replication/backup theo approved DR và Data Privacy
+  policy; lifecycle áp dụng cho current/noncurrent version và replica.
+- RDS media manifest và S3 object inventory được đối soát sau restore. Object thiếu,
+  dangling encrypted ref hoặc object đã quá `retainUntil` phải quarantine/purge;
+  không mở Manual Review trước khi consistency sweep hoàn tất.
+
+### 12.2.3 Reliability Decisions
+
+| **Component/service** | **Reliability pattern** | **Failure handling** | **Backup/recovery consideration** | **Approval required** |
+| --- | --- | --- | --- | --- |
+| Verification/Result API | Stateless horizontal replicas, readiness và circuit breaker | Timeout/bounded retry cho safe operation; không retry blind mutation | Artifact/config redeploy + RDS recovery | Không nếu theo platform standard |
+| Callback API/Inbox | Durable inbox, dedupe key và independent scaling | Durable ack trước async processing; quarantine invalid schema | Inbox nằm trong RDS/PITR nhưng payload tuân thủ TTL | ANBM/Ops cho auth/TTL baseline |
+| Reconciliation Worker | Lease/`SKIP LOCKED`, backoff và provider quota guard | Recover callback lost/stuck session; hết budget đóng `status=COMPLETED`, `outcome=PROVIDER_ERROR` | Schedule/state phục hồi từ PostgreSQL | eKYC Provider Backend/Ops cho quota/recovery budget |
+| PostgreSQL | RDS Multi-AZ, connection pool, PITR | Automatic failover; degrade create/read theo incident mode | Restore drill chứng minh RTO/RPO và idempotency | DBA/Ops |
+| Redis | Managed service, TTL và không là source of truth | Cache/replay degradation không được làm sai lifecycle/final outcome | Có thể rebuild; không yêu cầu business restore | Không |
+| S3 Intake/P6 Media Upload Finalizer | Direct presigned upload + idempotent manifest + orphan lifecycle | Upload URL có thể cấp lại; finalizer bounded retry; không expose `status=COMPLETED`/final outcome khi required media chưa `READY` | Intake không backup; submitted object phải finalize hoặc purge theo policy | Cloud/Ops/ANBM |
+| S3 Media Vault | Private SSE-KMS object store, version/lifecycle/inventory | S3/KMS lỗi giữ evidence-pending; reveal fail closed | Versioning/replication/restore theo approved DR; retention sweep ngăn resurrect purged media | Cloud/Ops/Data Privacy |
+| P7 Controlled Media Reveal/Presign cache | Stateless API + Caffeine L1/Redisson L2 + direct-presign fallback | Redis lỗi fallback direct; audit store lỗi không trả URL | Cache/presigned URL không backup; rebuild/expire tự nhiên; encrypted refs phục hồi từ RDS | ANBM/Ops/Audit |
+| eKYC Provider Backend dependency | Timeout, circuit breaker, callback + Get Result reconciliation | Tạm dừng create khi dependency incident; không biến lỗi kỹ thuật thành `outcome=REJECTED` | Khôi phục result trong provider retention window | SLA/risk acceptance bắt buộc |
+
+Single point of dependency còn lại là eKYC Provider Backend của một provider; rủi ro và
+acceptance được ghi tại Architecture Risk Register.
+
+### 12.2.4 Provider Outage and Backlog Recovery
+
+- Khi provider unavailable, VHM dừng create/session mới theo circuit-breaker policy;
+  các session đã submit giữ `status=PROCESSING`, chưa gán final outcome và không
+  chuyển thành `outcome=REJECTED` do lỗi kỹ thuật.
+- Callback API vẫn durable receive nếu provider còn gửi được callback. Reconciliation
+  tạm backoff có quota guard và được ưu tiên drain ngay khi provider phục hồi.
+- Từ thời điểm provider phục hồi, Ops ưu tiên session có retention deadline gần nhất.
+  Recovery phải hoàn tất trước provider retention với approved safety margin.
+- Maximum admissible reconciliation backlog không dùng một số đoán trước. Ops tính
+  theo `sustainable Get Result throughput × thời gian còn lại trước recovery deadline`
+  và chốt bằng provider quota cùng load-test evidence tại mục 11.1.2.
+- Nếu outage làm vi phạm approved safety margin, kích hoạt critical incident,
+  provider escalation và retention-at-risk dashboard. Outage kéo dài bằng hoặc vượt
+  provider retention không được coi là recoverable mặc định.
+- Nếu callback mất và Get Result đã hết retention, đóng attempt với
+  `status=COMPLETED`, `outcome=PROVIDER_ERROR` và reason
+  `RESULT_UNRECOVERABLE_AFTER_RETENTION`; không reuse media/result,
+  cho `CONTACT_SUPPORT` hoặc whole-attempt retry theo policy. Sự cố theo cụm phải mở
+  incident và review lại retention/quota/backlog control.
+
+# 13. Observability & Monitoring
+
+## 13.1. Metrics
+
+| **Metric** | **Type** | **Labels cho phép** |
+| --- | --- | --- |
+| `identity_verification_sessions_total` | Counter | journey, channel, status, domain |
+| `identity_verification_duration_seconds` | Histogram | journey, channel, final_status |
+| `identity_verification_sdk_event_total` | Counter | channel, event, outcome, app_version, sdk_version |
+| `identity_verification_callback_total` | Counter | auth_result, processing_result |
+| `identity_verification_callback_latency_seconds` | Histogram | provider |
+| `identity_verification_callback_duplicate_total` | Counter | provider |
+| `identity_verification_provider_request_total` | Counter | operation, outcome |
+| `identity_verification_provider_latency_seconds` | Histogram | operation |
+| `identity_verification_sdk_proxy_active_streams` | Gauge | component, operation, channel |
+| `identity_verification_sdk_proxy_bytes` | Histogram | direction, operation, channel |
+| `identity_verification_sdk_proxy_duration_seconds` | Histogram | component, operation, outcome |
+| `identity_verification_sdk_proxy_buffer_bytes` | Gauge | component |
+| `identity_verification_reconciliation_due` | Gauge | provider |
+| `identity_verification_retry_total` | Counter | journey, channel, reason_category |
+| `identity_verification_inbox_failed` | Gauge | failure_category |
+| `identity_verification_media_upload_total` | Counter | channel, media_type, outcome |
+| `identity_verification_media_finalize_duration_seconds` | Histogram | media_type, outcome |
+| `identity_verification_media_finalize_backlog` | Gauge | state, media_type |
+| `identity_verification_media_orphan_total` | Gauge | media_type, age_bucket |
+| `identity_verification_manual_view_total` | Counter | role, media_type, authorization_result, outcome |
+| `identity_verification_manual_view_stream_seconds` | Histogram | media_type, outcome |
+
+Không dùng verification ID, business/subject reference hoặc PII làm metric label.
+
+## 13.2. Logging
+
+Log cho phép: timestamp, service/environment/version, internal verification ID theo
+access policy, trace ID, operation, canonical error, provider HTTP status/duration,
+channel và app/SDK version. Không log credential, token, CCCD, normalized fields,
+media, raw callback, resource URL hoặc biometric score gắn với danh tính.
+
+## 13.3. Alerts
+
+| **Alert** | **Trigger** | **Severity** |
+| --- | --- | --- |
+| Callback authentication/replay failure | Bất kỳ production hoặc tăng đột biến | Critical/High |
+| Provider authentication failure | 401/403 liên tục | Critical |
+| Provider availability | Error rate vượt threshold/evaluation window theo approved provider SLO và alert policy | High |
+| Callback schema/mapping error | Có lỗi kéo dài hoặc sau provider change | High |
+| Callback Inbox backlog — warning | Oldest unprocessed age chạm warning threshold trong approved callback-processing SLO | Medium |
+| Callback Inbox backlog — critical | Oldest unprocessed age vượt critical threshold hoặc estimated drain time vượt recovery budget | Critical |
+| Reconciliation backlog — warning | Estimated drain time chạm recovery deadline hoặc approved safety margin | High |
+| Reconciliation backlog — critical | Bất kỳ session có nguy cơ vượt provider retention trước khi Get Result hoàn tất | Critical |
+| SDK init/crash spike | Tăng theo channel/app/sdk version | High/Medium |
+| SDK proxy saturation | Active streams/network/memory hoặc timeout vượt threshold | High |
+| Media control violation | Phát hiện body log, temp file/disk spool hoặc buffer vượt hard limit | Critical |
+| Presigned upload abuse | Wrong key/checksum/type, denied/reused request spike hoặc unexpected source pattern | High/Critical |
+| Media finalizer backlog | Oldest uploaded media/finalize latency vượt evidence-ready SLO | High/Critical |
+| Media integrity/encryption failure | Checksum mismatch, encrypted-reference AES-GCM authentication fail hoặc KMS deny/error | Critical |
+| Manual Review anomalous access | Denied/unassigned/bulk view spike, expired presigned URL reuse hoặc export attempt | High/Critical |
+| Retry/error spike | Vượt journey/channel baseline | Medium/High |
+| DB connection/lock saturation | Vượt infrastructure threshold | High |
+
+## 13.4. Monitoring standard and SLI/SLO
+
+Referenced VHM monitoring/logging standard và version phải được gắn tại metadata;
+cho tới khi artefact này được cung cấp, các SLI/SLO dưới đây là solution baseline.
+
+| **Critical journey/service** | **SLI** | **SLO/target** | **Measurement/exclusion** |
+| --- | --- | --- | --- |
+| Create verification session | Successful authorized requests và p95 latency | Availability/p95 theo approved VHM platform SLO và mục 11.1.1 | Chỉ gồm BFF/VHM eKYC Service/DB; không có synchronous eKYC Provider Backend call. |
+| SDK data-plane proxy | Successful upstream response, active streams, upload/upstream latency và timeout | Target cụ thể theo mục 11.1.1/provider SLA | Đo riêng BFF và VHM eKYC Service; không dùng media/body/PII làm metric label. |
+| Presigned media persistence | Upload success, finalize success/latency, oldest backlog, orphan/integrity failure | Required media đạt `READY` trong approved evidence-ready SLO | Đo riêng Intake và Vault; terminal-blocked session là critical business signal. |
+| Manual Review media access | Encrypted-ref list/reveal success, authorization deny, presign/cache latency/fallback và audit-write success | Theo approved OAT/Security policy | Không metric label chứa actor/verification/ciphertext/path/URL/PII; restricted audit giữ actor/entity correlation. |
+| Status/Result API | Success rate, p95/p99 và authorization deny rate | Theo approved VHM read-API SLO | Không tính caller cancellation; 4xx business/auth đo riêng; target cụ thể chốt tại NFR sign-off. |
+| Callback ingress | Durable acknowledgement rate/latency | Durable receive và trả 2xx trong provider callback timeout với approved safety margin | Duplicate hợp lệ đo riêng, không tính là business failure. |
+| Callback processing | Callback durable→Canonical Result latency, oldest inbox age, processing success và quarantine count | Theo approved callback-processing SLO và Ops alert policy | Không dùng PII/provider session làm metric label; durable-ack và processing là hai SLI riêng. |
+| Reconciliation | Due backlog age, estimated drain time, recovered-session rate và provider error rate | Hoàn tất trước provider retention với approved safety margin | Số item backlog tối đa = sustainable Get Result throughput × thời gian còn lại trước recovery deadline; throughput/quota phải được load test/provider xác nhận. |
+| Mobile/Web journey | Start→submit→final outcome funnel theo channel/version | Baseline và alert threshold TBD sau UAT/performance test | Không gửi OCR field/media/token vào analytics. |
+
+Telemetry volume, retention và cost phải nằm trong cost estimate; sai lệch khỏi
+monitoring standard cần Architecture/Ops/Data Privacy phê duyệt.
+
+# 14. Operational Readiness
+
+## 14.1 RTO & RPO
+
+| **Hạng mục** | **Baseline** | **Ghi chú** |
+| --- | --- | --- |
+| RTO | `<= 4 giờ` | Bao gồm DB restore, service deploy, validation và worker resume |
+| RPO | `<= 15 phút` | Theo PITR/backup configuration được Ops phê duyệt |
+| Provider result recovery | Trong provider retention window | Get Result chỉ qua Reconciliation Job |
+| Media evidence recovery | Theo approved media DR tier, không vượt `retainUntil` | Khôi phục RDS manifest + S3 object/reference consistency và KMS decrypt-ref evidence |
+| Configuration recovery | Versioned repository + approved baseline | Bao gồm Mobile/Web SDK compatibility |
+| Secret/key recovery | Secrets Manager/KMS runbook | Rotation/revocation evidence bắt buộc |
+
+RTO/RPO cuối cùng phải được System Owner và Operations xác nhận bằng restore drill.
+
+## 14.2 Recovery Verification Checklist
+
+- Schema/version/index/constraint đúng.
+- Callback route/auth/key hoạt động.
+- Create/status/result authorization và masking hoạt động.
+- Có thể dừng create trong khi callback/reconciliation vẫn chạy.
+- Pending/failed inbox được xử lý bounded và không finalize trùng.
+- Non-terminal session được reconcile trong provider retention window.
+- Terminal lifecycle không bị đảo bởi callback/client event trễ.
+- Retry chain, idempotency và active-session constraint còn đúng.
+- Callback encrypted payload TTL/purge job resume đúng.
+- S3 Media Vault object/version/replica khớp manifest/encrypted ref và không có
+  object đã quá retention được mở lại.
+- Presigned upload/reveal config, KMS media-ref decrypt và scoped cache fallback hoạt động.
+- `VIEW_IDENTITY_MEDIA`/`REVEAL_IDENTITY_MEDIA` audit fail closed và không chứa
+  ciphertext/path/URL/PII sau recovery.
+- Dashboard/alerts/incident routing hoạt động.
+- Restore log không chứa PII/secret.
+- Data retention/deletion job tiếp tục đúng policy.
+- Đạt RTO/RPO trong evidence của restore drill.
+
+## 14.3 Operational Readiness Baseline
+
+| **Item** | **Baseline/decision** | **Evidence/approval** |
+| --- | --- | --- |
+| System criticality/security level | Tier 2 — Business Critical; xử lý dữ liệu định danh/sinh trắc học | System Owner + ANBM + Data Privacy |
+| RTO/RPO | RTO `<=4h`, RPO `<=15m` | Restore drill và Ops sign-off |
+| Blast radius — client channel | Mobile hoặc Web lỗi không được làm hỏng provider result/final outcome của channel còn lại | Channel dashboard/E2E evidence |
+| Blast radius — provider | Có thể dừng create mới; callback/reconciliation tiếp tục trong safe mode | Incident mode/runbook và provider escalation |
+| Blast radius — callback worker | API vẫn durable receive tới capacity; backlog được alert và bounded drain | Load/restart test |
+| Blast radius — media upload/finalizer | Có thể dừng create nếu evidence-ready SLA bị vi phạm; uploaded object bounded và không mất manifest | S3/KMS/finalizer incident drill |
+| Blast radius — reveal/audit | Reveal fail closed khi authorization, crypto, S3 hoặc audit unavailable; core result read không tự lộ media | Manual Review incident/OAT evidence |
+| DR model | Multi-AZ HA + backup/PITR restore; cross-region/cross-account theo VHM DR approval | DBA/Cloud/Ops approval |
+| Operational ownership | Service owner, incident route, on-call/escalation và provider contacts: TBD | Go-live blocker |
+| Known exceptions | Một provider; provider SLA/location/retention và organizational-standard version chưa chốt | Risk acceptance hoặc đóng trước approval |
+
+# 15. Testing & Quality Strategy
+
+## 15.1 Quality Gates
+
+| **Layer** | **Nội dung** | **Gate** |
+| --- | --- | --- |
+| Unit | Lifecycle/outcome/milestone guard, idempotency, mapping, masking và retry rules | Critical branches `>=80%` |
+| DB Integration | Constraint, index, locking, inbox, history, reconciliation query | Bắt buộc pass |
+| Provider Contract | SDK init/OCR/liveness proxy, callback, Get Result và error fixtures | Bắt buộc pass |
+| Mobile SDK | Permission, lifecycle, front/back, result page OFF, compatibility matrix | Bắt buộc pass |
+| Web SDK | Camera permission, refresh/reopen/multi-tab, front/back, result page OFF | Bắt buộc pass |
+| API Security | Authn/authz, domain/object scope, SDK session token, masking, body/rate limit | Bắt buộc pass |
+| Media Storage | Presign scope/expiry/reuse, exact key, checksum, multipart, orphan purge, S3/KMS policy và encrypted-reference round-trip | Bắt buộc pass |
+| Manual Review | Platform role/assignment/object IDOR, cap/dedupe, foreign ciphertext all-or-nothing, AES-GCM ref decrypt, cache/URL expiry và PII-safe append-only audit | Bắt buộc pass |
+| E2E | Mobile/Web SDK ↔ BFF ↔ VHM eKYC Service ↔ eKYC Provider Backend staging | Happy + failure paths |
+| Performance | Control API + concurrent media streaming + callback burst/reconciliation | Đạt NFR và `MEDIA-01` |
+| Recovery | DB/provider outage, callback lost, worker restart, PITR | Bắt buộc pass |
+
+## 15.2 Security Test Cases
 
 - Callback token thiếu/sai/hết hạn/sai scope và replay/duplicate.
 - Duplicate/out-of-order callback và cùng event ID khác payload.
@@ -2423,136 +2557,7 @@ Purge implementation bắt buộc:
 - DB/provider outage, callback lost và worker restart.
 - Restore test không finalize terminal result lần hai.
 
-# **8. Backup, Recovery & Operational Readiness**
-
-## 8.1. Phạm vi backup
-
-Backup:
-
-- `identity_verification` và retry links.
-- Verification run, checks, fixed normalized fields và Canonical Result.
-- Callback inbox metadata/encrypted payload còn trong TTL.
-- Media manifest, AES-GCM-encrypted object references, retention/legal-hold metadata,
-  manual-review access audit và decision history.
-- Media Vault objects/versions/replicas nằm trong approved media DR policy; backup
-  không được kéo dài retention hoặc phục hồi object đã purge hợp lệ.
-- State/access history và reconciliation schedule.
-- Versioned non-secret configuration/policy metadata.
-- Secret/key references và rotation metadata theo Secret Manager/KMS strategy.
-
-Không backup như business source:
-
-- Mobile/Web/SDK cache.
-- Redis ephemeral rate-limit/replay entries.
-- VHM SDK session/callback access token.
-- S3 Intake/orphan/incomplete multipart media chưa được submit/finalize.
-- Presigned upload/download URL và Caffeine/Redis presign cache.
-- Raw provider payload ngoài encrypted Callback Inbox TTL.
-
-## 8.2. Backup strategy
-
-- RDS Multi-AZ, automated backup và PITR.
-- Backup encryption bằng KMS và access role riêng.
-- Cross-account/cross-region copy theo VHM DR policy nếu được phê duyệt.
-- Retention backup phù hợp Data Privacy; không giữ sensitive data vô hạn.
-- Restore test định kỳ trên isolated environment với masked/synthetic validation.
-- Config versioned repository và immutable artifact registry là nguồn phục hồi deployment.
-- Secret/key recovery theo Secrets Manager/KMS runbook; không export plaintext key.
-- S3 Media Vault dùng versioning/replication/backup theo approved DR và Data Privacy
-  policy; lifecycle áp dụng cho current/noncurrent version và replica.
-- RDS media manifest và S3 object inventory được đối soát sau restore. Object thiếu,
-  dangling encrypted ref hoặc object đã quá `retainUntil` phải quarantine/purge;
-  không mở Manual Review trước khi consistency sweep hoàn tất.
-
-### 8.2.1. Reliability decisions
-
-| **Component/service** | **Reliability pattern** | **Failure handling** | **Backup/recovery consideration** | **Approval required** |
-| --- | --- | --- | --- | --- |
-| Verification/Result API | Stateless horizontal replicas, readiness và circuit breaker | Timeout/bounded retry cho safe operation; không retry blind mutation | Artifact/config redeploy + RDS recovery | Không nếu theo platform standard |
-| Callback API/Inbox | Durable inbox, dedupe key và independent scaling | Durable ack trước async processing; quarantine invalid schema | Inbox nằm trong RDS/PITR nhưng payload tuân thủ TTL | ANBM/Ops cho auth/TTL baseline |
-| Reconciliation Worker | Lease/`SKIP LOCKED`, backoff và provider quota guard | Recover callback lost/stuck session; hết budget đóng `status=COMPLETED`, `outcome=PROVIDER_ERROR` | Schedule/state phục hồi từ PostgreSQL | eKYC Provider Backend/Ops cho quota/recovery budget |
-| PostgreSQL | RDS Multi-AZ, connection pool, PITR | Automatic failover; degrade create/read theo incident mode | Restore drill chứng minh RTO/RPO và idempotency | DBA/Ops |
-| Redis | Managed service, TTL và không là source of truth | Cache/replay degradation không được làm sai lifecycle/final outcome | Có thể rebuild; không yêu cầu business restore | Không |
-| S3 Intake/P6 Media Upload Finalizer | Direct presigned upload + idempotent manifest + orphan lifecycle | Upload URL có thể cấp lại; finalizer bounded retry; không expose `status=COMPLETED`/final outcome khi required media chưa `READY` | Intake không backup; submitted object phải finalize hoặc purge theo policy | Cloud/Ops/ANBM |
-| S3 Media Vault | Private SSE-KMS object store, version/lifecycle/inventory | S3/KMS lỗi giữ evidence-pending; reveal fail closed | Versioning/replication/restore theo approved DR; retention sweep ngăn resurrect purged media | Cloud/Ops/Data Privacy |
-| P7 Controlled Media Reveal/Presign cache | Stateless API + Caffeine L1/Redisson L2 + direct-presign fallback | Redis lỗi fallback direct; audit store lỗi không trả URL | Cache/presigned URL không backup; rebuild/expire tự nhiên; encrypted refs phục hồi từ RDS | ANBM/Ops/Audit |
-| eKYC Provider Backend dependency | Timeout, circuit breaker, callback + Get Result reconciliation | Tạm dừng create khi dependency incident; không biến lỗi kỹ thuật thành `outcome=REJECTED` | Khôi phục result trong provider retention window | SLA/risk acceptance bắt buộc |
-
-Single point of dependency còn lại là eKYC Provider Backend của một provider; rủi ro và
-acceptance được ghi tại Architecture Risk Register.
-
-### 8.2.2. Provider outage và backlog recovery
-
-- Khi provider unavailable, VHM dừng create/session mới theo circuit-breaker policy;
-  các session đã submit giữ `status=PROCESSING`, chưa gán final outcome và không
-  chuyển thành `outcome=REJECTED` do lỗi kỹ thuật.
-- Callback API vẫn durable receive nếu provider còn gửi được callback. Reconciliation
-  tạm backoff có quota guard và được ưu tiên drain ngay khi provider phục hồi.
-- Từ thời điểm provider phục hồi, Ops ưu tiên session có retention deadline gần nhất.
-  Recovery phải hoàn tất trước provider retention với approved safety margin.
-- Maximum admissible reconciliation backlog không dùng một số đoán trước. Ops tính
-  theo `sustainable Get Result throughput × thời gian còn lại trước recovery deadline`
-  và chốt bằng provider quota cùng load-test evidence tại mục 6.4.2.
-- Nếu outage làm vi phạm approved safety margin, kích hoạt critical incident,
-  provider escalation và retention-at-risk dashboard. Outage kéo dài bằng hoặc vượt
-  provider retention không được coi là recoverable mặc định.
-- Nếu callback mất và Get Result đã hết retention, đóng attempt với
-  `status=COMPLETED`, `outcome=PROVIDER_ERROR` và reason
-  `RESULT_UNRECOVERABLE_AFTER_RETENTION`; không reuse media/result,
-  cho `CONTACT_SUPPORT` hoặc whole-attempt retry theo policy. Sự cố theo cụm phải mở
-  incident và review lại retention/quota/backlog control.
-
-
-## 8.3. RTO & RPO
-
-| **Hạng mục** | **Baseline** | **Ghi chú** |
-| --- | --- | --- |
-| RTO | `<= 4 giờ` | Bao gồm DB restore, service deploy, validation và worker resume |
-| RPO | `<= 15 phút` | Theo PITR/backup configuration được Ops phê duyệt |
-| Provider result recovery | Trong provider retention window | Get Result chỉ qua Reconciliation Job |
-| Media evidence recovery | Theo approved media DR tier, không vượt `retainUntil` | Khôi phục RDS manifest + S3 object/reference consistency và KMS decrypt-ref evidence |
-| Configuration recovery | Versioned repository + approved baseline | Bao gồm Mobile/Web SDK compatibility |
-| Secret/key recovery | Secrets Manager/KMS runbook | Rotation/revocation evidence bắt buộc |
-
-RTO/RPO cuối cùng phải được System Owner và Operations xác nhận bằng restore drill.
-
-## 8.4. Recovery verification checklist
-
-- Schema/version/index/constraint đúng.
-- Callback route/auth/key hoạt động.
-- Create/status/result authorization và masking hoạt động.
-- Có thể dừng create trong khi callback/reconciliation vẫn chạy.
-- Pending/failed inbox được xử lý bounded và không finalize trùng.
-- Non-terminal session được reconcile trong provider retention window.
-- Terminal lifecycle không bị đảo bởi callback/client event trễ.
-- Retry chain, idempotency và active-session constraint còn đúng.
-- Callback encrypted payload TTL/purge job resume đúng.
-- S3 Media Vault object/version/replica khớp manifest/encrypted ref và không có
-  object đã quá retention được mở lại.
-- Presigned upload/reveal config, KMS media-ref decrypt và scoped cache fallback hoạt động.
-- `VIEW_IDENTITY_MEDIA`/`REVEAL_IDENTITY_MEDIA` audit fail closed và không chứa
-  ciphertext/path/URL/PII sau recovery.
-- Dashboard/alerts/incident routing hoạt động.
-- Restore log không chứa PII/secret.
-- Data retention/deletion job tiếp tục đúng policy.
-- Đạt RTO/RPO trong evidence của restore drill.
-
-## 8.5. Operational Readiness
-
-| **Item** | **Baseline/decision** | **Evidence/approval** |
-| --- | --- | --- |
-| System criticality/security level | Tier 2 — Business Critical; xử lý dữ liệu định danh/sinh trắc học | System Owner + ANBM + Data Privacy |
-| RTO/RPO | RTO `<=4h`, RPO `<=15m` | Restore drill và Ops sign-off |
-| Blast radius — client channel | Mobile hoặc Web lỗi không được làm hỏng provider result/final outcome của channel còn lại | Channel dashboard/E2E evidence |
-| Blast radius — provider | Có thể dừng create mới; callback/reconciliation tiếp tục trong safe mode | Incident mode/runbook và provider escalation |
-| Blast radius — callback worker | API vẫn durable receive tới capacity; backlog được alert và bounded drain | Load/restart test |
-| Blast radius — media upload/finalizer | Có thể dừng create nếu evidence-ready SLA bị vi phạm; uploaded object bounded và không mất manifest | S3/KMS/finalizer incident drill |
-| Blast radius — reveal/audit | Reveal fail closed khi authorization, crypto, S3 hoặc audit unavailable; core result read không tự lộ media | Manual Review incident/OAT evidence |
-| DR model | Multi-AZ HA + backup/PITR restore; cross-region/cross-account theo VHM DR approval | DBA/Cloud/Ops approval |
-| Operational ownership | Service owner, incident route, on-call/escalation và provider contacts: TBD | Go-live blocker |
-| Known exceptions | Một provider; provider SLA/location/retention và organizational-standard version chưa chốt | Risk acceptance hoặc đóng trước approval |
-
-## 8.6. Testing & Quality Strategy
+## 15.3 Test Strategy
 
 | **Test type** | **Scope** | **Environment** | **Success criterion/release gate** |
 | --- | --- | --- | --- |
@@ -2561,18 +2566,18 @@ RTO/RPO cuối cùng phải được System Owner và Operations xác nhận b�
 | Mobile/Web E2E | OCR_ONLY và FULL_EKYC; permission/lifecycle/front-back/result-page OFF | UAT/provider staging | Happy path và failure path cho cả Mobile/Web; provider-result/finalization rule luôn đúng. |
 | Media persistence | Presigned PUT/multipart, checksum/type/size, submit/callback race, finalizer, retention/orphan purge | SIT — isolated media bucket | Pass/fail media đều `READY`; không cross-run overwrite/list/read; terminal guard đúng. |
 | Manual Review reveal/audit | Role/assignment/object scope, case/reason/recent step-up, exceptional approval/ticket, cap/dedupe/binding, encrypted-ref tamper, cache fallback, presign expiry và audit | SIT/OAT | Không cross-verification/partial reveal; stale step-up/invalid context bị deny; audit PII-safe; audit failure không trả URL. |
-| Performance/capacity | API p95/p99, callback burst, inbox/reconciliation backlog, DB lock/pool | SIT — dedicated performance window | Đạt NFR và capacity target mục 6.4; không mất/duplicate finalization. |
+| Performance/capacity | API p95/p99, callback burst, inbox/reconciliation backlog, DB lock/pool | SIT — dedicated performance window | Đạt NFR và capacity target mục 11; không mất/duplicate finalization. |
 | Security | AuthN/AuthZ/IDOR, callback token/replay, SDK streaming route, WAF/input, secrets/masking | SIT | Không còn Critical/High finding chưa được risk acceptance. |
 | Resilience/chaos | Provider/DB/Redis outage, callback lost, worker restart, stale/duplicate event | SIT — isolated recovery window | State toàn vẹn, bounded recovery, alert đúng và không blind retry. |
 | OAT/Recovery | Deploy/rollback, key rotation, PITR restore, backlog drain, dashboard/runbook | SIT | Đạt RTO/RPO; Operations sign-off. |
 | PAT/UAT | Purpose, consent, UX, fixed fields, decision/retry messages | UAT | Product/Risk/Legal/Data Privacy sign-off. |
 
 Test case chi tiết, automation suite và test data được quản lý trong Test Plan;
-Appendix C là release checklist và không thay thế evidence của từng quality gate.
+Appendix E là release checklist và không thay thế evidence của từng quality gate.
 
-# **9. Risks & Open Issues/Tech Debt**
+# 16. Risks & Open Issues/Tech Debt
 
-## 9.1. Architecture Risk Register
+## 16.1. Architecture Risk Register
 
 | **Risk ID** | **Category** | **Description** | **Business impact** | **Likelihood** | **Severity** | **Mitigation strategy** | **Residual risk** | **Owner** | **Status** |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -2589,20 +2594,22 @@ Appendix C là release checklist và không thay thế evidence của từng qua
 | AR-011 | Privacy/Cost | Media type mix, video scope và versioned retention classes chưa được phê duyệt | Over-retention biometric data, S3/KMS/egress cost và backup/purge không sizing được | High | Critical | Purpose registry, external retention policy, `retainUntil`, lifecycle/version purge, capacity/cost scenario và DPIA | Medium sau approval | Product/Legal/Data Privacy/Cloud/Finance | OPEN — go-live blocker |
 | AR-012 | Security/Audit | Reveal audit/cache contract không fail closed hoặc lưu ciphertext/path/URL/PII | Không truy vết được disclosure hoặc audit trở thành nguồn rò rỉ | Medium | Critical | Audit-before-response, append-only events, PII-safe payload, cap/binding, cache TTL/scope và SIEM deny log | Low sau evidence | ANBM/Audit/Manual Review/Ops | OPEN — go-live blocker |
 
-## 9.2. Open Issues/Technical Debt Register
+## 16.2. Open Issues/Technical Debt Register
 
 | **Debt/Issue ID** | **System** | **Description** | **Reason/trade-off** | **Impact** | **Priority** | **Remediation plan** | **Effort** | **Owner** | **Resolution date** | **Status** |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | TD-001 | VHM eKYC Service | L1 và L3 artefact links chưa được cung cấp | L2 được soạn trước khi các spec triển khai hoàn tất | Reviewer/dev khó truy vết contract chi tiết | High | Tạo/link API, client, DB và operations L3 tại metadata | TBD | Document Owner/Tech Leads | Trước implementation sign-off | OPEN |
 | TD-002 | Governance | VHM IAM/ANBM/Data Privacy/Observability standard version còn TBD | Chưa nhận canonical standard registry từ owner | Không chứng minh được compliance/deviation theo version | High | Cập nhật metadata và mapping control sau khi owner cung cấp | TBD | Architecture/ANBM/Data Privacy/Ops | Trước L2 approval | OPEN |
-| TD-003 | Capacity/Cost | Capacity target, AWS calculator export và provider commercial estimate chưa được cung cấp | Chưa có forecast volume/quota và quotation | Không thể phê duyệt sizing, budget và performance gate | High | Chốt worksheet 6.4.2, chạy load model và đính kèm cost estimate | TBD | Product/Cloud/Ops/Finance | Trước production readiness | OPEN |
+| TD-003 | Capacity/Cost | Capacity target, AWS calculator export và provider commercial estimate chưa được cung cấp | Chưa có forecast volume/quota và quotation | Không thể phê duyệt sizing, budget và performance gate | High | Chốt worksheet 11.1.2, chạy load model và đính kèm cost estimate | TBD | Product/Cloud/Ops/Finance | Trước production readiness | OPEN |
 | TD-004 | Media/Privacy | Purpose registry, media retention classes, video enablement và reviewer role/assignment policy chưa có approved artefact | Requirement mới được chốt ở L2 trước governance inputs | Không thể chốt lifecycle, access và DPIA | High | Tạo/link versioned policy artefacts; giữ duration ngoài TDD nhưng bắt buộc effective policy trước go-live | TBD | Product/Legal/Data Privacy/ANBM | Trước L2 approval/go-live | OPEN |
 | TD-005 | Media Integrity | SDK/provider digest để đối chiếu VHM-uploaded media với provider-processed media chưa được xác nhận | Hai upload path có thể không chứng minh cùng bytes | Manual-review evidence có residual provenance risk | High | Chốt SDK artifact/checksum contract và provider correlation/digest evidence hoặc risk acceptance | TBD | SDK/eKYC Provider Backend/Architect/Risk | Trước manual-review sign-off | OPEN |
 
 Các item chưa đóng không được ngầm coi là chấp nhận rủi ro. Risk acceptance cần
 owner, phạm vi, thời hạn và approver tương ứng được ghi trong phiên bản phê duyệt.
 
-# **Glossary**
+# Appendix
+
+## A. Glossary
 
 | **Thuật ngữ** | **Định nghĩa** |
 | --- | --- |
@@ -2637,13 +2644,26 @@ owner, phạm vi, thời hạn và approver tương ứng được ghi trong phi
 
 ---
 
-# **Appendix A. External Inputs & Confirmations**
+## B. References
+
+| **Document / Standard** | **Link / Version** |
+| --- | --- |
+| L1 - VHMKDO2O - related system document | TBD |
+| L2 Solution Architecture Document template | Template baseline reviewed 07/08/2026 |
+| Danh Mục Tiêu Chuẩn Thiết Kế Diagram | [Confluence standard](https://vin3s.atlassian.net/wiki/spaces/VARW/pages/2887647774/Danh+M+c+-+Ti+u+Chu+n+Diagram) |
+| VHM IAM standard | TBD version/link |
+| VHM ANBM standard | TBD version/link |
+| VHM Data Privacy standard | TBD version/link |
+| VHM Observability standard | TBD version/link |
+| L3 artefacts | Register tại mục 0.2 |
+
+## C. External Inputs & Confirmations
 
 > Các mục dưới đây là input/evidence bắt buộc để hoàn tất implementation và
 > approval. Đây không phải lựa chọn kiến trúc còn để ngỏ; thiếu input tương ứng thì
 > không được qua gate được ghi trong cột cuối.
 
-## A.1. Business & Scope Inputs
+## C.1. Business & Scope Inputs
 
 | **Input cần xác nhận** | **Owner** | **Gate/Deadline** |
 | --- | --- | --- |
@@ -2659,7 +2679,7 @@ owner, phạm vi, thời hạn và approver tương ứng được ghi trong phi
 | Approved purpose registry cho media persistence/manual review/dispute; không dùng mô tả “nhiều mục đích” | Product/Legal/Data Privacy | Trước consent/privacy sign-off |
 | Platform reviewer roles, assignment scope, manual decision và override/four-eyes policy | Business Owner/Risk/ANBM | Trước Manual Review API sign-off |
 
-## A.2. Mobile & Web SDK Inputs
+## C.2. Mobile & Web SDK Inputs
 
 | **Input cần xác nhận** | **Owner** | **Gate/Deadline** |
 | --- | --- | --- |
@@ -2679,7 +2699,7 @@ owner, phạm vi, thời hạn và approver tương ứng được ghi trong phi
 | Document/direct-face/liveness video media matrix, max size/duration và multipart/resume behavior | SDK/Product/ANBM/Ops | Trước media load/security test |
 | Bằng chứng client-uploaded artifact tương ứng provider-processed artifact hoặc explicit provenance risk acceptance | SDK/eKYC Provider Backend/Risk | Trước Manual Review UAT |
 
-## A.3. eKYC Provider Backend Integration Inputs
+## C.3. eKYC Provider Backend Integration Inputs
 
 | **Input cần xác nhận** | **Owner** | **Gate/Deadline** |
 | --- | --- | --- |
@@ -2695,7 +2715,7 @@ owner, phạm vi, thời hạn và approver tương ứng được ghi trong phi
 | Staging credentials/endpoints/allowlist và certificate chain | eKYC Provider Backend/DevOps/ANBM | Trước SIT |
 | SLA, maintenance, incident contacts và escalation | eKYC Provider Backend/Ops | Trước production readiness |
 
-## A.4. Security & Privacy Inputs
+## C.4. Security & Privacy Inputs
 
 | **Input cần xác nhận** | **Owner** | **Gate/Deadline** |
 | --- | --- | --- |
@@ -2712,7 +2732,7 @@ owner, phạm vi, thời hạn và approver tương ứng được ghi trong phi
 | Platform-neutral Reveal & Audit contract: role/assignment/object scope, cap 16, cache/URL expiry, PII-safe events và audit fail-closed | ANBM/Audit/Business Ops | Trước Manual Review sign-off |
 | Versioned media retention policy classes, `retainUntil`, legal hold và full S3/ref/cache purge evidence | Legal/Data Privacy/Ops | Go-live blocker |
 
-## A.5. NFR & Operations Inputs
+## C.5. NFR & Operations Inputs
 
 | **Input cần xác nhận** | **Owner** | **Gate/Deadline** |
 | --- | --- | --- |
@@ -2730,7 +2750,7 @@ owner, phạm vi, thời hạn và approver tương ứng được ghi trong phi
 
 ---
 
-# **Appendix B. ADR Log**
+## D. ADR Log
 
 Đây là ADR index. Mỗi dòng phải liên kết tới ADR artefact độc lập có context,
 options, decision, consequence và approver; trạng thái `Accepted` trong bản DRAFT
@@ -2761,9 +2781,9 @@ không thay thế sign-off chính thức.
 
 ---
 
-# **Appendix C. Go-live Checklist**
+## E. Go-live Checklist
 
-## C.1. Functional
+## E.1. Functional
 
 - [ ] Lifecycle chỉ dùng `CREATED/IN_PROGRESS/PROCESSING/COMPLETED/CANCELLED/EXPIRED`; final outcome và completion milestones được persist/contract-test tách biệt.
 - [ ] Create session idempotent và active-session concurrency.
@@ -2789,7 +2809,7 @@ không thay thế sign-off chính thức.
 - [ ] `DP-01`, `MEDIA-01`, `CRED-01` pass trên từng Mobile/Web SDK version.
 - [ ] Platform Manual Review list/reveal, case/reason/recent step-up, exceptional approval/ticket, manual decision và override workflow pass theo approved policy.
 
-## C.2. Security
+## E.2. Security
 
 - [ ] Không secret trong Mobile/Web/repo/image/ConfigMap/log.
 - [ ] `CRED-01` IAM/rotation/secret-scan evidence pass.
@@ -2812,12 +2832,12 @@ không thay thế sign-off chính thức.
 - [ ] PII/secret scan sạch trên log/APM/analytics/crash report.
 - [ ] Không High/Critical security defect còn mở.
 
-## C.3. Data Privacy
+## E.3. Data Privacy
 
 - [ ] Consent purpose/version/withdrawal approved và tested.
 - [ ] Fixed result field set và retention được phê duyệt.
 - [ ] Media purpose registry/manual-review lawful basis, media type matrix và versioned retention classes được phê duyệt.
-- [ ] Baseline `90d/24h/7d/30d/365d/35d` tại mục 7.2.5 được Data Privacy/Legal ratify hoặc thay bằng policy đã phê duyệt.
+- [ ] Baseline `90d/24h/7d/30d/365d/35d` tại mục 7.4.4 được Data Privacy/Legal ratify hoặc thay bằng policy đã phê duyệt.
 - [ ] `MEDIA-01`/`DATA-01` có load/DLP/DB-scan/DPIA/retention evidence đạt.
 - [ ] `MEDIA-STORE-01`/`REVIEW-01` có S3 inventory/access-analyzer, encrypted-ref, reveal audit, lifecycle/version/replica purge evidence đạt.
 - [ ] Provider data location/subprocessor/DPA/DPIA approved.
@@ -2827,13 +2847,13 @@ không thay thế sign-off chính thức.
 - [ ] Media Vault object/current+noncurrent version/derived artifact/encrypted ref/cache purge và legal-hold behavior tested.
 - [ ] Callback payload TTL/purge evidence đầy đủ.
 
-## C.4. Operations
+## E.4. Operations
 
 - [ ] Mobile/Web/SDK compatibility matrix published.
 - [ ] Provider quota/SLA/maintenance/incident contacts confirmed.
 - [ ] Dashboard/alerts có owner và routing.
 - [ ] Capacity/load/callback burst/reconciliation test đạt baseline.
-- [ ] Capacity worksheet 6.4.2 không còn `UNRESOLVED` và có forecast/load-test evidence.
+- [ ] Capacity worksheet 11.1.2 không còn `UNRESOLVED` và có forecast/load-test evidence.
 - [ ] Media mix/video size, presigned upload/finalizer throughput, retention planning horizon, S3/KMS cost và manual-review egress đã được sizing/duyệt.
 - [ ] AWS Pricing Calculator export/share link, provider quotation và monthly cost đã được Finance/Product duyệt.
 - [ ] Inbox/Reconciliation workers healthy và backlog dưới SLA.
