@@ -114,9 +114,9 @@ Uses case: Trên Vinhome Agent Admin cần tạo danh sách biểu mẫu giấy 
 | **Hướng tiếp cận** | **Ưu điểm** | **Nhược điểm** | **Lựa chọn (Yes/No)** |
 | --- | --- | --- | --- |
 | **Agent Backend tích hợp trực tiếp FPT AI** | Ít thành phần; thời gian triển khai ban đầu ngắn | Business Backend phải xử lý luồng ảnh, credential, callback, retry và mã lỗi riêng của FPT AI; khó tái sử dụng cho hệ thống khác; thay đổi SDK/provider tác động trực tiếp nghiệp vụ NOXH; tăng tải và rủi ro dữ liệu định danh trên Agent Backend | **No** |
-| **VHM eKYC Service làm OCR Proxy trung tâm** | Tách OCR khỏi nghiệp vụ NOXH; quản lý tập trung credential, session, callback, retry, quota, audit và chuẩn hóa kết quả; dùng chung cho nhiều hệ thống; cô lập thay đổi SDK/provider; cho phép scale và vận hành độc lập | Thêm một service và một network hop; cần đầu tư monitoring, HA và đội vận hành riêng | **Yes** |
+| **OCR Proxy trung tâm** | Tách OCR khỏi nghiệp vụ NOXH; quản lý tập trung credential, session, callback, retry, quota, audit và chuẩn hóa kết quả; dùng chung cho nhiều hệ thống; cô lập thay đổi SDK/provider; cho phép scale và vận hành độc lập | Thêm một service và một network hop; cần đầu tư monitoring, HA và đội vận hành riêng | **Yes** |
 
-**Phương án chọn:** Sử dụng **VHM eKYC Service** làm OCR Proxy trung tâm. Agent Backend chỉ kiểm tra quyền nghiệp vụ, tạo yêu cầu OCR và nhận kết quả chuẩn hóa; không gọi trực tiếp hoặc phụ thuộc contract của FPT AI.
+**Phương án chọn:** Sử dụng **OCR Proxy** làm nền tảng tích hợp OCR trung tâm. Agent Backend chỉ kiểm tra quyền nghiệp vụ, tạo yêu cầu OCR và nhận kết quả chuẩn hóa; không gọi trực tiếp hoặc phụ thuộc contract của FPT AI.
 
 ```mermaid
 flowchart LR
@@ -129,7 +129,7 @@ flowchart LR
     subgraph VHM["Hạ tầng VHM"]
         BFF["Agent BFF<br/>Xác thực và routing"]
         NOXH["NOXH Backend<br/>Nghiệp vụ hồ sơ"]
-        PROXY["VHM eKYC Service / OCR Proxy<br/>Session · Provider Adapter · Callback<br/>Normalize · Retry · Audit"]
+        PROXY["OCR Proxy<br/>Session · Provider Adapter · Callback<br/>Normalize · Retry · Audit"]
         DB[("OCR Database<br/>Session và kết quả chuẩn hóa")]
 
         BFF --> NOXH
@@ -139,7 +139,7 @@ flowchart LR
     end
 
     subgraph FPT["Hạ tầng FPT AI"]
-        PROVIDER["FPT AI eKYC Backend"]
+        PROVIDER["FPT AI Backend"]
     end
 
     PROXY ==>|"OCR request<br/>credential phía server"| PROVIDER
@@ -149,7 +149,7 @@ flowchart LR
 
 Giải pháp này tạo một integration boundary thống nhất cho dữ liệu định danh và tránh lặp lại tích hợp OCR tại từng Business Backend. Độ trễ tăng thêm một network hop được chấp nhận để đổi lấy khả năng kiểm soát, tái sử dụng và vận hành tập trung.
 
-**Trách nhiệm của OCR Proxy (VHM eKYC Service):**
+**Trách nhiệm của OCR Proxy:**
 
 - Quản lý phiên OCR (`verificationId`, trạng thái, timeout và số lần thử lại) và liên kết với mã tham chiếu hồ sơ NOXH.
 - Là điểm tích hợp duy nhất với FPT AI: giữ credential, forward request SDK, nhận callback và gọi Get Result khi cần đối soát.
@@ -168,7 +168,7 @@ sequenceDiagram
     participant APP as Vinhomes Agent / SDK
     participant BFF as Agent BFF
     participant NOXH as NOXH Backend
-    participant OCR as VHM eKYC Service / OCR Proxy
+    participant OCR as OCR Proxy
     participant FPT as FPT AI Backend
 
     DL->>APP: Bắt đầu OCR CCCD
@@ -238,7 +238,7 @@ Yêu cầu: Từ mẫu template hợp đồng và thông tin hồ sơ trên hệ
 | **Hướng tiếp cận** | **Ưu điểm** | **Nhược điểm** | **Lựa chọn (Yes/No)** |
 | --- | --- | --- | --- |
 | Agent Backend gọi trực tiếp FPT AI | Triển khai nhanh cho riêng NOXH | Coupling Business Backend với SDK/provider; trùng lặp credential, callback và error mapping | **No** |
-| Gọi FPT AI thông qua VHM eKYC Service | Provider được quản lý tập trung; NOXH chỉ sử dụng contract chuẩn nội bộ | Phụ thuộc SLA của service trung tâm | **Yes** |
+| Gọi FPT AI thông qua OCR Proxy | Provider được quản lý tập trung; NOXH chỉ sử dụng contract chuẩn nội bộ | Phụ thuộc SLA của service trung tâm | **Yes** |
 
 ### Vấn đề 11: Authentication/ Authorization giữa hệ thống TTOL và Vinhome Agent
 
@@ -256,7 +256,7 @@ Hiện tại: Phía TTOL đang Authen bằng jwt từ service TTOL .Net quản l
 
 ### Vấn đề 12: Cơ chế nhận kết quả OCR
 
-SDK có thể nhận response đồng bộ để phục vụ trải nghiệm người dùng, nhưng kết quả chính thức được VHM eKYC Service tiếp nhận và chuẩn hóa từ callback FPT AI. Khi callback thất lạc hoặc phiên quá SLA, service chủ động gọi Get Result để đối soát. Agent Backend chỉ lấy trạng thái/kết quả qua contract nội bộ và không tự xử lý retry với FPT AI.
+SDK có thể nhận response đồng bộ để phục vụ trải nghiệm người dùng, nhưng kết quả chính thức được OCR Proxy tiếp nhận và chuẩn hóa từ callback FPT AI. Khi callback thất lạc hoặc phiên quá SLA, OCR Proxy chủ động gọi Get Result để đối soát. Agent Backend chỉ lấy trạng thái/kết quả qua contract nội bộ và không tự xử lý retry với FPT AI.
 
 ### Vấn đề 13: Quản lý cấu hình ngày nghỉ lễ & Ngày làm việc bù
 
