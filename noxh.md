@@ -235,6 +235,14 @@ sequenceDiagram
     end
 ```
 
+**Cơ chế trả kết quả:**
+
+- **Đồng bộ:** FPT AI trả kết quả terminal trong request; OCR Proxy chuẩn hóa, lưu và trả `COMPLETED` ngay.
+- **Bất đồng bộ:** FPT AI trả `PROCESSING`; OCR Proxy chờ callback, chuẩn hóa kết quả rồi callback về Business Backend.
+- Application polling API trạng thái của Business Backend mỗi 3–5 giây và dừng khi phiên đạt trạng thái terminal; Application và Business Backend không polling trực tiếp FPT AI.
+- Nếu callback FPT AI quá SLA hoặc thất lạc, chỉ OCR Proxy gọi Get Result theo bounded retry/recovery policy.
+- Callback từ OCR Proxy về Business Backend phải được xác thực và idempotent. Nếu callback này thất lạc, Business Backend gọi `GET /ocr/sessions/{verificationId}` để đối soát.
+
 OCR Proxy chỉ chịu trách nhiệm xử lý OCR và dữ liệu định danh. Quyết định sử dụng kết quả, cập nhật khách hàng và phê duyệt hồ sơ vẫn thuộc NOXH Backend.
 
 ### Vấn đề 8: Quản lý Pipline/ Phase/ Stage
@@ -262,15 +270,6 @@ Yêu cầu: Từ mẫu template hợp đồng và thông tin hồ sơ trên hệ
 | Sử dụng service TTOL để xuất file: - Phía TTOL expose đầu API để call truyền data dạng Map\<String, Object\>, template, định dạng file output sau khi xử lý trả về file với định dạng tương ứng | - Đã có sẵn login export file theo template word, chỉ cần expose đầu API cho service sử dụng call | - Dependency với service TTOL  - Cần expose thêm 1 đầu API internal để call service-to-service - TTOL đang không hỗ trợ expose API cho phía service call qua xuất file | **No** |
 | Impliment lại export hợp đồng trên servive java: - Lựa chọn thư viện để impliment     - Syncfusion | - Đã có sẵn license phía TTOL,     Syncfusion có hỗ trợ lib java | - Tốn thời gian impliment lại | **Yes** |
 
-### Vấn đề 10: Đối tác OCR CCCD của khách hàng
-
-**User case:** Khi Đại lý tạo hồ sơ NOXH, hệ thống cần OCR hai mặt CCCD và trả dữ liệu đã chuẩn hóa để giảm sai sót nhập liệu.
-
-| **Hướng tiếp cận** | **Ưu điểm** | **Nhược điểm** | **Lựa chọn (Yes/No)** |
-| --- | --- | --- | --- |
-| Agent Backend gọi trực tiếp FPT AI | Triển khai nhanh cho riêng NOXH | Coupling Business Backend với SDK/provider; trùng lặp credential, callback và error mapping | **No** |
-| Gọi FPT AI thông qua OCR Proxy | Provider được quản lý tập trung; NOXH chỉ sử dụng contract chuẩn nội bộ | Phụ thuộc SLA của service trung tâm | **Yes** |
-
 ### Vấn đề 11: Authentication/ Authorization giữa hệ thống TTOL và Vinhome Agent
 
 Usercase: Phòng TT muốn phê duyệt hồ sơ trên TTOL, PKD/Đại Lý khởi tạo và PD trên VinhomeAgent
@@ -283,18 +282,6 @@ Hiện tại: Phía TTOL đang Authen bằng jwt từ service TTOL .Net quản l
 | Sử dụng Agent BFF để auth jwt từ thủ tục online |  |  | **Yes** |
 
 **Component diagram**
-
-
-### Vấn đề 12: Cơ chế nhận kết quả OCR
-
-OCR Proxy hỗ trợ thống nhất hai execution path:
-
-- **Đồng bộ:** FPT AI trả kết quả terminal trong request; OCR Proxy chuẩn hóa, lưu và trả `COMPLETED` ngay.
-- **Bất đồng bộ:** FPT AI trả `PROCESSING`; OCR Proxy chờ callback, chuẩn hóa kết quả rồi callback về Business Backend.
-
-Business Backend cung cấp API trạng thái cho Application. Application có thể polling API của Business Backend mỗi 3–5 giây và dừng khi phiên đạt trạng thái terminal; Application và Business Backend không polling trực tiếp FPT AI.
-
-Nếu callback FPT AI quá SLA hoặc thất lạc, chỉ OCR Proxy được gọi Get Result theo bounded retry/recovery policy. Callback từ OCR Proxy về Business Backend phải được xác thực và idempotent; nếu callback này thất lạc, Business Backend có thể gọi `GET /ocr/sessions/{verificationId}` để đối soát.
 
 ### Vấn đề 13: Quản lý cấu hình ngày nghỉ lễ & Ngày làm việc bù
 
