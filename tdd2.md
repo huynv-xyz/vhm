@@ -222,7 +222,7 @@ Xây dựng một nền tảng xác minh danh tính dùng chung nhằm:
 - Presigned upload trực tiếp từ VHM Application vào VHM S3 cho document
   front/back, direct-face media và liveness video/frame; create upload session và
   submit media manifest đi qua VHM BFF cho cả SDK pass và fail.
-- Media Upload Finalizer, private Media Vault và Manual Review Reveal API/Private File Service.
+- P6 Media Upload Control/Finalizer, private Media Vault và P7 Controlled Media Reveal/Private File Adapter.
 - Manual review case assignment, controlled viewing và manual decision audit.
 - Audit, metrics, alert và runbook vận hành.
 - Bảo vệ credential, PII và dữ liệu sinh trắc.
@@ -367,7 +367,7 @@ flowchart LR
     PROVIDER(["eKYC Provider Backend<br/>external processing service"]):::entity
 
     subgraph SCOPE["Scope Boundary — VHM eKYC Service"]
-        CORE["VHM eKYC Service<br/>Session / Result<br/>Media Upload API / Finalizer"]:::bc
+        CORE["VHM eKYC Service<br/>Session / Result<br/>Media Control"]:::bc
     end
 
     USER -->|thực hiện OCR/eKYC| APP
@@ -457,11 +457,11 @@ bên trong service được mô tả riêng tại mục 2.4.
 | 11 | **Reconciliation Job** | Khôi phục callback thất lạc/session treo bằng bounded polling | Due schedule, recovery attempt và provider result | VHM eKYC Service scheduler/worker, Resilience4j | PostgreSQL | Có — outbound Get Result | Không polling mọi session liên tục |
 | 12 | **Result API** | Trả fixed Canonical Result với authorization, masking và audit | Authorized masked result projection | VHM eKYC Service module | PostgreSQL | Không; qua BFF | Không trả raw provider response/resource URL |
 | 13 | **PostgreSQL** | System of record cho VHM eKYC Service | Session, run, check, field, inbox, result và history | Amazon RDS PostgreSQL 17 Multi-AZ | Encrypted RDS/PITR | Không — private data subnet | Không lưu binary media SDK flow |
-| 14 | **Media Upload API** | Tạo upload session và exact presigned PUT/multipart request | Media ID/type/size/checksum, object key reference và upload state | VHM eKYC Service module + AWS SDK | PostgreSQL metadata; không nhận media body | Không; qua VHM BFF | Không nhận arbitrary bucket/key/URL từ client |
+| 14 | **P6 Media Upload Control API** | Tạo upload session và exact presigned PUT/multipart request | Media ID/type/size/checksum, object key reference và upload state | VHM eKYC Service module + AWS SDK | PostgreSQL metadata; không nhận media body | Không; qua VHM BFF | Không nhận arbitrary bucket/key/URL từ client |
 | 15 | **S3 Intake** | Nhận media trực tiếp từ client bằng presigned request | Document/direct-face/liveness media tạm thời, SSE-KMS | Amazon S3 | Private intake bucket/prefix + lifecycle | Chỉ exact presigned write; không có client read | Không phải nguồn manual-review cuối cùng |
-| 16 | **Media Upload Finalizer / Media Vault** | Verify object metadata/checksum, seal immutable manifest và AES-GCM-encrypt S3 reference/path | Media object, encrypted reference, checksum/object version và retention metadata | Worker + application crypto/KMS + Amazon S3 | Private SSE-KMS Media Vault | Không public; workload IAM only | Chỉ finalize client presigned upload; không sync từ provider; không log plaintext path |
-| 17 | **Manual Review Reveal API** | Platform-role/assignment-scoped list encrypted refs và bind/decrypt selected refs | Verification/run/business scope, case/reason/step-up context, encrypted media refs, types/logical parts/poses và reveal request | VHM eKYC Service module | PostgreSQL + append-only `audit_logs` | Chỉ authorized caller qua platform ingress | GET/POST theo `REVIEW-01`; no cross-verification/cross-business-object reveal |
-| 18 | **Private File Service / PresignUrlCache** | Chuẩn bị short-lived download URL sau successful binding | Internal decrypted S3 path transiently, Caffeine L1/Redisson L2 cache entry và presigned URL | `FilePrivateServiceClient`, Caffeine, Redisson, Amazon S3 | Cache TTL nhỏ hơn URL validity; không source of truth | URL chỉ trả từ POST reveal | Cache failure fallback direct presign; không log path/URL/ciphertext |
+| 16 | **P6 Media Upload Finalizer** | Verify object metadata/checksum, seal immutable manifest và AES-GCM-encrypt S3 reference/path | Media object, encrypted reference, checksum/object version và retention metadata | Worker + application crypto/KMS + Amazon S3 | Private SSE-KMS Media Vault | Không public; workload IAM only | Chỉ finalize client presigned upload; không sync từ provider; không log plaintext path |
+| 17 | **P7 Controlled Media Reveal API** | Platform-role/assignment-scoped list encrypted refs và bind/decrypt selected refs | Verification/run/business scope, case/reason/step-up context, encrypted media refs, types/logical parts/poses và reveal request | VHM eKYC Service module | PostgreSQL + append-only `audit_logs` | Chỉ authorized caller qua platform ingress | GET/POST theo `REVIEW-01`; no cross-verification/cross-business-object reveal |
+| 18 | **P7 Private File Adapter / PresignUrlCache** | Chuẩn bị short-lived download URL sau successful binding | Internal decrypted S3 path transiently, Caffeine L1/Redisson L2 cache entry và presigned URL | `FilePrivateServiceClient`, Caffeine, Redisson, Amazon S3 | Cache TTL nhỏ hơn URL validity; không source of truth | URL chỉ trả từ POST reveal | Cache failure fallback direct presign; không log path/URL/ciphertext |
 
 ### 2.2.4. Luồng dữ liệu OCR/eKYC
 
@@ -554,7 +554,8 @@ submit manifest kèm trạng thái thiếu tương ứng; không giả định m
 | eKYC Provider Backend → callback endpoint của VHM eKYC Service | Provider callback | External server | WAF, token authentication, schema/replay/dedupe |
 | VHM eKYC Service → VHM Application qua BFF | Result API | Zero Trust | User/session identity, object scope, fixed schema, masking |
 | VHM eKYC Service → PostgreSQL | Restricted storage | Restricted | Private subnet, IAM, encryption, least privilege; cấm media |
-| Media Upload Finalizer/Private File Service → VHM S3/KMS | Finalize object/encrypted reference hoặc prepare short-lived download | Restricted sensitive storage | Workload IAM, private endpoint, AES-GCM/KMS, no path/URL log và audit |
+| P6 Media Upload Control/Finalizer → VHM S3/KMS | Validate/finalize object và AES-GCM-encrypt reference | Restricted sensitive write/finalize | Write/finalize-only workload IAM, private endpoint, checksum/version binding và no plaintext path log |
+| P7 Controlled Media Reveal → PostgreSQL/VHM S3/KMS | Bind/decrypt encrypted reference và prepare short-lived GET | Privileged sensitive read | Read/reveal-only workload IAM, role/object/purpose authorization, audit fail-closed và no path/URL log |
 | Manual Review Operator/Supervisor → Reveal API | List encrypted refs và reveal selected media | Privileged Zero Trust | Platform role + assignment/business-object scope; bind every ciphertext, cap/dedupe, short URL validity và PII-safe append-only audit |
 
 #### Security / Zero-Trust Architecture (L2)
@@ -1471,7 +1472,8 @@ flowchart TB
                     subgraph APPZONE["Private subnet — Amazon EKS"]
                         BFF["VHM BFF<br/>control + streaming ingress"]:::bc
                         EKYC_SERVICE["VHM eKYC Service<br/>API · SDK proxy adapter · Callback · Workers"]:::bc
-                        MEDIA_WORKLOAD["Media Upload API / Finalizer<br/>Reveal API / Private File Service"]:::bc
+                        UPLOAD_WORKLOAD["P6 Media Upload Control<br/>/ Finalizer"]:::bc
+                        REVEAL_WORKLOAD["P7 Controlled Media Reveal<br/>/ Private File Adapter"]:::bc
                     end
                     subgraph DATAZONE["Data subnet — isolated"]
                         RDS[("eKYC PostgreSQL<br/>RDS Multi-AZ")]:::datastore
@@ -1493,14 +1495,19 @@ flowchart TB
     PROVIDER -->|provider callback result| GATEWAY
     GATEWAY -->|route VHM and SDK requests| BFF
     GATEWAY -->|route provider callback| EKYC_SERVICE
+    GATEWAY -->|route authorized media reveal| REVEAL_WORKLOAD
     BFF -->|workload identity + bounded stream| EKYC_SERVICE
     EKYC_SERVICE -->|read/write/claim| RDS
     EKYC_SERVICE -->|rate/replay state| REDIS
     EKYC_SERVICE -->|provider credential/key ref| SECRET
-    EKYC_SERVICE -->|verification/result milestone context| MEDIA_WORKLOAD
-    MEDIA_WORKLOAD -->|validate media · reveal/presign download| S3
-    MEDIA_WORKLOAD -->|AES-GCM encrypt/decrypt object reference| SECRET
-    MEDIA_WORKLOAD -->|manifest/review/audit state| RDS
+    EKYC_SERVICE -->|verification/result milestone context| UPLOAD_WORKLOAD
+    UPLOAD_WORKLOAD -->|validate/finalize media| S3
+    UPLOAD_WORKLOAD -->|encrypt object reference| SECRET
+    UPLOAD_WORKLOAD -->|manifest + encrypted ref| RDS
+    REVEAL_WORKLOAD -->|prepare short-lived GET| S3
+    REVEAL_WORKLOAD -->|decrypt object reference| SECRET
+    REVEAL_WORKLOAD -->|read metadata + append access audit| RDS
+    REVEAL_WORKLOAD -->|scoped ephemeral cache| REDIS
     BFF -.->|metadata-only telemetry| OBS
     EKYC_SERVICE -.->|masked telemetry| OBS
     EKYC_SERVICE ==>|init/OCR/liveness stream + Get Result| PROVIDER
@@ -1514,6 +1521,9 @@ flowchart TB
 Sơ đồ vẽ một AZ đại diện; production trải tối thiểu hai AZ. RDS là datastore do
 VHM eKYC Service sở hữu. `==>` biểu diễn egress từ VHM trust boundary
 tới eKYC Provider Backend; chi tiết giao thức/cổng nằm trong Network Flow Matrix.
+P6 và P7 có thể dùng chung codebase/release train nhưng chạy thành deployment unit
+và Kubernetes service account riêng trong cùng EKS: P6 chỉ có write/finalize
+capability, còn P7 chỉ có privileged read/reveal capability với audit fail-closed.
 
 ### 6.2.1. Network topology
 
@@ -1521,8 +1531,9 @@ tới eKYC Provider Backend; chi tiết giao thức/cổng nằm trong Network F
 - VHM BFF và VHM eKYC Service chạy private trong EKS; chỉ ingress được expose
   qua WAF/API Gateway. Presigned media bytes đi từ client thẳng tới S3.
 - RDS, Redis và Secrets/KMS chỉ truy cập qua private network control.
-- S3 Intake/Vault bật public-access block; Intake chỉ nhận exact presigned write,
-  còn Vault chỉ cho Media Upload Finalizer/Private File Service qua workload IAM/private endpoint.
+- S3 Intake/Vault bật public-access block; Intake chỉ nhận exact presigned write.
+  P6 dùng workload IAM write/finalize riêng; P7 dùng workload IAM read/reveal
+  riêng qua private endpoint, không dùng chung quyền S3/KMS.
 - Chỉ callback route được public cho eKYC Provider Backend và phải có strong authentication.
 - Egress tới eKYC Provider Backend dùng allowlist, timeout, circuit breaker và audit.
 
@@ -1538,8 +1549,9 @@ tới eKYC Provider Backend; chi tiết giao thức/cổng nằm trong Network F
 | eKYC Provider Backend | Platform ingress → Callback API của VHM eKYC Service | HTTPS 443 | Provider result | Callback authentication, WAF, replay/dedupe; không qua VHM BFF |
 | VHM eKYC Service/Worker | PostgreSQL | TLS | Session/result/inbox/audit | Security group, DB role, KMS |
 | VHM eKYC Service | Redis | TLS | Rate limit/replay/ephemeral cache | Private endpoint, auth, TTL |
-| Media Upload Finalizer | S3 Intake/Vault + KMS | HTTPS 443/private endpoint | Validate object, seal AES-GCM-encrypted reference và lifecycle metadata | Workload IAM, KMS context, no plaintext path log/persistence |
-| Authorized manual-review caller | Platform ingress → Reveal API/Private File Service | HTTPS 443 | Encrypted-ref list, bounded reveal request và short-lived presigned download | IAM, platform role, assignment/business-object scope, cap/binding, URL expiry/cache control và access audit |
+| P6 Media Upload Control/Finalizer | S3 Intake/Vault + KMS | HTTPS 443/private endpoint | Validate object, seal AES-GCM-encrypted reference và lifecycle metadata | Write/finalize-only workload IAM, KMS encrypt grant, no plaintext path log/persistence |
+| Authorized manual-review caller | Platform ingress → P7 Controlled Media Reveal | HTTPS 443 | Encrypted-ref list, bounded reveal request và short-lived presigned download | IAM, platform role, assignment/business-object scope, cap/binding, URL expiry/cache control và access audit |
+| P7 Controlled Media Reveal | PostgreSQL + S3 Media Vault + KMS | TLS/HTTPS 443/private endpoint | Read media metadata, decrypt selected object refs và prepare short-lived GET | Read/reveal-only workload IAM, KMS decrypt grant, audit fail closed; không có quyền upload/finalize |
 | Services | Monitoring/Logging | TLS | Masked telemetry | No PII/secret, access control |
 
 ## 6.3. Thành phần lưu trữ dữ liệu
@@ -1617,8 +1629,8 @@ evidence:
 | Callback API | HPA độc lập | Callback TPS, ack latency, 5xx |
 | Inbox Worker | Horizontal worker | Pending count, oldest age, processing latency |
 | Reconciliation Worker | Horizontal + bounded lease | Due count/age, provider quota, lock wait |
-| Media Upload Finalizer | Horizontal + bounded claim | Uploaded/failed count, oldest age, bytes, crypto/S3 latency và terminal-blocked sessions |
-| Reveal API/Private File Service | Horizontal/pool riêng | List/reveal rate, capped batch, authorization deny, cache hit/fallback, presign latency/error |
+| P6 Media Upload Control/Finalizer | Horizontal + bounded claim | Uploaded/failed count, oldest age, bytes, crypto/S3 latency và terminal-blocked sessions |
+| P7 Controlled Media Reveal/Private File Adapter | Horizontal/pool riêng | List/reveal rate, capped batch, authorization deny, cache hit/fallback, presign latency/error |
 | PostgreSQL | Multi-AZ + connection pool | CPU, IOPS, connection, lock wait, table/index growth |
 | Redis | Managed scale | Memory, eviction, connection, command latency |
 
@@ -1693,7 +1705,8 @@ khi có calculator export/share link, provider quotation và tổng chi phí th�
 | VHM eKYC Service Verification/Result/SDK Proxy API | Canary hoặc rolling | Không dự kiến | Stop rollout, route về immutable artifact trước; không retry media đang gửi | Theo standard release window | Service Owner/Ops |
 | Callback API | Canary/rolling độc lập | Không dự kiến; callback ingress phải luôn available | Route về artifact trước, giữ inbox schema backward-compatible | Tránh provider maintenance window | Service Owner/Ops |
 | Inbox/Reconciliation Workers | Rolling với bounded drain | Không ảnh hưởng API; backlog có kiểm soát | Dừng worker mới, deploy artifact trước, resume lease an toàn | Bất kỳ khi backlog trong threshold | Service Owner/Ops |
-| Media Upload Finalizer/Reveal API/Private File Service | Canary/rolling với bounded drain | Upload tiếp tục vào Intake trong bounded capacity; reveal lỗi phải fail closed | Stop rollout, giữ encrypted-ref format backward-compatible, resume finalizer; revoke/expire issued URLs theo runbook | Theo service window/backlog threshold | Service Owner/ANBM/Ops |
+| P6 Media Upload Control/Finalizer | Rolling với bounded drain | Upload tiếp tục vào Intake trong bounded capacity; finalization backlog có kiểm soát | Stop rollout, giữ encrypted-ref format backward-compatible, deploy artifact trước và resume bounded finalizer | Theo service window/backlog threshold | Service Owner/ANBM/Ops |
+| P7 Controlled Media Reveal/Private File Adapter | Canary hoặc rolling | Không ảnh hưởng upload; khi lỗi phải fail closed và không trả URL | Stop rollout, route về artifact trước; revoke hoặc để hết hạn URL đã cấp theo runbook | Theo service window | Service Owner/ANBM/Ops |
 | S3 bucket/KMS policy | IaC staged change | Không dự kiến | Revert policy/version; break-glass chỉ theo approved runbook | Security change window | Cloud + ANBM + Data Privacy |
 | Database schema | Expand/contract phased migration | Không hoặc minimal theo approved plan | Backward-compatible code/schema; restore chỉ là phương án cuối | Maintenance window nếu có lock risk | DBA + Architecture |
 | Mobile/Web SDK/profile | Controlled cohort theo compatibility matrix | Không downtime backend | Dừng cohort, rollback app/web/config version | Client release window | Product + Client Owner |
@@ -1880,7 +1893,8 @@ monitoring standard cần Architecture/Ops/Data Privacy phê duyệt.
 | VHM eKYC Service → RDS/Redis/Secrets | Workload role, private network và least privilege |
 | Mobile/Web → VHM S3 Intake | Short-lived exact presigned PUT/multipart; không cấp AWS credential cho client |
 | Manual Review Operator/Supervisor → Reveal API | VHM IAM privileged role, assignment/business-object scope; step-up theo sensitive-access policy |
-| Media Upload Finalizer/Reveal Service → S3/KMS | Workload IAM role tách biệt cho finalize, decrypt-ref và prepare-download |
+| P6 Media Upload Control/Finalizer → S3/KMS | Workload IAM chỉ có quyền ghi/kiểm tra/finalize object và encrypt reference; không có quyền reveal/read media |
+| P7 Controlled Media Reveal → PostgreSQL/S3/KMS | Workload IAM chỉ có quyền đọc metadata/media được bind, decrypt reference và prepare short-lived GET; không có quyền upload/finalize |
 
 - Validate issuer/audience hoặc resource scope, expiry, token type và clock skew khi token contract cung cấp.
 - Không dùng shared Basic Auth cho internal S2S.
@@ -1934,9 +1948,9 @@ monitoring standard cần Architecture/Ops/Data Privacy phê duyệt.
 | SDK Proxy API của VHM eKYC Service | Workload identity + session/run/journey binding | Revalidate context trước khi gọi outbound adapter. |
 | Callback API | Callback token + Client UUID/session/environment binding | Provider đã xác thực chỉ được ghi event khớp `verificationId`/Client UUID; không có quyền đọc Result API. |
 | Ops endpoints/workers | Workload identity + privileged role + reason | Retry/reprocess/reconcile có audit; không cho sửa provider result hoặc final outcome trực tiếp. |
-| Media Upload API/S3 Intake | BFF-authenticated context + run/media binding + SigV4 presign | Chỉ server-issued media slot; exact key/type/size/checksum; no client list/read và submit phải bind manifest. |
-| Manual Review Reveal API | Platform review role + assignment/object/purpose ABAC + recent step-up | Re-check scope ở cả GET và POST; POST validate case/reason/exception approval, cap/dedupe/bind toàn bộ encrypted refs; no partial reveal. |
-| Private File Service/Presign cache | Workload IAM + scoped cache key/TTL | Plaintext path transient; URL validity ngắn; audit success trước response; cache không dùng chéo security scope. |
+| P6 Media Upload Control/S3 Intake | BFF-authenticated context + run/media binding + SigV4 presign | Chỉ server-issued media slot; exact key/type/size/checksum; no client list/read và submit phải bind manifest. |
+| P7 Controlled Media Reveal | Platform review role + assignment/object/purpose ABAC + recent step-up | Re-check scope ở cả GET và POST; POST validate case/reason/exception approval, cap/dedupe/bind toàn bộ encrypted refs; no partial reveal. |
+| P7 Private File Adapter/Presign cache | Read/reveal-only workload IAM + scoped cache key/TTL | Plaintext path transient; URL validity ngắn; audit success trước response; cache không dùng chéo security scope. |
 | PostgreSQL/Redis/Secrets | Workload IAM/DB role/network policy | Least privilege theo workload; support/DBA không mặc định đọc plaintext sensitive field. |
 
 ### 7.1.3. Secrets & Credential Management
@@ -1947,7 +1961,7 @@ monitoring standard cần Architecture/Ops/Data Privacy phê duyệt.
 | Callback token/client secret | Secrets Manager/config reference | Callback API/token endpoint | Planned zero-downtime overlap; emergency revoke/activate dự phòng theo approved ANBM incident-response SLO | Dynamic Token ưu tiên; TTL/overlap/RTO theo provider contract và security sign-off. Fixed Token cần exception và rotation chặt. |
 | Workload/DB credential | Workload IAM và managed secret | API/Workers | Platform-managed rotation | Không shared identity; DB role riêng theo workload. |
 | Field/inbox encryption key | KMS-CMK | Persistence/crypto adapter | Theo KMS/ANBM standard; version/period TBD | Encrypt/decrypt permission tách theo role, có Cloud audit. |
-| Media-reference encryption key | KMS-CMK/keyring | Media Upload Finalizer + Reveal API only | Versioned rotation/re-encryption runbook theo ANBM standard | AES-256-GCM authenticated encryption; encryption context dùng opaque verification/run/media ID, không chứa PII. |
+| Media-reference encryption key | KMS-CMK/keyring | P6 encrypt-only; P7 decrypt-only qua key grant tách biệt | Versioned rotation/re-encryption runbook theo ANBM standard | AES-256-GCM authenticated encryption; encryption context dùng opaque verification/run/media ID, không chứa PII. |
 | VHM SDK session token | Chỉ process/client memory | VHM Application/eKYC SDK, BFF validation | TTL ngắn; hết hạn hoặc revoke theo session/run | Bind environment, journey, channel và run; không lưu dài hạn. |
 
 ### 7.1.4. Application Security & Data Protection
@@ -2234,33 +2248,41 @@ flowchart TB
     EKYC_SERVICE_PROXY(("P3 · VHM eKYC Service<br/>SDK Proxy<br/>credential injection")):::process
     RESULT_PROCESS(("P4 · VHM eKYC Service<br/>Callback &<br/>Result Processing")):::process
     RESULT_API(("P5 · Authorized Result API")):::process
-    MEDIA_API(("P6 · Media Upload / Reveal API")):::process
+    UPLOAD(("P6 · Media Upload Control<br/>& Finalizer")):::process
+    REVEAL(("P7 · Controlled<br/>Media Reveal")):::process
     INBOX[("D1 · Encrypted Inbox<br/>24h / 7d")]:::sensitive
     RESULT[("D2 · Canonical Result<br/>fixed fields · final outcome")]:::sensitive
-    MEDIA[("D3 · Private VHM Media Vault<br/>SSE-KMS objects · encrypted refs")]:::sensitive
-    AUDIT[("D4 · audit_logs / iv_histories")]:::sensitive
+    MEDIA_META[("D3 · Media Metadata DB<br/>AES-GCM encrypted refs")]:::sensitive
+    MEDIA[("D4 · Private VHM S3 Media Vault<br/>SSE-KMS media objects")]:::sensitive
+    AUDIT[("D5 · audit_logs / iv_histories")]:::sensitive
 
     APP -->|"1. consent-bound capture data"| CAPTURE
     CAPTURE -->|"2. media stream"| BFF
     CAPTURE -->|"request upload slots / submit manifest"| BFF
-    BFF -->|"authorized metadata/manifest"| MEDIA_API
-    MEDIA_API -->|"mediaId + presigned request"| BFF
+    BFF -->|"authorized upload metadata / manifest"| UPLOAD
+    UPLOAD -->|"mediaId + presigned PUT/multipart"| BFF
     BFF -->|"upload slots"| CAPTURE
     CAPTURE ==>|"presigned MEDIA BYTES pass/fail"| MEDIA
+    UPLOAD -->|"validate object / checksum / version"| MEDIA
+    UPLOAD -->|"sealed manifest + AES-GCM encrypted ref"| MEDIA_META
     BFF -->|"3. authenticated bounded stream"| EKYC_SERVICE_PROXY
     EKYC_SERVICE_PROXY -->|"4. server credential + stream"| BACKEND
     BACKEND -->|"5. authenticated provider callback result"| RESULT_PROCESS
     RESULT_PROCESS -->|"7. encrypted minimal payload"| INBOX
     INBOX -->|"8. claimed provider result"| RESULT_PROCESS
     RESULT_PROCESS -->|"9. canonical fixed fields"| RESULT
+    RESULT_PROCESS -.->|"lifecycle / result audit events"| AUDIT
     APP -->|"10. status/result query"| BFF
     BFF -->|"11. authorized result query"| RESULT_API
     RESULT -->|"12. scoped canonical fields"| RESULT_API
     RESULT_API -->|"13. masked canonical result"| BFF
     BFF -->|"14. outcome/next action"| APP
-    REVIEWER -->|"15. authorized media list/reveal"| MEDIA_API
-    MEDIA_API -->|"16. encrypted refs / short-lived presigned URL"| REVIEWER
-    MEDIA_API -.->|"17. PII-safe access/decision events"| AUDIT
+    REVIEWER -->|"15. GET media list / POST reveal"| REVEAL
+    REVEAL -->|"16. load and bind encrypted refs"| MEDIA_META
+    MEDIA_META -->|"17. types/parts + encrypted refs"| REVEAL
+    REVEAL -->|"18. decrypt ref + prepare short-lived S3 GET"| MEDIA
+    REVEAL -->|"19. GET encrypted refs / POST short-lived URLs"| REVIEWER
+    REVEAL -.->|"20. PII-safe VIEW / REVEAL events"| AUDIT
 
     classDef entity fill:#3a3320,stroke:#d9b84a,color:#fff;
     classDef process fill:#1f3a5f,stroke:#4a90d9,color:#fff;
@@ -2269,6 +2291,12 @@ flowchart TB
 
 - Provider transit tuân thủ `MEDIA-01`; durable upload/reveal tuân thủ
   `MEDIA-STORE-01`, `DATA-01` và `REVIEW-01`.
+- P6 và P7 là hai logical module/security boundary trong VHM eKYC Service, không
+  mặc định là hai microservice. P6 có write/finalize capability; P7 có privileged
+  read/reveal capability. Media bytes không đi qua BFF, P6 hoặc P7.
+- S3 chỉ giữ media object mã hóa SSE-KMS. PostgreSQL Media Metadata giữ manifest
+  và AES-GCM-encrypted object reference; plaintext path chỉ tồn tại transiently
+  trong P7 sau authorization/binding.
 - Provider media/raw result retention tối đa `24 giờ` và phải đủ cho reconciliation.
 - Callback payload chỉ lưu mã hóa tạm thời để async process.
 - Canonical sensitive field chỉ lưu nếu nằm trong fixed approved result set.
@@ -2445,9 +2473,9 @@ Không backup như business source:
 | Reconciliation Worker | Lease/`SKIP LOCKED`, backoff và provider quota guard | Recover callback lost/stuck session; hết budget đóng `status=COMPLETED`, `outcome=PROVIDER_ERROR` | Schedule/state phục hồi từ PostgreSQL | eKYC Provider Backend/Ops cho quota/recovery budget |
 | PostgreSQL | RDS Multi-AZ, connection pool, PITR | Automatic failover; degrade create/read theo incident mode | Restore drill chứng minh RTO/RPO và idempotency | DBA/Ops |
 | Redis | Managed service, TTL và không là source of truth | Cache/replay degradation không được làm sai lifecycle/final outcome | Có thể rebuild; không yêu cầu business restore | Không |
-| S3 Intake/Media Upload Finalizer | Direct presigned upload + idempotent manifest + orphan lifecycle | Upload URL có thể cấp lại; finalizer bounded retry; không expose `status=COMPLETED`/final outcome khi required media chưa `READY` | Intake không backup; submitted object phải finalize hoặc purge theo policy | Cloud/Ops/ANBM |
+| S3 Intake/P6 Media Upload Finalizer | Direct presigned upload + idempotent manifest + orphan lifecycle | Upload URL có thể cấp lại; finalizer bounded retry; không expose `status=COMPLETED`/final outcome khi required media chưa `READY` | Intake không backup; submitted object phải finalize hoặc purge theo policy | Cloud/Ops/ANBM |
 | S3 Media Vault | Private SSE-KMS object store, version/lifecycle/inventory | S3/KMS lỗi giữ evidence-pending; reveal fail closed | Versioning/replication/restore theo approved DR; retention sweep ngăn resurrect purged media | Cloud/Ops/Data Privacy |
-| Reveal API/Presign cache | Stateless API + Caffeine L1/Redisson L2 + direct-presign fallback | Redis lỗi fallback direct; audit store lỗi không trả URL | Cache/presigned URL không backup; rebuild/expire tự nhiên; encrypted refs phục hồi từ RDS | ANBM/Ops/Audit |
+| P7 Controlled Media Reveal/Presign cache | Stateless API + Caffeine L1/Redisson L2 + direct-presign fallback | Redis lỗi fallback direct; audit store lỗi không trả URL | Cache/presigned URL không backup; rebuild/expire tự nhiên; encrypted refs phục hồi từ RDS | ANBM/Ops/Audit |
 | eKYC Provider Backend dependency | Timeout, circuit breaker, callback + Get Result reconciliation | Tạm dừng create khi dependency incident; không biến lỗi kỹ thuật thành `outcome=REJECTED` | Khôi phục result trong provider retention window | SLA/risk acceptance bắt buộc |
 
 Single point of dependency còn lại là eKYC Provider Backend của một provider; rủi ro và
