@@ -109,14 +109,14 @@ Uses case: Trên Vinhome Agent Admin cần tạo danh sách biểu mẫu giấy 
 
 **User case:** Đại lý chụp CCCD mặt trước/sau trên Agent để hệ thống OCR và gợi ý thông tin khi tạo hồ sơ NOXH.
 
-**Bối cảnh:** Năng lực OCR có thể được nhiều domain nghiệp vụ sử dụng. Nếu mỗi Business Backend tự tích hợp FPT AI, các domain sẽ lặp lại logic quản lý credential, session, callback, retry, error mapping, audit và chính sách dữ liệu định danh; đồng thời cùng phụ thuộc trực tiếp vào contract của provider.
+**Bối cảnh:** Nếu Agent Backend tự tích hợp FPT AI, toàn bộ logic quản lý credential, session, callback, retry, error mapping, audit và dữ liệu định danh sẽ nằm trong service nghiệp vụ NOXH và phụ thuộc trực tiếp vào contract của provider.
 
 | **Hướng tiếp cận** | **Ưu điểm** | **Nhược điểm** | **Lựa chọn (Yes/No)** |
 | --- | --- | --- | --- |
-| **Agent Backend tích hợp trực tiếp FPT AI** | Ít thành phần; thời gian triển khai ban đầu ngắn | Business Backend phải xử lý luồng ảnh, credential, callback, retry và mã lỗi riêng của FPT AI; khó tái sử dụng cho hệ thống khác; thay đổi SDK/provider tác động trực tiếp nghiệp vụ NOXH; tăng tải và rủi ro dữ liệu định danh trên Agent Backend | **No** |
-| **OCR Proxy trung tâm** | Business Backend chỉ cần gọi contract nội bộ create/status/result; toàn bộ SDK/provider integration, credential, session, callback, retry, quota, lưu trữ, bảo mật, audit và chuẩn hóa kết quả được xử lý một lần tại Proxy; dùng chung cho mọi domain; thay SDK/provider không yêu cầu sửa nghiệp vụ NOXH | Thêm một service và một network hop; OCR Proxy phải đáp ứng HA/SLA vì là dependency dùng chung | **Yes** |
+| **Agent Backend tích hợp trực tiếp FPT AI** | Ít thành phần; thời gian triển khai ban đầu ngắn | Agent Backend phải xử lý luồng ảnh, credential, callback, retry và mã lỗi riêng của FPT AI; thay đổi SDK/provider tác động trực tiếp nghiệp vụ NOXH; tăng tải và rủi ro dữ liệu định danh trên Agent Backend | **No** |
+| **OCR Proxy trung tâm** | NOXH Backend chỉ cần tạo phiên và nhận kết quả; toàn bộ SDK/provider integration, credential, session, callback, retry, quota, lưu trữ, bảo mật, audit và chuẩn hóa kết quả được xử lý tại Proxy; thay SDK/provider không yêu cầu sửa nghiệp vụ NOXH | Thêm một service và một network hop; OCR Proxy phải đáp ứng HA/SLA vì là dependency của NOXH | **Yes** |
 
-**Phương án chọn:** Sử dụng **OCR Proxy** làm nền tảng tích hợp OCR dùng chung cho nhiều domain. Mỗi Business Backend chỉ kiểm tra quyền và thực hiện nghiệp vụ của domain, sau đó tạo phiên và nhận kết quả OCR qua contract nội bộ thống nhất; không gọi trực tiếp hoặc phụ thuộc contract của FPT AI.
+**Phương án chọn:** Sử dụng **OCR Proxy** làm lớp tích hợp tập trung giữa NOXH và FPT AI. NOXH Backend chỉ kiểm tra quyền nghiệp vụ, tạo phiên và nhận kết quả OCR; không gọi trực tiếp hoặc phụ thuộc contract của FPT AI.
 
 ```mermaid
 flowchart LR
@@ -128,8 +128,7 @@ flowchart LR
 
     subgraph VHM["Hạ tầng VHM"]
         BFF["Agent BFF<br/>Xác thực và routing"]
-        NOXH["NOXH Backend — thin domain<br/>Authorize · businessRef · Apply result"]
-        DOMAINS["Các Business Domain khác"]
+        NOXH["NOXH Backend<br/>Authorize · businessRef · Apply result"]
         PROXY["OCR Proxy — shared platform<br/>SDK/Provider · Session · Result<br/>Normalize · Resilience · Security · Audit"]
         DB[("OCR Database<br/>Session và kết quả chuẩn hóa")]
         MEDIA[("Private Object Storage<br/>Ảnh CCCD theo retention policy")]
@@ -137,7 +136,6 @@ flowchart LR
         BFF --> NOXH
         BFF ==>|"Luồng SDK OCR"| PROXY
         NOXH -->|"create / status / result"| PROXY
-        DOMAINS -->|"contract nội bộ dùng chung"| PROXY
         PROXY --> DB
         PROXY --> MEDIA
     end
@@ -151,13 +149,13 @@ flowchart LR
 
 ```
 
-Giải pháp này tạo một integration boundary thống nhất cho dữ liệu định danh và tránh lặp lại tích hợp OCR khi có nhiều domain cùng sử dụng. Chi phí của một service và một network hop được phân bổ cho nhiều consumer, đổi lại credential, quota, callback, dữ liệu, audit và vận hành provider chỉ cần quản lý tại một nơi.
+Giải pháp này tách nghiệp vụ NOXH khỏi chi tiết tích hợp FPT AI. Chi phí của một service và một network hop được chấp nhận để credential, quota, callback, dữ liệu, audit và vận hành provider được quản lý tập trung tại OCR Proxy.
 
 **Phân định ownership:**
 
-| **Năng lực** | **Business Backend (NOXH và các domain)** | **OCR Proxy** |
+| **Năng lực** | **NOXH Backend** | **OCR Proxy** |
 | --- | --- | --- |
-| Nghiệp vụ | Kiểm tra quyền trên business object; gửi `businessRef`; quyết định sử dụng kết quả | Không xử lý rule nghiệp vụ của domain |
+| Nghiệp vụ | Kiểm tra quyền trên hồ sơ/dự án; gửi `businessRef`; quyết định sử dụng kết quả | Không xử lý rule nghiệp vụ NOXH |
 | API tích hợp | Chỉ gọi API nội bộ `create/status/result` | Quản lý SDK/API contract và credential FPT AI |
 | Phiên xử lý | Không quản lý state machine OCR | Sinh `verificationId` và sử dụng làm `client_uuid` khi gọi FPT AI; quản lý session, attempt, timeout, idempotency và trạng thái |
 | Kết quả | Chỉ nhận Canonical Result cần thiết | Nhận kết quả trực tiếp trên luồng Proxy; Provider Callback và Result API dùng để lấy/đối soát bổ sung; chuẩn hóa field và error code |
@@ -165,19 +163,19 @@ Giải pháp này tạo một integration boundary thống nhất cho dữ liệ
 | Resilience | Không retry trực tiếp với FPT AI | Retry, reconciliation, circuit breaker, rate limit và quota |
 | Audit/Monitoring | Chỉ audit việc áp dụng kết quả vào nghiệp vụ | Audit toàn bộ vòng đời OCR và vận hành provider |
 
-Nhờ đó, khi thêm một domain mới, domain chỉ tích hợp contract nội bộ ổn định; không phải triển khai lại SDK/provider adapter, callback endpoint, database OCR, retry, security và monitoring.
+Nhờ đó, NOXH Backend không phải triển khai SDK/provider adapter, callback FPT AI, database OCR, retry, security và monitoring cho provider.
 
 **Trách nhiệm của OCR Proxy:**
 
-- Quản lý phiên OCR; sinh `verificationId` dùng làm `client_uuid` của FPT AI và liên kết với `businessRef` của domain.
+- Quản lý phiên OCR; sinh `verificationId` dùng làm `client_uuid` của FPT AI và liên kết với `businessRef` của NOXH.
 - Là điểm tích hợp duy nhất với FPT AI: giữ credential, forward request/response SDK, nhận Provider Callback và gọi Result API khi cần đối soát.
 - Ghi nhận và chuẩn hóa kết quả trực tiếp đi qua Proxy mà không bắt buộc chờ Provider Callback.
 - Xử lý Provider Callback idempotent; cơ chế xác thực callback phải chốt theo contract FPT AI (custom header/signature và network allowlist).
-- Gửi Domain Callback đã chuẩn hóa, có xác thực và idempotency về Business Backend khi phiên hoàn tất.
+- Gửi NOXH Callback đã chuẩn hóa, có xác thực và idempotency về NOXH Backend khi phiên hoàn tất.
 - Chuẩn hóa payload và error code của FPT AI thành contract nội bộ ổn định, không trả raw provider payload cho NOXH.
-- Quản lý retry, timeout, circuit breaker, quota/rate limit và cô lập sự cố provider khỏi Business Backend.
+- Quản lý retry, timeout, circuit breaker, quota/rate limit và cô lập sự cố provider khỏi NOXH Backend.
 - Áp dụng kiểm soát truy cập, mã hóa dữ liệu nhạy cảm, masking, audit và chính sách lưu/xóa dữ liệu OCR.
-- Cung cấp API dùng chung để tạo phiên, tra cứu trạng thái và lấy kết quả OCR.
+- Cung cấp API để NOXH tạo phiên, tra cứu trạng thái và lấy kết quả OCR.
 
 **Trách nhiệm tối thiểu của NOXH Backend:**
 
@@ -215,7 +213,7 @@ sequenceDiagram
     OCR-->>BFF: Forward SDK-compatible response
     BFF-->>APP: Hiển thị kết quả OCR
 
-    OCR-->>NOXH: Domain Callback + Canonical Result
+    OCR-->>NOXH: NOXH Callback + Canonical Result
     NOXH->>NOXH: Lưu trạng thái theo businessRef
     APP->>BFF: GET trạng thái hồ sơ OCR
     BFF->>NOXH: Authorized status query
@@ -237,13 +235,11 @@ sequenceDiagram
 
 **Cơ chế trả kết quả:**
 
-- **Direct Proxy Result — happy path:** FPT AI trả kết quả qua OCR Proxy; Proxy lưu, chuẩn hóa rồi forward response tương thích về SDK và gửi Domain Callback cho Business Backend. Theo kiến trúc Proxy của FPT AI, không bắt buộc đợi callback mới lưu hoặc sử dụng kết quả.
+- **Direct Proxy Result — happy path:** FPT AI trả kết quả qua OCR Proxy; Proxy lưu, chuẩn hóa rồi forward response tương thích về SDK và gửi NOXH Callback cho NOXH Backend. Theo kiến trúc Proxy của FPT AI, không bắt buộc đợi callback mới lưu hoặc sử dụng kết quả.
 - **Provider Callback — supplemental path:** FPT AI có thể gửi dữ liệu phiên tới callback URL đã cấu hình. OCR Proxy tiếp nhận theo `client_uuid`, dedupe và cập nhật Canonical Result.
-- **Provider Result API — recovery/reconciliation:** Khi cần lấy lại hoặc đối soát dữ liệu, OCR Proxy gọi `POST /callback/get_result` với header `api-key` và `uuid`. Application và Business Backend không gọi API FPT AI trực tiếp.
-- **Domain Callback:** Sau khi có kết quả hợp lệ từ bất kỳ nguồn nào, OCR Proxy callback Canonical Result về Business Backend. Nếu Domain Callback thất lạc, Business Backend gọi API trạng thái/kết quả nội bộ của OCR Proxy.
+- **Provider Result API — recovery/reconciliation:** Khi cần lấy lại hoặc đối soát dữ liệu, OCR Proxy gọi `POST /callback/get_result` với header `api-key` và `uuid`. Application và NOXH Backend không gọi API FPT AI trực tiếp.
+- **NOXH Callback:** Sau khi có kết quả hợp lệ từ bất kỳ nguồn nào, OCR Proxy callback Canonical Result về NOXH Backend. Nếu NOXH Callback thất lạc, NOXH Backend gọi API trạng thái/kết quả của OCR Proxy.
 - Không tự động retry request OCR chứa ảnh sau khi body đã được gửi, trừ khi FPT AI xác nhận idempotency. Chỉ retry lỗi kết nối trước khi gửi body và các tác vụ callback/result reconciliation theo bounded policy.
-
-**Tham chiếu FPT AI:** [Kiến trúc tích hợp SDK qua Proxy](https://docs-vision.fpt.ai/ekyc/III-integration/III-1-SDKs/kien-truc-tich-hop/) · [Callback và Result API](https://docs-vision.fpt.ai/ekyc/III-integration/III-2-APIs/a-APIs%20of%20eKYC%20Flows/APIs-result/)
 
 ```mermaid
 stateDiagram-v2
