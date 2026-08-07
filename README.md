@@ -686,6 +686,36 @@ flowchart TB
 VHM eKYC Service chỉ lưu reference trong session và không tạo FK vật lý tới dữ liệu nghiệp vụ.
 Các cạnh nét đứt là tham chiếu logic bằng ID, không phải FK vật lý xuyên system.
 
+### 2.4.2. Logical ERD (L2)
+
+```mermaid
+erDiagram
+    CONSENT_EVIDENCE ||--o{ VERIFICATION_SESSION : authorizes
+    VERIFICATION_SESSION o|--o{ VERIFICATION_SESSION : retry_chain
+    VERIFICATION_SESSION ||--o| VERIFICATION_RUN : executes
+    VERIFICATION_SESSION ||--o{ CALLBACK_INBOX : receives
+    VERIFICATION_SESSION ||--|{ STATE_ACCESS_HISTORY : records
+    VERIFICATION_SESSION ||--o{ RECONCILIATION_TASK : schedules
+    VERIFICATION_RUN ||--o| CANONICAL_RESULT : produces
+    CANONICAL_RESULT ||--o{ VERIFICATION_CHECK : contains
+```
+
+| **Logical entity** | **Vai trò trong mô hình** | **Cardinality/invariant chính** |
+| --- | --- | --- |
+| `CONSENT_EVIDENCE` | Bằng chứng consent do VHM Consent System sở hữu | Một consent có thể authorize nhiều session; VHM eKYC Service chỉ lưu logical reference |
+| `VERIFICATION_SESSION` | Aggregate root cho một attempt OCR/eKYC | Một session có tối đa một active run; whole-attempt retry tạo session mới và nối retry chain |
+| `VERIFICATION_RUN` | Vòng chạy SDK gắn với session | Chỉ được tạo khi session bắt đầu; không dùng lại cho retry session mới |
+| `CALLBACK_INBOX` | Durable ingress cho official callback | Một session có thể nhận nhiều event do retry/duplicate/out-of-order; xử lý phải idempotent |
+| `CANONICAL_RESULT` | Kết quả chuẩn hóa của một run | Tối đa một official result hiện hành; terminal result không bị client/callback trễ đảo ngược |
+| `VERIFICATION_CHECK` | Kết quả document, liveness, face match và quality check đã chuẩn hóa | Thuộc Canonical Result; không chứa media hoặc raw provider payload |
+| `STATE_ACCESS_HISTORY` | Lịch sử state transition và truy cập có audit | Append-only; một session có một hoặc nhiều record lịch sử |
+| `RECONCILIATION_TASK` | Lịch khôi phục result khi callback quá SLA/session treo | Có thể có nhiều lần chạy bounded; không polling liên tục |
+
+Đây là **logical ERD**, không phải physical database design. Tên bảng/cột, SQL data
+type, index, constraint, partition, encryption implementation và migration script
+thuộc L3 Database Design. Media và raw provider result không thuộc ERD lưu trữ của
+VHM vì chỉ transit và do eKYC Provider Backend quản lý theo retention đã phê duyệt.
+
 
 ## 2.5. Concurrency, Idempotency và Transaction
 
@@ -830,16 +860,25 @@ Security, Data Privacy và Operations phê duyệt. Endpoint path, header, paylo
 schema, HTTP status mapping, dedupe-key formula, provider field mapping và test
 fixture thuộc L3 API Specification/Provider Integration Contract.
 
-## 4.1. Integration Landscape
+## 4.1. Danh sách Interfaces
 
-| **Luồng tích hợp** | **From → To** | **Mode** | **Mục đích và dữ liệu ở mức L2** | **Owner** |
-| --- | --- | --- | --- | --- |
-| Session lifecycle | VHM Application → VHM BFF → VHM eKYC Service | Synchronous control-plane | Tạo/đọc trạng thái session, bootstrap, retry và consent/business context | VHM eKYC Service |
-| SDK data-plane | eKYC SDK → VHM BFF → VHM eKYC Service → eKYC Provider Backend | Synchronous streaming | Init, OCR và liveness; media chỉ transit, không persist tại VHM | BFF/VHM eKYC Service |
-| Client lifecycle event | VHM Application → VHM BFF → VHM eKYC Service | Idempotent event/command | Started, submitted, cancelled và client error phục vụ lifecycle/UX; không phải official result | VHM eKYC Service |
-| Official result | eKYC Provider Backend → VHM BFF → VHM eKYC Service | Asynchronous callback | Kết quả OCR/eKYC server-to-server đã xác thực | VHM eKYC Service |
-| Result recovery | VHM eKYC Service → eKYC Provider Backend | Scheduled reconciliation | Get Result khi callback quá SLA hoặc session treo; không polling happy path | VHM eKYC Service |
-| Result delivery | VHM eKYC Service → VHM BFF → VHM Application | Synchronous query | Trạng thái, next action và Canonical Result được mask theo quyền | VHM eKYC Service/BFF |
+Danh sách dưới đây xác định interface và trách nhiệm tích hợp ở mức L2. Endpoint
+path, protocol header, request/response schema, error mapping, idempotency-key format
+và provider-specific contract được định nghĩa tại L3 API Specification/Provider
+Integration Contract; các interface không được tự suy diễn thành API implementation.
+
+| **ID** | **Interface** | **Consumer → Provider** | **Mode** | **Mục đích/dữ liệu ở mức L2** | **Data & security baseline** | **L3 artefact** |
+| --- | --- | --- | --- | --- | --- | --- |
+| INT-01 | Session Lifecycle | VHM Application → VHM BFF → VHM eKYC Service | Synchronous control-plane | Tạo/đọc session, bootstrap, retry, consent và business context | Confidential/PII reference; user authentication và object authorization | VHM API Specification |
+| INT-02 | SDK Data-plane | eKYC SDK → VHM BFF → VHM eKYC Service → eKYC Provider Backend | Synchronous streaming | Init, OCR và liveness; document/biometric media chỉ transit | Restricted; VHM SDK token, workload/provider authentication, `MEDIA-01` và `DATA-01` | SDK Proxy/Provider Integration Contract |
+| INT-03 | Client Lifecycle Event | VHM Application → VHM BFF → VHM eKYC Service | Idempotent event/command | Started, submitted, cancelled và client error phục vụ lifecycle/UX | Sensitive metadata; user authentication và session/run binding; không phải official result | Mobile/Web Lifecycle Specification + VHM API Specification |
+| INT-04 | Callback Authentication | eKYC Provider Backend → VHM IAM | Synchronous control-plane | Lấy short-lived access token theo approved callback authentication contract | Secret; client credential, scope/environment binding và rotation theo mục 7.1 | Callback Security Contract |
+| INT-05 | Official Result Callback | eKYC Provider Backend → VHM BFF → VHM eKYC Service | Asynchronous callback | Truyền official OCR/eKYC result server-to-server; không nhận media | Restricted result/PII; authentication, binding, replay/dedupe và durable receive | Callback API Specification |
+| INT-06 | Result Reconciliation | VHM eKYC Service → eKYC Provider Backend | Scheduled synchronous query | Get Result khi callback quá SLA hoặc session treo | Restricted; provider credential, bounded retry, quota guard và retention deadline | Provider Get Result Contract |
+| INT-07 | Result Query | VHM Application → VHM BFF → VHM eKYC Service | Synchronous query | Trả trạng thái, next action và masked Canonical Result | Restricted; object authorization, field allowlist, masking và access audit | Result API Specification |
+
+Các L3 artefact phải được gắn link và phê duyệt theo Document Completion Gate trước
+khi implementation/contract test tương ứng được xem là hoàn tất.
 
 ## 4.2. Integration Contract Decisions
 
