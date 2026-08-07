@@ -162,7 +162,7 @@ flowchart LR
         PROVIDER["FPT AI Backend"]
     end
 
-    PROXY ==>|"OCR request<br/>credential phía server"| PROVIDER
+    PROXY ==>|"Init/OCR/Result API<br/>api-key phía server"| PROVIDER
     PROVIDER -.->|"Provider Callback — bổ sung"| PROXY
 
 ```
@@ -187,7 +187,7 @@ Nhờ đó, NOXH Backend không phải triển khai SDK/provider adapter, callba
 
 - Quản lý phiên OCR; sinh `verificationId` dùng làm `client_uuid` của FPT AI và liên kết với `businessRef` của NOXH.
 - Nhận `documentType`, chọn model/template OCR tương ứng và chuẩn hóa kết quả theo schema của từng loại tài liệu.
-- Là điểm tích hợp duy nhất với FPT AI: giữ credential, forward request/response SDK, nhận Provider Callback và gọi Result API khi cần đối soát.
+- Là điểm tích hợp duy nhất với FPT AI: giữ API key, khởi tạo provider session, forward request/response, nhận Provider Callback và gọi Result API khi cần đối soát.
 - Ghi nhận và chuẩn hóa kết quả trực tiếp đi qua Proxy mà không bắt buộc chờ Provider Callback.
 - Xử lý Provider Callback idempotent; cơ chế xác thực callback phải chốt theo contract FPT AI (custom header/signature và network allowlist).
 - Gửi NOXH Callback đã chuẩn hóa, có xác thực và idempotency về NOXH Backend khi phiên hoàn tất.
@@ -201,6 +201,15 @@ Nhờ đó, NOXH Backend không phải triển khai SDK/provider adapter, callba
 - Kiểm tra Đại lý có quyền thao tác hồ sơ/dự án.
 - Gửi `businessRef=dossierId`, `documentType` khi tạo phiên và lấy Canonical Result từ OCR Proxy.
 - Cho Đại lý xác nhận dữ liệu trước khi cập nhật khách hàng hoặc hồ sơ NOXH.
+
+**Xác thực service-to-service với FPT AI:**
+
+- OCR Proxy inject header `api-key` khi gọi API FPT AI; Application và NOXH Backend không được nhận hoặc lưu API key này.
+- Khi khởi tạo phiên, OCR Proxy gửi `client_uuid=verificationId`; FPT AI trả `session-id` và OCR Proxy lưu mapping với phiên nội bộ.
+- Các request OCR tiếp theo gửi `api-key`, `session-id`, `device-type` và loại tài liệu/model theo contract của provider.
+- Khi đối soát kết quả, OCR Proxy gọi `POST /callback/get_result` với header `api-key` và `uuid=verificationId`.
+- API key được lưu trong Secret Manager, tách theo môi trường/project, không ghi vào code, database, ConfigMap hoặc log và được rotate định kỳ 3–6 tháng.
+- Cơ chế xác thực Provider Callback từ FPT AI về OCR Proxy (custom secret header, signature và/hoặc IP allowlist) phải được chốt trong integration contract trước khi triển khai production.
 
 **Cách hoạt động:**
 
@@ -219,6 +228,9 @@ sequenceDiagram
     BFF->>NOXH: Kiểm tra quyền hồ sơ và dự án
     NOXH->>OCR: Create session (businessRef, documentType)
     OCR->>OCR: Sinh verificationId = FPT client_uuid
+    OCR->>FPT: POST init session<br/>api-key + client_uuid + device-type
+    FPT-->>OCR: session-id + SDK config
+    OCR->>OCR: Lưu mapping verificationId ↔ session-id
     OCR-->>NOXH: verificationId + SDK bootstrap
     NOXH-->>BFF: Thông tin khởi tạo phiên
     BFF-->>APP: verificationId + SDK bootstrap
@@ -226,7 +238,7 @@ sequenceDiagram
     DL->>APP: Cung cấp các trang/mặt tài liệu bắt buộc
     APP->>BFF: Dữ liệu tài liệu + verificationId
     BFF->>OCR: Forward luồng OCR đã xác thực
-    OCR->>FPT: OCR request + model/template<br/>credential + client_uuid
+    OCR->>FPT: OCR request + model/template<br/>api-key + session-id + device-type
     FPT-->>OCR: OCR result
     OCR->>OCR: Lưu và chuẩn hóa Canonical Result
     OCR-->>BFF: Forward SDK-compatible response
