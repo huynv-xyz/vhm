@@ -711,10 +711,9 @@ erDiagram
 | `STATE_ACCESS_HISTORY` | Lịch sử state transition và truy cập có audit | Append-only; một session có một hoặc nhiều record lịch sử |
 | `RECONCILIATION_TASK` | Lịch khôi phục result khi callback quá SLA/session treo | Có thể có nhiều lần chạy bounded; không polling liên tục |
 
-Đây là **logical ERD**, không phải physical database design. Tên bảng/cột, SQL data
-type, index, constraint, partition, encryption implementation và migration script
-thuộc L3 Database Design. Media và raw provider result không thuộc ERD lưu trữ của
-VHM vì chỉ transit và do eKYC Provider Backend quản lý theo retention đã phê duyệt.
+ERD biểu diễn quan hệ logic và invariant giữa các entity. Media và raw provider
+result không thuộc mô hình lưu trữ của VHM vì chỉ transit và do eKYC Provider
+Backend quản lý theo retention đã phê duyệt.
 
 
 ## 2.5. Concurrency, Idempotency và Transaction
@@ -755,8 +754,8 @@ Kiểm soát:
 | Callback acknowledgement | Chỉ phụ thuộc durable inbox, không chờ normalize/finalize; phải nằm trong provider callback timeout với safety margin |
 | Metrics/alert | `db_lock_wait_seconds`, `db_lock_timeout_total`, `official_result_retry_total`, inbox oldest age |
 
-Giá trị lock/statement timeout và retry schedule thuộc L3/runtime configuration,
-phải được chốt bằng lock/load test và approved DB/Operations baseline. Không được
+Giá trị lock/statement timeout và retry schedule phải được chốt bằng lock/load test
+và approved DB/Operations baseline. Không được
 tăng timeout để che transaction dài hoặc network call nằm sai transaction boundary.
 
 ### 2.5.4. Transaction boundary
@@ -855,19 +854,9 @@ Không gọi eKYC Provider Backend hoặc dependency ngoài transaction boundary
 
 # **4. Integration Architecture**
 
-Mục này chỉ mô tả **quyết định kiến trúc tích hợp ở mức L2** để Architecture,
-Security, Data Privacy và Operations phê duyệt. Endpoint path, header, payload
-schema, HTTP status mapping, dedupe-key formula, provider field mapping và test
-fixture thuộc L3 API Specification/Provider Integration Contract.
-
 ## 4.1. Danh sách Interfaces
 
-Danh sách dưới đây xác định interface và trách nhiệm tích hợp ở mức L2. Endpoint
-path, protocol header, request/response schema, error mapping, idempotency-key format
-và provider-specific contract được định nghĩa tại L3 API Specification/Provider
-Integration Contract; các interface không được tự suy diễn thành API implementation.
-
-| **ID** | **Interface** | **Consumer → Provider** | **Mode** | **Mục đích/dữ liệu ở mức L2** | **Data & security baseline** | **L3 artefact** |
+| **ID** | **Interface** | **Consumer → Provider** | **Mode** | **Mục đích/dữ liệu** | **Data & security baseline** | **L3 artefact** |
 | --- | --- | --- | --- | --- | --- | --- |
 | INT-01 | Session Lifecycle | VHM Application → VHM BFF → VHM eKYC Service | Synchronous control-plane | Tạo/đọc session, bootstrap, retry, consent và business context | Confidential/PII reference; user authentication và object authorization | VHM API Specification |
 | INT-02 | SDK Data-plane | eKYC SDK → VHM BFF → VHM eKYC Service → eKYC Provider Backend | Synchronous streaming | Init, OCR và liveness; document/biometric media chỉ transit | Restricted; VHM SDK token, workload/provider authentication, `MEDIA-01` và `DATA-01` | SDK Proxy/Provider Integration Contract |
@@ -877,12 +866,9 @@ Integration Contract; các interface không được tự suy diễn thành API 
 | INT-06 | Result Reconciliation | VHM eKYC Service → eKYC Provider Backend | Scheduled synchronous query | Get Result khi callback quá SLA hoặc session treo | Restricted; provider credential, bounded retry, quota guard và retention deadline | Provider Get Result Contract |
 | INT-07 | Result Query | VHM Application → VHM BFF → VHM eKYC Service | Synchronous query | Trả trạng thái, next action và masked Canonical Result | Restricted; object authorization, field allowlist, masking và access audit | Result API Specification |
 
-Các L3 artefact phải được gắn link và phê duyệt theo Document Completion Gate trước
-khi implementation/contract test tương ứng được xem là hoàn tất.
-
 ## 4.2. Integration Contract Decisions
 
-| **Decision** | **L2 requirement** | **Approval concern** |
+| **Decision** | **Architecture requirement** | **Approval concern** |
 | --- | --- | --- |
 | VHM ingress | Mobile/Web và eKYC SDK chỉ giao tiếp qua VHM BFF; VHM eKYC Service là integration point duy nhất tới provider | AuthN/AuthZ, rate/body limit và audit nằm trong VHM trust boundary |
 | Provider isolation | Provider-specific API và payload được cô lập trong Provider Adapter | Thay đổi provider contract không làm thay đổi contract của VHM Application |
@@ -894,12 +880,11 @@ khi implementation/contract test tương ứng được xem là hoàn tất.
 | Compatibility | Mobile/Web SDK version và provider contract được pin, contract-test và rollout có kiểm soát | Tránh breaking change theo channel/version |
 
 Chi tiết callback token/signing/rotation thuộc mục 7.1; timeout, retry và backlog
-recovery thuộc mục 6.8 và 8.2. API contract chỉ được triển khai sau khi L3 artefact
-và provider integration pack được phê duyệt.
+recovery thuộc mục 6.8 và 8.2.
 
 ## 4.3. Canonical Result Model
 
-| **Nhóm thông tin** | **Nội dung ở mức L2** | **Nguyên tắc sử dụng** |
+| **Nhóm thông tin** | **Nội dung** | **Nguyên tắc sử dụng** |
 | --- | --- | --- |
 | Verification metadata | Verification/run reference, journey, channel, schema/policy version và result source | Truy vết được source/version; không lộ provider credential |
 | Document outcome | Loại giấy tờ, trạng thái OCR, fixed approved fields và quality warnings | Field allowlist theo purpose; mã hóa khi lưu và mask khi trả |
@@ -909,7 +894,7 @@ và provider integration pack được phê duyệt.
 
 Provider result phải được normalize về Canonical Result trước khi lưu hoặc cung cấp
 cho consumer. `ocrOutcome` và `ekycOutcome` luôn tách riêng; tập field, schema,
-masking và reason-code mapping chi tiết thuộc L3 Data/API Contract.
+masking và reason-code mapping phải được version hóa và phê duyệt theo purpose.
 
 ## 4.4. Outcome Mapping Baseline
 
@@ -923,7 +908,7 @@ masking và reason-code mapping chi tiết thuộc L3 Data/API Contract.
 | Callback mất và result hết provider retention | `PROVIDER_ERROR` với `RESULT_UNRECOVERABLE_AFTER_RETENTION` | Không reuse media/result; contact support hoặc whole-attempt retry; mở incident nếu theo cụm |
 
 Fixed decision mapping, threshold, canonical reason catalogue và UX message phải
-được Product/Risk/Architecture phê duyệt, version hóa và contract-test trong L3.
+được Product/Risk/Architecture phê duyệt, version hóa và contract-test.
 
 # **5. Data Flow & Business Flow**
 
@@ -1692,7 +1677,7 @@ monitoring standard cần Architecture/Ops/Data Privacy phê duyệt.
 
 #### Callback Security
 
-- Áp `CALLBACK-01`; quyết định tích hợp ở mức L2 được nêu tại mục 4.2, còn cơ chế
+- Áp `CALLBACK-01`; yêu cầu tích hợp được nêu tại mục 4.2, còn cơ chế
   token, replay, durable-ack và rotation được kiểm soát tại mục 7.1.2–7.1.3.
 - Callback payload hiện không được ký số. Control bù trừ bắt buộc gồm TLS, Dynamic
   Bearer Token, binding Client UUID/session/environment, schema validation và
@@ -2153,8 +2138,8 @@ RTO/RPO cuối cùng phải được System Owner và Operations xác nhận b�
 | OAT/Recovery | Deploy/rollback, key rotation, PITR restore, backlog drain, dashboard/runbook | SIT | Đạt RTO/RPO; Operations sign-off. |
 | PAT/UAT | Purpose, consent, UX, fixed fields, decision/retry messages | UAT | Product/Risk/Legal/Data Privacy sign-off. |
 
-Test case chi tiết, automation suite và test data thuộc L3/Test Plan; Appendix C là
-release checklist và không thay thế evidence của từng quality gate.
+Test case chi tiết, automation suite và test data được quản lý trong Test Plan;
+Appendix C là release checklist và không thay thế evidence của từng quality gate.
 
 # **9. Risks & Open Issues/Tech Debt**
 
