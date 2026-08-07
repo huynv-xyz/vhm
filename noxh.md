@@ -109,7 +109,7 @@ Uses case: Trên Vinhome Agent Admin cần tạo danh sách biểu mẫu giấy 
 
 **User case:** Đại lý chụp CCCD mặt trước/sau trên Agent để hệ thống OCR và gợi ý thông tin khi tạo hồ sơ NOXH.
 
-**Bối cảnh:** Năng lực OCR được sử dụng bởi từ hai domain nghiệp vụ trở lên. Nếu mỗi Business Backend tự tích hợp FPT AI, các domain sẽ lặp lại logic quản lý credential, session, callback, retry, error mapping, audit và chính sách dữ liệu định danh; đồng thời cùng phụ thuộc trực tiếp vào contract của provider.
+**Bối cảnh:** Năng lực OCR có thể được nhiều domain nghiệp vụ sử dụng. Nếu mỗi Business Backend tự tích hợp FPT AI, các domain sẽ lặp lại logic quản lý credential, session, callback, retry, error mapping, audit và chính sách dữ liệu định danh; đồng thời cùng phụ thuộc trực tiếp vào contract của provider.
 
 | **Hướng tiếp cận** | **Ưu điểm** | **Nhược điểm** | **Lựa chọn (Yes/No)** |
 | --- | --- | --- | --- |
@@ -130,14 +130,16 @@ flowchart LR
         BFF["Agent BFF<br/>Xác thực và routing"]
         NOXH["NOXH Backend — thin domain<br/>Authorize · businessRef · Apply result"]
         DOMAINS["Các Business Domain khác"]
-        PROXY["OCR Proxy — shared platform<br/>SDK/Provider · Session · Data · Callback<br/>Normalize · Resilience · Security · Audit"]
+        PROXY["OCR Proxy — shared platform<br/>SDK/Provider · Session · Result<br/>Normalize · Resilience · Security · Audit"]
         DB[("OCR Database<br/>Session và kết quả chuẩn hóa")]
+        MEDIA[("Private Object Storage<br/>Ảnh CCCD theo retention policy")]
 
         BFF --> NOXH
         BFF ==>|"Luồng SDK OCR"| PROXY
         NOXH -->|"create / status / result"| PROXY
         DOMAINS -->|"contract nội bộ dùng chung"| PROXY
         PROXY --> DB
+        PROXY --> MEDIA
     end
 
     subgraph FPT["Hạ tầng FPT AI"]
@@ -145,11 +147,11 @@ flowchart LR
     end
 
     PROXY ==>|"OCR request<br/>credential phía server"| PROVIDER
-    PROVIDER -.->|"Callback kết quả"| PROXY
+    PROVIDER -.->|"Provider Callback — bổ sung"| PROXY
 
 ```
 
-Giải pháp này tạo một integration boundary thống nhất cho dữ liệu định danh và tránh lặp lại tích hợp OCR tại từ hai domain trở lên. Chi phí của một service và một network hop được phân bổ cho nhiều consumer, đổi lại credential, quota, callback, dữ liệu, audit và vận hành provider chỉ cần quản lý tại một nơi.
+Giải pháp này tạo một integration boundary thống nhất cho dữ liệu định danh và tránh lặp lại tích hợp OCR khi có nhiều domain cùng sử dụng. Chi phí của một service và một network hop được phân bổ cho nhiều consumer, đổi lại credential, quota, callback, dữ liệu, audit và vận hành provider chỉ cần quản lý tại một nơi.
 
 **Phân định ownership:**
 
@@ -157,9 +159,9 @@ Giải pháp này tạo một integration boundary thống nhất cho dữ liệ
 | --- | --- | --- |
 | Nghiệp vụ | Kiểm tra quyền trên business object; gửi `businessRef`; quyết định sử dụng kết quả | Không xử lý rule nghiệp vụ của domain |
 | API tích hợp | Chỉ gọi API nội bộ `create/status/result` | Quản lý SDK/API contract và credential FPT AI |
-| Phiên xử lý | Không quản lý state machine OCR | Quản lý session, attempt, timeout, idempotency và trạng thái |
-| Kết quả | Chỉ nhận Canonical Result cần thiết | Nhận callback/Get Result, chuẩn hóa field và error code |
-| Dữ liệu | Không lưu ảnh hoặc raw provider payload | Quản lý ảnh/tham chiếu ảnh, mã hóa, masking và retention |
+| Phiên xử lý | Không quản lý state machine OCR | Sinh `verificationId` và sử dụng làm `client_uuid` khi gọi FPT AI; quản lý session, attempt, timeout, idempotency và trạng thái |
+| Kết quả | Chỉ nhận Canonical Result cần thiết | Nhận kết quả trực tiếp trên luồng Proxy; Provider Callback và Result API dùng để lấy/đối soát bổ sung; chuẩn hóa field và error code |
+| Dữ liệu | Không lưu ảnh hoặc raw provider payload | Không lưu binary trong database; ảnh cần lưu được đưa vào private object storage, database chỉ giữ reference đã mã hóa, checksum và retention metadata |
 | Resilience | Không retry trực tiếp với FPT AI | Retry, reconciliation, circuit breaker, rate limit và quota |
 | Audit/Monitoring | Chỉ audit việc áp dụng kết quả vào nghiệp vụ | Audit toàn bộ vòng đời OCR và vận hành provider |
 
@@ -167,10 +169,11 @@ Nhờ đó, khi thêm một domain mới, domain chỉ tích hợp contract nộ
 
 **Trách nhiệm của OCR Proxy:**
 
-- Quản lý phiên OCR (`verificationId`, trạng thái, timeout và số lần thử lại) và liên kết với mã tham chiếu hồ sơ NOXH.
-- Là điểm tích hợp duy nhất với FPT AI: giữ credential, forward request SDK, nhận callback và gọi Get Result khi cần đối soát.
-- Xác thực callback, chống xử lý trùng và bảo đảm callback được lưu nhận trước khi trả thành công cho provider.
-- Gửi callback chuẩn hóa, có xác thực và idempotency về Business Backend khi phiên hoàn tất.
+- Quản lý phiên OCR; sinh `verificationId` dùng làm `client_uuid` của FPT AI và liên kết với `businessRef` của domain.
+- Là điểm tích hợp duy nhất với FPT AI: giữ credential, forward request/response SDK, nhận Provider Callback và gọi Result API khi cần đối soát.
+- Ghi nhận và chuẩn hóa kết quả trực tiếp đi qua Proxy mà không bắt buộc chờ Provider Callback.
+- Xử lý Provider Callback idempotent; cơ chế xác thực callback phải chốt theo contract FPT AI (custom header/signature và network allowlist).
+- Gửi Domain Callback đã chuẩn hóa, có xác thực và idempotency về Business Backend khi phiên hoàn tất.
 - Chuẩn hóa payload và error code của FPT AI thành contract nội bộ ổn định, không trả raw provider payload cho NOXH.
 - Quản lý retry, timeout, circuit breaker, quota/rate limit và cô lập sự cố provider khỏi Business Backend.
 - Áp dụng kiểm soát truy cập, mã hóa dữ liệu nhạy cảm, masking, audit và chính sách lưu/xóa dữ liệu OCR.
@@ -198,6 +201,7 @@ sequenceDiagram
     APP->>BFF: Yêu cầu tạo phiên OCR
     BFF->>NOXH: Kiểm tra quyền hồ sơ và dự án
     NOXH->>OCR: Create session (businessRef = dossierId)
+    OCR->>OCR: Sinh verificationId = FPT client_uuid
     OCR-->>NOXH: verificationId + SDK bootstrap
     NOXH-->>BFF: Thông tin khởi tạo phiên
     BFF-->>APP: verificationId + SDK bootstrap
@@ -205,22 +209,13 @@ sequenceDiagram
     DL->>APP: Chụp mặt trước và mặt sau
     APP->>BFF: Luồng dữ liệu SDK + verificationId
     BFF->>OCR: Forward luồng OCR đã xác thực
-    OCR->>FPT: OCR request + server credential
+    OCR->>FPT: OCR request + credential + client_uuid
+    FPT-->>OCR: OCR result
+    OCR->>OCR: Lưu và chuẩn hóa Canonical Result
+    OCR-->>BFF: Forward SDK-compatible response
+    BFF-->>APP: Hiển thị kết quả OCR
 
-    alt Synchronous fast path — kết quả đã terminal
-        FPT-->>OCR: COMPLETED + OCR result
-        OCR->>OCR: Chuẩn hóa và lưu Canonical Result
-        OCR-->>BFF: COMPLETED + response SDK
-        BFF-->>APP: Hiển thị kết quả OCR
-    else Asynchronous continuation — kết quả chưa terminal
-        FPT-->>OCR: PROCESSING + providerRequestId
-        OCR-->>BFF: PROCESSING
-        BFF-->>APP: Đang xử lý
-        FPT-->>OCR: Callback kết quả
-        OCR->>OCR: Xác thực, chống trùng và chuẩn hóa
-    end
-
-    OCR-->>NOXH: Callback COMPLETED + Canonical Result
+    OCR-->>NOXH: Domain Callback + Canonical Result
     NOXH->>NOXH: Lưu trạng thái theo businessRef
     APP->>BFF: GET trạng thái hồ sơ OCR
     BFF->>NOXH: Authorized status query
@@ -228,30 +223,36 @@ sequenceDiagram
     BFF-->>APP: Kết quả OCR
     APP-->>DL: Hiển thị để kiểm tra và xác nhận
 
-    opt Callback FPT AI thất lạc hoặc quá SLA
-        OCR->>FPT: Get Result theo recovery policy
-        FPT-->>OCR: Kết quả phiên OCR
-        OCR->>OCR: Chuẩn hóa và callback về domain
+    opt FPT AI gửi Provider Callback
+        FPT-->>OCR: Provider Callback theo client_uuid
+        OCR->>OCR: Dedupe và cập nhật Canonical Result
+    end
+
+    opt Cần lấy lại hoặc đối soát kết quả
+        OCR->>FPT: POST /callback/get_result<br/>api-key + uuid
+        FPT-->>OCR: Dữ liệu phiên OCR
+        OCR->>OCR: Dedupe, chuẩn hóa và cập nhật kết quả
     end
 ```
 
 **Cơ chế trả kết quả:**
 
-- OCR Proxy sử dụng mô hình **asynchronous-first**: mọi yêu cầu đều tạo một OCR session có `verificationId`; Business Backend không lựa chọn chế độ đồng bộ hay bất đồng bộ.
-- Nếu FPT AI trả kết quả terminal trong request đầu tiên, OCR Proxy hoàn tất session và trả `COMPLETED` ngay. Đây là **synchronous fast path** của cùng một session, không phải một flow riêng.
-- Nếu FPT AI chưa trả kết quả terminal, OCR Proxy trả `PROCESSING`, tiếp tục chờ callback và callback Canonical Result về Business Backend khi hoàn tất.
-- Application polling API trạng thái của Business Backend mỗi 3–5 giây và dừng khi phiên đạt trạng thái terminal; Application và Business Backend không polling trực tiếp FPT AI.
-- Nếu callback FPT AI quá SLA hoặc thất lạc, chỉ OCR Proxy gọi Get Result theo bounded retry/recovery policy.
-- Callback từ OCR Proxy về Business Backend phải được xác thực và idempotent. Nếu callback này thất lạc, Business Backend gọi `GET /ocr/sessions/{verificationId}` để đối soát.
+- **Direct Proxy Result — happy path:** FPT AI trả kết quả qua OCR Proxy; Proxy lưu, chuẩn hóa rồi forward response tương thích về SDK và gửi Domain Callback cho Business Backend. Theo kiến trúc Proxy của FPT AI, không bắt buộc đợi callback mới lưu hoặc sử dụng kết quả.
+- **Provider Callback — supplemental path:** FPT AI có thể gửi dữ liệu phiên tới callback URL đã cấu hình. OCR Proxy tiếp nhận theo `client_uuid`, dedupe và cập nhật Canonical Result.
+- **Provider Result API — recovery/reconciliation:** Khi cần lấy lại hoặc đối soát dữ liệu, OCR Proxy gọi `POST /callback/get_result` với header `api-key` và `uuid`. Application và Business Backend không gọi API FPT AI trực tiếp.
+- **Domain Callback:** Sau khi có kết quả hợp lệ từ bất kỳ nguồn nào, OCR Proxy callback Canonical Result về Business Backend. Nếu Domain Callback thất lạc, Business Backend gọi API trạng thái/kết quả nội bộ của OCR Proxy.
+- Không tự động retry request OCR chứa ảnh sau khi body đã được gửi, trừ khi FPT AI xác nhận idempotency. Chỉ retry lỗi kết nối trước khi gửi body và các tác vụ callback/result reconciliation theo bounded policy.
+
+**Tham chiếu FPT AI:** [Kiến trúc tích hợp SDK qua Proxy](https://docs-vision.fpt.ai/ekyc/III-integration/III-1-SDKs/kien-truc-tich-hop/) · [Callback và Result API](https://docs-vision.fpt.ai/ekyc/III-integration/III-2-APIs/a-APIs%20of%20eKYC%20Flows/APIs-result/)
 
 ```mermaid
 stateDiagram-v2
-    [*] --> PROCESSING: Tạo OCR session
-    PROCESSING --> COMPLETED: FPT AI trả terminal ngay
-    PROCESSING --> WAITING_CALLBACK: FPT AI chưa có kết quả terminal
-    WAITING_CALLBACK --> COMPLETED: Callback hợp lệ
-    WAITING_CALLBACK --> RECONCILING: Callback quá SLA
-    RECONCILING --> COMPLETED: Get Result thành công
+    [*] --> CREATED: Tạo OCR session
+    CREATED --> PROCESSING: SDK gửi dữ liệu OCR
+    PROCESSING --> COMPLETED: Direct Proxy Result hợp lệ
+    PROCESSING --> COMPLETED: Provider Callback hợp lệ
+    PROCESSING --> RECONCILING: Cần lấy lại hoặc đối soát
+    RECONCILING --> COMPLETED: POST get_result thành công
     RECONCILING --> PROVIDER_ERROR: Hết recovery budget
     COMPLETED --> [*]
     PROVIDER_ERROR --> [*]
