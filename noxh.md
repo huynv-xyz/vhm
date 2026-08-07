@@ -107,7 +107,25 @@ Uses case: Trên Vinhome Agent Admin cần tạo danh sách biểu mẫu giấy 
 
 ### Vấn đề 6: Lựa chọn nền tảng tích hợp OCR tập trung
 
-**User case:** Đại lý chụp CCCD mặt trước/sau trên Agent để hệ thống OCR và gợi ý thông tin khi tạo hồ sơ NOXH.
+**User case:** Đại lý chụp hoặc upload giấy tờ trên Agent để hệ thống OCR, phân loại và gợi ý dữ liệu khi tạo hồ sơ NOXH.
+
+**Loại tài liệu dự kiến:**
+
+- CCCD mặt trước/sau.
+- Giấy đăng ký kết hôn.
+- Bản sao có chứng thực giấy chứng nhận hộ gia đình nghèo/cận nghèo.
+- Các giấy tờ khác trong checklist hồ sơ NOXH khi có mẫu OCR tương ứng.
+
+OCR Proxy chỉ đọc, phân loại và trích xuất dữ liệu tài liệu; kết quả luôn cần Đại lý kiểm tra trước khi cập nhật hồ sơ.
+
+**Các use case OCR:**
+
+1. **OCR CCCD:** Đại lý chụp đủ mặt trước/sau. Hệ thống trích xuất số định danh, họ tên, ngày sinh, giới tính, quốc tịch, quê quán, nơi thường trú, ngày cấp/hết hạn và cảnh báo chất lượng hoặc hai mặt không khớp.
+2. **OCR giấy đăng ký kết hôn:** Đại lý upload đầy đủ các trang. Hệ thống trích xuất số giấy chứng nhận, thông tin hai bên, ngày đăng ký, nơi đăng ký và thông tin người ký/cơ quan cấp nếu mẫu tài liệu hỗ trợ.
+3. **OCR giấy chứng nhận hộ nghèo/cận nghèo:** Đại lý upload bản sao có chứng thực. Hệ thống trích xuất số văn bản/chứng thực, chủ hộ, địa chỉ, loại xác nhận, thời gian hiệu lực, cơ quan cấp và ngày cấp.
+4. **OCR giấy tờ khác:** NOXH truyền `documentType`; OCR Proxy chỉ xử lý khi đã có model/template và schema kết quả tương ứng. Tài liệu chưa được hỗ trợ hoặc có confidence thấp được chuyển sang nhập liệu/kiểm tra thủ công.
+
+OCR chỉ hỗ trợ số hóa và kiểm tra dữ liệu theo khả năng của model. Việc xác nhận bản sao có giá trị pháp lý, giấy tờ còn hiệu lực hoặc hồ sơ đáp ứng điều kiện NOXH vẫn do nghiệp vụ và người duyệt quyết định.
 
 **Bối cảnh:** Nếu Agent Backend tự tích hợp FPT AI, toàn bộ logic quản lý credential, session, callback, retry, error mapping, audit và dữ liệu định danh sẽ nằm trong service nghiệp vụ NOXH và phụ thuộc trực tiếp vào contract của provider.
 
@@ -122,7 +140,7 @@ Uses case: Trên Vinhome Agent Admin cần tạo danh sách biểu mẫu giấy 
 flowchart LR
     subgraph CLIENT["Kênh người dùng"]
         AGENT["Vinhomes Agent"]
-        SDK["FPT AI SDK<br/>Chụp CCCD trước/sau"]
+        SDK["OCR Capture / Upload Client<br/>Chụp hoặc upload tài liệu"]
         AGENT --> SDK
     end
 
@@ -131,7 +149,7 @@ flowchart LR
         NOXH["NOXH Backend<br/>Authorize · businessRef · Apply result"]
         PROXY["OCR Proxy — shared platform<br/>SDK/Provider · Session · Result<br/>Normalize · Resilience · Security · Audit"]
         DB[("OCR Database<br/>Session và kết quả chuẩn hóa")]
-        MEDIA[("Private Object Storage<br/>Ảnh CCCD theo retention policy")]
+        MEDIA[("Private Object Storage<br/>Tài liệu theo retention policy")]
 
         BFF --> NOXH
         BFF ==>|"Luồng SDK OCR"| PROXY
@@ -156,9 +174,9 @@ Giải pháp này tách nghiệp vụ NOXH khỏi chi tiết tích hợp FPT AI.
 | **Năng lực** | **NOXH Backend** | **OCR Proxy** |
 | --- | --- | --- |
 | Nghiệp vụ | Kiểm tra quyền trên hồ sơ/dự án; gửi `businessRef`; quyết định sử dụng kết quả | Không xử lý rule nghiệp vụ NOXH |
-| API tích hợp | Chỉ gọi API nội bộ `create/status/result` | Quản lý SDK/API contract và credential FPT AI |
+| API tích hợp | Chỉ gọi API nội bộ `create/status/result` với `documentType` | Quản lý SDK/API contract, model/template và credential FPT AI |
 | Phiên xử lý | Không quản lý state machine OCR | Sinh `verificationId` và sử dụng làm `client_uuid` khi gọi FPT AI; quản lý session, attempt, timeout, idempotency và trạng thái |
-| Kết quả | Chỉ nhận Canonical Result cần thiết | Nhận kết quả trực tiếp trên luồng Proxy; Provider Callback và Result API dùng để lấy/đối soát bổ sung; chuẩn hóa field và error code |
+| Kết quả | Chỉ nhận Canonical Result theo loại tài liệu | Nhận kết quả trực tiếp trên luồng Proxy; Provider Callback và Result API dùng để lấy/đối soát bổ sung; chuẩn hóa field, confidence, warning và error code |
 | Dữ liệu | Không lưu ảnh hoặc raw provider payload | Không lưu binary trong database; ảnh cần lưu được đưa vào private object storage, database chỉ giữ reference đã mã hóa, checksum và retention metadata |
 | Resilience | Không retry trực tiếp với FPT AI | Retry, reconciliation, circuit breaker, rate limit và quota |
 | Audit/Monitoring | Chỉ audit việc áp dụng kết quả vào nghiệp vụ | Audit toàn bộ vòng đời OCR và vận hành provider |
@@ -168,6 +186,7 @@ Nhờ đó, NOXH Backend không phải triển khai SDK/provider adapter, callba
 **Trách nhiệm của OCR Proxy:**
 
 - Quản lý phiên OCR; sinh `verificationId` dùng làm `client_uuid` của FPT AI và liên kết với `businessRef` của NOXH.
+- Nhận `documentType`, chọn model/template OCR tương ứng và chuẩn hóa kết quả theo schema của từng loại tài liệu.
 - Là điểm tích hợp duy nhất với FPT AI: giữ credential, forward request/response SDK, nhận Provider Callback và gọi Result API khi cần đối soát.
 - Ghi nhận và chuẩn hóa kết quả trực tiếp đi qua Proxy mà không bắt buộc chờ Provider Callback.
 - Xử lý Provider Callback idempotent; cơ chế xác thực callback phải chốt theo contract FPT AI (custom header/signature và network allowlist).
@@ -180,7 +199,7 @@ Nhờ đó, NOXH Backend không phải triển khai SDK/provider adapter, callba
 **Trách nhiệm tối thiểu của NOXH Backend:**
 
 - Kiểm tra Đại lý có quyền thao tác hồ sơ/dự án.
-- Gửi `businessRef=dossierId` khi tạo phiên và lấy Canonical Result từ OCR Proxy.
+- Gửi `businessRef=dossierId`, `documentType` khi tạo phiên và lấy Canonical Result từ OCR Proxy.
 - Cho Đại lý xác nhận dữ liệu trước khi cập nhật khách hàng hoặc hồ sơ NOXH.
 
 **Cách hoạt động:**
@@ -195,19 +214,19 @@ sequenceDiagram
     participant OCR as OCR Proxy
     participant FPT as FPT AI Backend
 
-    DL->>APP: Bắt đầu OCR CCCD
+    DL->>APP: Chọn loại và chụp/upload tài liệu
     APP->>BFF: Yêu cầu tạo phiên OCR
     BFF->>NOXH: Kiểm tra quyền hồ sơ và dự án
-    NOXH->>OCR: Create session (businessRef = dossierId)
+    NOXH->>OCR: Create session (businessRef, documentType)
     OCR->>OCR: Sinh verificationId = FPT client_uuid
     OCR-->>NOXH: verificationId + SDK bootstrap
     NOXH-->>BFF: Thông tin khởi tạo phiên
     BFF-->>APP: verificationId + SDK bootstrap
 
-    DL->>APP: Chụp mặt trước và mặt sau
-    APP->>BFF: Luồng dữ liệu SDK + verificationId
+    DL->>APP: Cung cấp các trang/mặt tài liệu bắt buộc
+    APP->>BFF: Dữ liệu tài liệu + verificationId
     BFF->>OCR: Forward luồng OCR đã xác thực
-    OCR->>FPT: OCR request + credential + client_uuid
+    OCR->>FPT: OCR request + model/template<br/>credential + client_uuid
     FPT-->>OCR: OCR result
     OCR->>OCR: Lưu và chuẩn hóa Canonical Result
     OCR-->>BFF: Forward SDK-compatible response
