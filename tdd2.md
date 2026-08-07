@@ -358,8 +358,7 @@ tham chiếu control ID và chỉ mô tả chi tiết riêng của section.
 ```mermaid
 flowchart LR
     USER(["Người dùng Mobile / Web"]):::entity
-    OPS(["Business / Platform Operator"]):::entity
-    REVIEWER(["Manual Reviewer / Supervisor"]):::entity
+    OPS(["Platform Operations"]):::entity
     APP["VHM Application<br/>Mobile / Web"]:::owned
     IAM["VHM IAM / Consent"]:::owned
     OBS["VHM Audit / Monitoring"]:::owned
@@ -371,8 +370,7 @@ flowchart LR
     end
 
     USER -->|thực hiện OCR/eKYC| APP
-    OPS -->|vận hành và kiểm soát| CORE
-    REVIEWER -->|case assignment · controlled media view| CORE
+    OPS -->|vận hành · assigned manual review| CORE
     APP -->|1 · create session / request media slots| CORE
     CORE -->|2 · mediaId + presigned PUT/multipart| APP
     APP ==>|3 · UPLOAD MEDIA BYTES pass/fail| VAULT
@@ -397,8 +395,7 @@ event/telemetry bất đồng bộ.
 | **Tác nhân/Hệ thống** | **Loại** | **Internal** | **External** | **Vai trò** |
 | --- | --- | --- | --- | --- |
 | Người dùng Mobile/Web | Actor |  | ✓ | Thực hiện hành trình OCR/eKYC qua VHM Application. |
-| Business/Platform Operator | Actor |  | ✓ | Theo dõi, hỗ trợ và kiểm soát vận hành theo quyền. |
-| Manual Reviewer/Review Supervisor | Actor |  | ✓ | Xử lý case được assign; xem media qua controlled reveal/presigned access và ghi manual decision. |
+| Platform Operations | Actor |  | ✓ | Theo dõi hệ thống và thực hiện assigned manual review qua controlled access theo quyền; chi tiết role nằm tại mục 7.1.2. |
 | VHM eKYC Service | Software System | ✓ |  | Service trung tâm quản lý hành trình, control-plane, data-plane và kết quả eKYC. |
 | VHM Application | Software System | ✓ |  | Kênh Mobile/Web khởi chạy SDK và hiển thị kết quả VHM. |
 | VHM IAM/Consent | Software System | ✓ |  | Xác thực principal và cung cấp bằng chứng consent. |
@@ -494,6 +491,7 @@ flowchart TB
     SDK(("P2 · eKYC SDK")):::process
     BFF(("P3 · VHM BFF<br/>auth · streaming route")):::process
     EKYC_SERVICE(("P4 · VHM eKYC Service<br/>session · integration · result")):::process
+    MEDIA_API(("P5 · Media Upload API<br/>presign · manifest · finalizer")):::process
     DB[("D1 · Verification Data")]:::datastore
     S3[("D2 · VHM S3 Intake / Media Vault")]:::datastore
 
@@ -504,19 +502,32 @@ flowchart TB
     EKYC_SERVICE -->|"5. Client UUID/proof + run context"| BFF
     BFF -->|"6. SDK bootstrap"| APP
     APP -->|"7. authorized SDK bootstrap"| SDK
-    SDK -->|"8. init/OCR/liveness stream"| BFF
-    APP -->|"8a. presigned media PUT/multipart"| S3
-    APP -->|"8b. SDK outcome + media manifest"| BFF
-    BFF -->|"9. authenticated stream"| EKYC_SERVICE
-    EKYC_SERVICE -->|"10. server credential + stream"| BACKEND
-    BACKEND -->|"11. official callback"| BFF
-    BFF -->|"12. callback ingress · body/headers không biến đổi"| EKYC_SERVICE
-    EKYC_SERVICE -->|"13. canonical result/history"| DB
-    EKYC_SERVICE -->|"13a. validate/finalize media + encrypted ref"| S3
-    APP -->|"14. status/result query"| BFF
-    BFF -->|"15. authorized query"| EKYC_SERVICE
-    EKYC_SERVICE -->|"16. masked canonical result"| BFF
-    BFF -->|"17. outcome/next action"| APP
+    SDK -->|"P1 · init/OCR/liveness stream"| BFF
+    BFF -->|"P2 · authenticated bounded stream"| EKYC_SERVICE
+    EKYC_SERVICE -->|"P3 · server credential + stream"| BACKEND
+    BACKEND -->|"P4 · synchronous SDK response"| EKYC_SERVICE
+    EKYC_SERVICE -->|"P5 · opaque response"| BFF
+    BFF -->|"P6 · opaque SDK response"| SDK
+    BACKEND -->|"P7 · official callback"| BFF
+    BFF -->|"P8 · authenticated callback ingress"| EKYC_SERVICE
+    EKYC_SERVICE -->|"P9 · canonical result/history"| DB
+
+    APP -->|"U1 · request media slots<br/>types · sizes · checksums · runId"| BFF
+    BFF -->|"U2 · authorized create-upload command"| MEDIA_API
+    MEDIA_API -->|"U3 · allocate mediaId + immutable object slot"| DB
+    MEDIA_API -->|"U4 · mediaId + presigned PUT/multipart"| BFF
+    BFF -->|"U5 · upload slots + required headers"| APP
+    APP ==>|"U6 · MEDIA BYTES pass/fail"| S3
+    S3 -->|"U7 · object version / ETag / checksum"| APP
+    APP -->|"U8 · submit outcome + manifest<br/>mediaId · ETag/version · checksum"| BFF
+    BFF -->|"U9 · authorized idempotent submit"| MEDIA_API
+    MEDIA_API -->|"U10 · validate object/checksum + finalize"| S3
+    MEDIA_API -->|"U11 · encrypted ref + media READY"| DB
+
+    APP -->|"Q1 · status/result query"| BFF
+    BFF -->|"Q2 · authorized query"| EKYC_SERVICE
+    EKYC_SERVICE -->|"Q3 · masked canonical result"| BFF
+    BFF -->|"Q4 · outcome/next action"| APP
 
     classDef entity fill:#3a3320,stroke:#d9b84a,color:#fff;
     classDef process fill:#1f3a5f,stroke:#4a90d9,color:#fff;
@@ -553,7 +564,7 @@ sequenceDiagram
         APP->>S3: Direct PUT/multipart MEDIA BYTES
         S3-->>APP: Object version/ETag/checksum response
     end
-    APP->>BFF: Submit SDK outcome + server-issued media manifest
+    APP->>BFF: Submit outcome + manifest(mediaId, ETag/version, checksum)
     BFF->>UPLOAD: Authorized idempotent submit
     UPLOAD->>DB: Bind manifest to verificationId/runId
     UPLOAD-->>FINALIZER: Finalization task/event
@@ -1129,23 +1140,34 @@ flowchart TB
     SDK(("P2 · eKYC SDK")):::process
     BFF(("P3 · VHM BFF<br/>auth / streaming route")):::process
     EKYC_SERVICE(("P4 · VHM eKYC Service<br/>proxy / callback processing")):::process
+    MEDIA_API(("P5 · Media Upload API / Finalizer")):::process
     INBOX[("D1 · Encrypted Callback Inbox")]:::sensitive
-    S3[("D2 · VHM S3 Intake / Media Vault")]:::sensitive
+    MANIFEST[("D2 · Media Manifest / Encrypted Ref")]:::sensitive
+    S3[("D3 · VHM S3 Intake / Media Vault")]:::sensitive
 
     APP -->|"1. bootstrap và run context"| SDK
     USER -->|"2. document/liveness capture"| SDK
-    SDK -->|"3. init/OCR/liveness stream"| BFF
-    APP -->|"3a. presigned media PUT/multipart"| S3
-    APP -->|"3b. submit SDK outcome + media manifest"| BFF
-    BFF -->|"4. authenticated bounded stream"| EKYC_SERVICE
-    EKYC_SERVICE -->|"5. server credential + stream"| BACKEND
-    BACKEND -->|"6. synchronous SDK response"| EKYC_SERVICE
-    EKYC_SERVICE -->|"7. opaque response"| BFF
-    BFF -->|"8. opaque SDK response"| SDK
-    BACKEND -->|"9. official callback"| BFF
-    BFF -->|"10. callback ingress · body/headers không biến đổi"| EKYC_SERVICE
-    EKYC_SERVICE -->|"11. encrypted minimal payload"| INBOX
-    EKYC_SERVICE -->|"12. validate/finalize media + encrypted ref"| S3
+    SDK -->|"P1 · init/OCR/liveness stream"| BFF
+    BFF -->|"P2 · authenticated bounded stream"| EKYC_SERVICE
+    EKYC_SERVICE -->|"P3 · server credential + stream"| BACKEND
+    BACKEND -->|"P4 · synchronous SDK response"| EKYC_SERVICE
+    EKYC_SERVICE -->|"P5 · opaque response"| BFF
+    BFF -->|"P6 · opaque SDK response"| SDK
+    BACKEND -->|"P7 · official callback"| BFF
+    BFF -->|"P8 · callback ingress"| EKYC_SERVICE
+    EKYC_SERVICE -->|"P9 · encrypted minimal payload"| INBOX
+
+    APP -->|"U1 · request media slots<br/>types · sizes · checksums · runId"| BFF
+    BFF -->|"U2 · authorized create-upload command"| MEDIA_API
+    MEDIA_API -->|"U3 · allocate mediaId/object slot"| MANIFEST
+    MEDIA_API -->|"U4 · mediaId + presigned PUT/multipart"| BFF
+    BFF -->|"U5 · upload slots + required headers"| APP
+    APP ==>|"U6 · MEDIA BYTES pass/fail"| S3
+    S3 -->|"U7 · object version / ETag / checksum"| APP
+    APP -->|"U8 · submit outcome + manifest<br/>mediaId · ETag/version · checksum"| BFF
+    BFF -->|"U9 · authorized idempotent submit"| MEDIA_API
+    MEDIA_API -->|"U10 · validate/checksum/finalize"| S3
+    MEDIA_API -->|"U11 · encrypted ref + media READY"| MANIFEST
 
     classDef entity fill:#3a3320,stroke:#d9b84a,color:#fff;
     classDef process fill:#1f3a5f,stroke:#4a90d9,color:#fff;
@@ -1522,7 +1544,7 @@ nếu chưa có phê duyệt Data Privacy bằng văn bản.
 ```mermaid
 flowchart TB
     CLIENT(["VHM Mobile / Web<br/>+ eKYC SDK"]):::entity
-    REVIEWER(["Manual Reviewer<br/>managed workstation"]):::entity
+    OPERATIONS(["Platform Operations<br/>managed workstation"]):::entity
     PROVIDER(["eKYC Provider Backend (ext)"]):::entity
 
     subgraph LZ["AWS Landing Zone — Singapore (ap-southeast-1)"]
@@ -1552,7 +1574,7 @@ flowchart TB
     end
 
     CLIENT -->|HTTPS ingress| GATEWAY
-    REVIEWER -->|IAM + step-up · controlled view| GATEWAY
+    OPERATIONS -->|IAM + step-up · controlled review| GATEWAY
     CLIENT -->|short-lived exact presigned PUT/multipart| S3
     PROVIDER -->|callback token + official result| GATEWAY
     GATEWAY -->|route VHM and SDK requests| BFF
