@@ -116,14 +116,14 @@ Uses case: Trên Vinhome Agent Admin cần tạo danh sách biểu mẫu giấy 
 - Bản sao có chứng thực giấy chứng nhận hộ gia đình nghèo/cận nghèo.
 - Các giấy tờ khác trong checklist hồ sơ NOXH khi có mẫu OCR tương ứng.
 
-OCR Proxy chỉ đọc, phân loại và trích xuất dữ liệu tài liệu; kết quả luôn cần Đại lý kiểm tra trước khi cập nhật hồ sơ.
+VHM OCR Service chỉ đọc, phân loại và trích xuất dữ liệu tài liệu; kết quả luôn cần Đại lý kiểm tra trước khi cập nhật hồ sơ.
 
 **Các use case OCR:**
 
 1. **OCR CCCD:** Đại lý chụp đủ mặt trước/sau. Hệ thống trích xuất số định danh, họ tên, ngày sinh, giới tính, quốc tịch, quê quán, nơi thường trú, ngày cấp/hết hạn và cảnh báo chất lượng hoặc hai mặt không khớp.
 2. **OCR giấy đăng ký kết hôn:** Đại lý upload đầy đủ các trang. Hệ thống trích xuất số giấy chứng nhận, thông tin hai bên, ngày đăng ký, nơi đăng ký và thông tin người ký/cơ quan cấp nếu mẫu tài liệu hỗ trợ.
 3. **OCR giấy chứng nhận hộ nghèo/cận nghèo:** Đại lý upload bản sao có chứng thực. Hệ thống trích xuất số văn bản/chứng thực, chủ hộ, địa chỉ, loại xác nhận, thời gian hiệu lực, cơ quan cấp và ngày cấp.
-4. **OCR giấy tờ khác:** NOXH truyền `documentType`; OCR Proxy chỉ xử lý khi đã có model/template và schema kết quả tương ứng. Tài liệu chưa được hỗ trợ hoặc có confidence thấp được chuyển sang nhập liệu/kiểm tra thủ công.
+4. **OCR giấy tờ khác:** NOXH truyền `documentType`; VHM OCR Service chỉ xử lý khi đã có model/template và schema kết quả tương ứng. Tài liệu chưa được hỗ trợ hoặc có confidence thấp được chuyển sang nhập liệu/kiểm tra thủ công.
 
 OCR chỉ hỗ trợ số hóa và kiểm tra dữ liệu theo khả năng của model. Việc xác nhận bản sao có giá trị pháp lý, giấy tờ còn hiệu lực hoặc hồ sơ đáp ứng điều kiện NOXH vẫn do nghiệp vụ và người duyệt quyết định.
 
@@ -132,9 +132,9 @@ OCR chỉ hỗ trợ số hóa và kiểm tra dữ liệu theo khả năng của
 | **Hướng tiếp cận** | **Ưu điểm** | **Nhược điểm** | **Lựa chọn (Yes/No)** |
 | --- | --- | --- | --- |
 | **Agent Backend tích hợp trực tiếp FPT AI** | Ít thành phần; thời gian triển khai ban đầu ngắn | Agent Backend phải xử lý luồng ảnh, credential, callback, retry và mã lỗi riêng của FPT AI; thay đổi SDK/provider tác động trực tiếp nghiệp vụ NOXH; tăng tải và rủi ro dữ liệu định danh trên Agent Backend | **No** |
-| **OCR Proxy trung tâm** | NOXH Backend chỉ cần tạo phiên và nhận kết quả; toàn bộ SDK/provider integration, credential, session, callback, retry, quota, lưu trữ, bảo mật, audit và chuẩn hóa kết quả được xử lý tại Proxy; thay SDK/provider không yêu cầu sửa nghiệp vụ NOXH | Thêm một service và một network hop; OCR Proxy phải đáp ứng HA/SLA vì là dependency của NOXH | **Yes** |
+| **VHM OCR Service** (vai trò OCR Provider Proxy) | NOXH Backend chỉ cần tạo phiên và nhận kết quả; toàn bộ SDK/provider integration, credential, session, callback, retry, quota, lưu trữ, bảo mật, audit và chuẩn hóa kết quả được xử lý tại service; thay SDK/provider không yêu cầu sửa nghiệp vụ NOXH | Thêm một service và một network hop; VHM OCR Service phải đáp ứng HA/SLA vì là dependency của NOXH | **Yes** |
 
-**Phương án chọn:** Sử dụng **OCR Proxy** làm lớp tích hợp tập trung giữa NOXH và FPT AI. NOXH Backend chỉ kiểm tra quyền nghiệp vụ, tạo phiên và nhận kết quả OCR; không gọi trực tiếp hoặc phụ thuộc contract của FPT AI.
+**Phương án chọn:** Sử dụng **VHM OCR Service** làm lớp tích hợp tập trung giữa NOXH và FPT AI, với vai trò kiến trúc là OCR Provider Proxy. NOXH Backend chỉ kiểm tra quyền nghiệp vụ, tạo phiên và nhận kết quả OCR; không gọi trực tiếp hoặc phụ thuộc contract của FPT AI.
 
 ```mermaid
 flowchart LR
@@ -147,7 +147,7 @@ flowchart LR
     subgraph VHM["Hạ tầng VHM"]
         BFF["Agent BFF<br/>Xác thực và routing"]
         NOXH["NOXH Backend<br/>Authorize · businessRef · Apply result"]
-        PROXY["OCR Proxy — shared platform<br/>SDK/Provider · Session · Result<br/>Normalize · Resilience · Security · Audit"]
+        PROXY["VHM OCR Service<br/>SDK/Provider · Session · Result<br/>Normalize · Resilience · Security · Audit"]
         DB[("OCR Database<br/>Session và kết quả chuẩn hóa")]
         MEDIA[("Private Object Storage<br/>Tài liệu theo retention policy")]
 
@@ -167,11 +167,11 @@ flowchart LR
 
 ```
 
-Giải pháp này tách nghiệp vụ NOXH khỏi chi tiết tích hợp FPT AI. Chi phí của một service và một network hop được chấp nhận để credential, quota, callback, dữ liệu, audit và vận hành provider được quản lý tập trung tại OCR Proxy.
+Giải pháp này tách nghiệp vụ NOXH khỏi chi tiết tích hợp FPT AI. Chi phí của một service và một network hop được chấp nhận để credential, quota, callback, dữ liệu, audit và vận hành provider được quản lý tập trung tại VHM OCR Service.
 
 **Phân định ownership:**
 
-| **Năng lực** | **NOXH Backend** | **OCR Proxy** |
+| **Năng lực** | **NOXH Backend** | **VHM OCR Service** |
 | --- | --- | --- |
 | Nghiệp vụ | Kiểm tra quyền trên hồ sơ/dự án; gửi `businessRef`; quyết định sử dụng kết quả | Không xử lý rule nghiệp vụ NOXH |
 | API tích hợp | Chỉ gọi API nội bộ `create/status/result` với `documentType` | Quản lý SDK/API contract, model/template và credential FPT AI |
@@ -183,7 +183,7 @@ Giải pháp này tách nghiệp vụ NOXH khỏi chi tiết tích hợp FPT AI.
 
 Nhờ đó, NOXH Backend không phải triển khai SDK/provider adapter, callback FPT AI, database OCR, retry, security và monitoring cho provider.
 
-**Trách nhiệm của OCR Proxy:**
+**Trách nhiệm của VHM OCR Service:**
 
 - Quản lý phiên OCR; sinh `verificationId` dùng làm `client_uuid` của FPT AI và liên kết với `businessRef` của NOXH.
 - Nhận `documentType`, chọn model/template OCR tương ứng và chuẩn hóa kết quả theo schema của từng loại tài liệu.
@@ -199,17 +199,8 @@ Nhờ đó, NOXH Backend không phải triển khai SDK/provider adapter, callba
 **Trách nhiệm tối thiểu của NOXH Backend:**
 
 - Kiểm tra Đại lý có quyền thao tác hồ sơ/dự án.
-- Gửi `businessRef=dossierId`, `documentType` khi tạo phiên và lấy Canonical Result từ OCR Proxy.
+- Gửi `businessRef=dossierId`, `documentType` khi tạo phiên và lấy Canonical Result từ VHM OCR Service.
 - Cho Đại lý xác nhận dữ liệu trước khi cập nhật khách hàng hoặc hồ sơ NOXH.
-
-**Xác thực service-to-service với FPT AI:**
-
-- OCR Proxy inject header `api-key` khi gọi API FPT AI; Application và NOXH Backend không được nhận hoặc lưu API key này.
-- Khi khởi tạo phiên, OCR Proxy gửi `client_uuid=verificationId`; FPT AI trả `session-id` và OCR Proxy lưu mapping với phiên nội bộ.
-- Các request OCR tiếp theo gửi `api-key`, `session-id`, `device-type` và loại tài liệu/model theo contract của provider.
-- Khi đối soát kết quả, OCR Proxy gọi `POST /callback/get_result` với header `api-key` và `uuid=verificationId`.
-- API key được lưu trong Secret Manager, tách theo môi trường/project, không ghi vào code, database, ConfigMap hoặc log và được rotate định kỳ 3–6 tháng.
-- Cơ chế xác thực Provider Callback từ FPT AI về OCR Proxy (custom secret header, signature và/hoặc IP allowlist) phải được chốt trong integration contract trước khi triển khai production.
 
 **Cách hoạt động:**
 
@@ -220,7 +211,7 @@ sequenceDiagram
     participant APP as Vinhomes Agent / SDK
     participant BFF as Agent BFF
     participant NOXH as NOXH Backend
-    participant OCR as OCR Proxy
+    participant OCR as VHM OCR Service
     participant FPT as FPT AI Backend
 
     DL->>APP: Chọn loại và chụp/upload tài liệu
@@ -266,10 +257,10 @@ sequenceDiagram
 
 **Cơ chế trả kết quả:**
 
-- **Direct Proxy Result — happy path:** FPT AI trả kết quả qua OCR Proxy; Proxy lưu, chuẩn hóa rồi forward response tương thích về SDK và gửi NOXH Callback cho NOXH Backend. Theo kiến trúc Proxy của FPT AI, không bắt buộc đợi callback mới lưu hoặc sử dụng kết quả.
-- **Provider Callback — supplemental path:** FPT AI có thể gửi dữ liệu phiên tới callback URL đã cấu hình. OCR Proxy tiếp nhận theo `client_uuid`, dedupe và cập nhật Canonical Result.
-- **Provider Result API — recovery/reconciliation:** Khi cần lấy lại hoặc đối soát dữ liệu, OCR Proxy gọi `POST /callback/get_result` với header `api-key` và `uuid`. Application và NOXH Backend không gọi API FPT AI trực tiếp.
-- **NOXH Callback:** Sau khi có kết quả hợp lệ từ bất kỳ nguồn nào, OCR Proxy callback Canonical Result về NOXH Backend. Nếu NOXH Callback thất lạc, NOXH Backend gọi API trạng thái/kết quả của OCR Proxy.
+- **Direct Proxy Result — happy path:** FPT AI trả kết quả qua VHM OCR Service; service lưu, chuẩn hóa rồi forward response tương thích về SDK và gửi NOXH Callback cho NOXH Backend. Theo kiến trúc Proxy của FPT AI, không bắt buộc đợi callback mới lưu hoặc sử dụng kết quả.
+- **Provider Callback — supplemental path:** FPT AI có thể gửi dữ liệu phiên tới callback URL đã cấu hình. VHM OCR Service tiếp nhận theo `client_uuid`, dedupe và cập nhật Canonical Result.
+- **Provider Result API — recovery/reconciliation:** Khi cần lấy lại hoặc đối soát dữ liệu, VHM OCR Service gọi `POST /callback/get_result` với header `api-key` và `uuid`. Application và NOXH Backend không gọi API FPT AI trực tiếp.
+- **NOXH Callback:** Sau khi có kết quả hợp lệ từ bất kỳ nguồn nào, VHM OCR Service callback Canonical Result về NOXH Backend. Nếu NOXH Callback thất lạc, NOXH Backend gọi API trạng thái/kết quả của VHM OCR Service.
 - Không tự động retry request OCR chứa ảnh sau khi body đã được gửi, trừ khi FPT AI xác nhận idempotency. Chỉ retry lỗi kết nối trước khi gửi body và các tác vụ callback/result reconciliation theo bounded policy.
 
 ```mermaid
@@ -285,7 +276,7 @@ stateDiagram-v2
     PROVIDER_ERROR --> [*]
 ```
 
-OCR Proxy chỉ chịu trách nhiệm xử lý OCR và dữ liệu định danh. Quyết định sử dụng kết quả, cập nhật khách hàng và phê duyệt hồ sơ vẫn thuộc NOXH Backend.
+VHM OCR Service chỉ chịu trách nhiệm xử lý OCR và dữ liệu tài liệu. Quyết định sử dụng kết quả, cập nhật khách hàng và phê duyệt hồ sơ vẫn thuộc NOXH Backend.
 
 ### Vấn đề 8: Quản lý Pipline/ Phase/ Stage
 
