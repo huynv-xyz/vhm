@@ -207,12 +207,12 @@ sequenceDiagram
     BFF->>OCR: Forward luồng OCR đã xác thực
     OCR->>FPT: OCR request + server credential
 
-    alt FPT AI hoàn tất đồng bộ
+    alt Synchronous fast path — kết quả đã terminal
         FPT-->>OCR: COMPLETED + OCR result
         OCR->>OCR: Chuẩn hóa và lưu Canonical Result
         OCR-->>BFF: COMPLETED + response SDK
         BFF-->>APP: Hiển thị kết quả OCR
-    else FPT AI xử lý bất đồng bộ
+    else Asynchronous continuation — kết quả chưa terminal
         FPT-->>OCR: PROCESSING + providerRequestId
         OCR-->>BFF: PROCESSING
         BFF-->>APP: Đang xử lý
@@ -237,11 +237,25 @@ sequenceDiagram
 
 **Cơ chế trả kết quả:**
 
-- **Đồng bộ:** FPT AI trả kết quả terminal trong request; OCR Proxy chuẩn hóa, lưu và trả `COMPLETED` ngay.
-- **Bất đồng bộ:** FPT AI trả `PROCESSING`; OCR Proxy chờ callback, chuẩn hóa kết quả rồi callback về Business Backend.
+- OCR Proxy sử dụng mô hình **asynchronous-first**: mọi yêu cầu đều tạo một OCR session có `verificationId`; Business Backend không lựa chọn chế độ đồng bộ hay bất đồng bộ.
+- Nếu FPT AI trả kết quả terminal trong request đầu tiên, OCR Proxy hoàn tất session và trả `COMPLETED` ngay. Đây là **synchronous fast path** của cùng một session, không phải một flow riêng.
+- Nếu FPT AI chưa trả kết quả terminal, OCR Proxy trả `PROCESSING`, tiếp tục chờ callback và callback Canonical Result về Business Backend khi hoàn tất.
 - Application polling API trạng thái của Business Backend mỗi 3–5 giây và dừng khi phiên đạt trạng thái terminal; Application và Business Backend không polling trực tiếp FPT AI.
 - Nếu callback FPT AI quá SLA hoặc thất lạc, chỉ OCR Proxy gọi Get Result theo bounded retry/recovery policy.
 - Callback từ OCR Proxy về Business Backend phải được xác thực và idempotent. Nếu callback này thất lạc, Business Backend gọi `GET /ocr/sessions/{verificationId}` để đối soát.
+
+```mermaid
+stateDiagram-v2
+    [*] --> PROCESSING: Tạo OCR session
+    PROCESSING --> COMPLETED: FPT AI trả terminal ngay
+    PROCESSING --> WAITING_CALLBACK: FPT AI chưa có kết quả terminal
+    WAITING_CALLBACK --> COMPLETED: Callback hợp lệ
+    WAITING_CALLBACK --> RECONCILING: Callback quá SLA
+    RECONCILING --> COMPLETED: Get Result thành công
+    RECONCILING --> PROVIDER_ERROR: Hết recovery budget
+    COMPLETED --> [*]
+    PROVIDER_ERROR --> [*]
+```
 
 OCR Proxy chỉ chịu trách nhiệm xử lý OCR và dữ liệu định danh. Quyết định sử dụng kết quả, cập nhật khách hàng và phê duyệt hồ sơ vẫn thuộc NOXH Backend.
 
