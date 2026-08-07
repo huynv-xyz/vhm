@@ -124,7 +124,7 @@ một domain nghiệp vụ. Giải pháp gồm các thành phần logic sau:
    - Resolve policy theo domain, use case, journey và channel.
    - Sinh `verificationId` dùng làm Client UUID và integrity proof theo security contract.
    - Cấp SDK bootstrap/run context trước khi Mobile/Web được khởi chạy SDK.
-   - Nhận official result từ callback đã xác thực.
+   - Nhận provider result từ callback đã xác thực.
    - Chủ động gọi Get Result chỉ khi reconciliation phát hiện callback quá SLA hoặc session treo.
    - Chuẩn hóa kết quả thành Canonical Result.
    - Ánh xạ kết quả kỹ thuật thành quyết định xác minh nội bộ.
@@ -214,7 +214,7 @@ Xây dựng một nền tảng xác minh danh tính dùng chung nhằm:
 - Proxy SDK init/OCR/liveness theo chuỗi `SDK → VHM BFF → VHM eKYC Service → eKYC Provider Backend`.
 - Hỗ trợ journey `OCR_ONLY` và `FULL_EKYC`.
 - Hỗ trợ OCR giấy tờ, liveness và face matching theo khả năng SDK.
-- Official-result flow tuân thủ `RESULT-01`.
+- Provider-result flow tuân thủ `RESULT-01`.
 - Canonical Result và error taxonomy dùng chung.
 - State machine, idempotency và callback inbox.
 - Reconciliation cho callback thất lạc hoặc session treo.
@@ -329,7 +329,7 @@ Mục **7.2 Data Privacy** phải được APPROVED trước production.
 5. **Correlation ID do VHM sở hữu**: `verificationId` được dùng làm Client UUID; external ID chỉ phục vụ correlation.
 6. **Capability dùng chung**: `domain` chỉ là mã business scope, không đại diện một application component.
 7. **Idempotent by design**: create, callback, retry và reconciliation không tạo side effect lặp.
-8. **Fail closed/fail safe**: callback không xác thực bị từ chối; lỗi kỹ thuật không biến thành `REJECTED`.
+8. **Fail closed/fail safe**: callback không xác thực bị từ chối; lỗi kỹ thuật không biến thành `outcome=REJECTED`.
 9. **Data minimization**: lưu dữ liệu theo `DATA-01`.
 10. **Controlled change**: policy/config phải version hóa, có owner, phê duyệt và rollback.
 11. **VHM-controlled data-plane**: provider data-plane tuân thủ `DP-01`/`MEDIA-01`;
@@ -346,7 +346,7 @@ tham chiếu control ID và chỉ mô tả chi tiết riêng của section.
 | `MEDIA-01` | BFF/VHM eKYC Service chỉ bounded-stream theo chunk và backpressure; cấm full-body buffering, decode/transform, disk spool, persist, request/response body log và transparent retry sau khi đã gửi body. | BFF/VHM eKYC Service/Ops | Load, memory/disk, DLP và failure-path test |
 | `MEDIA-STORE-01` | Cho mọi SDK pass/fail, client chỉ upload media vào exact object key do VHM cấp bằng short-lived presigned URL bind `verificationId/runId/mediaId/type/size/checksum`; submit manifest idempotent. S3 không public; Upload Finalizer validate object, lưu reference/path đã mã hóa AES-GCM/KMS và chuyển media `READY`. Không triển khai backend sync từ provider trong phiên bản này. | Client/VHM eKYC Service/Cloud/ANBM | Presign abuse, checksum, multipart, orphan-purge, encrypted-reference và DLP test |
 | `CRED-01` | Provider credential lưu trong Secret Manager và chỉ Provider Adapter của VHM eKYC Service được đọc/inject; không truyền xuống BFF, Mobile/Web hoặc SDK. | VHM eKYC Service/ANBM | IAM policy, secret scan và rotation test |
-| `RESULT-01` | Client/SDK result chỉ phục vụ UX; callback đã xác thực là official-result ingress chính. Get Result chỉ được gọi bởi Reconciliation Job khi callback quá SLA hoặc session treo. | VHM eKYC Service | Callback/reconciliation contract test |
+| `RESULT-01` | Client/SDK result chỉ phục vụ UX; callback đã xác thực là provider-result ingress chính. Get Result chỉ được gọi bởi Reconciliation Job khi callback quá SLA hoặc session treo. | VHM eKYC Service | Callback/reconciliation contract test |
 | `CALLBACK-01` | Callback phải được token-authenticate, bind Client UUID/environment, replay/dedupe và durable inbox trước khi trả 2xx. | VHM eKYC Service/ANBM | Security, duplicate và crash-recovery test |
 | `DATA-01` | VHM chỉ lưu canonical fixed fields và purpose-approved media types; media object nằm trong private S3 Media Vault, AES-GCM-encrypted object reference/manifest nằm trong PostgreSQL, không dùng làm face template/training dataset và purge theo versioned retention policy tại mục 7.2.5. | VHM eKYC Service/Data Privacy | Data inventory, S3/DB scan, retention/purge evidence |
 | `AUTH-01` | VHM BFF authenticate caller, authorize `businessRef/subjectRef` và không tin business scope từ request body; VHM eKYC Service revalidate session/run/journey/media binding. | BFF/VHM eKYC Service | AuthN/AuthZ/IDOR test |
@@ -397,7 +397,7 @@ event/telemetry bất đồng bộ.
 | VHM BFF | Software System | ✓ |  | Ingress cho session/result, SDK, create upload session và submit manifest; không nhận presigned media bytes hoặc provider callback. |
 | VHM Audit/Monitoring | Software System | ✓ |  | Nhận audit và telemetry đã loại bỏ dữ liệu nhạy cảm. |
 | VHM S3 Media Vault | Software System | ✓ |  | Sở hữu media object/lifecycle; không public hoặc lộ raw path, chỉ cấp short-lived URL sau Reveal API. |
-| eKYC Provider Backend | External System |  | ✓ | Nhận data-plane từ VHM eKYC Service, xử lý OCR/liveness/face và trả official result. |
+| eKYC Provider Backend | External System |  | ✓ | Nhận data-plane từ VHM eKYC Service, xử lý OCR/liveness/face và trả provider result. |
 
 ### 2.2.2. Context Map / Integration Diagram (L2)
 
@@ -444,7 +444,7 @@ bên trong service được mô tả riêng tại mục 2.4.
 
 | **STT** | **Component/Module** | **Responsibility** | **Data managed/processed** | **Technology** | **Storage** | **External exposure** | **Boundary** |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| 1 | **VHM Application (Mobile/Web)** | Consent UX, capability check, create session, SDK lifecycle và VHM result UX | Consent reference, bootstrap và trạng thái UX trong memory | VHM Mobile/Web client + eKYC SDK được pin version | Không lưu dữ liệu eKYC dài hạn | Có — user-facing và gọi VHM API/SDK runtime | Không giữ secret, không tự quyết định `VERIFIED` |
+| 1 | **VHM Application (Mobile/Web)** | Consent UX, capability check, create session, SDK lifecycle và VHM result UX | Consent reference, bootstrap và trạng thái UX trong memory | VHM Mobile/Web client + eKYC SDK được pin version | Không lưu dữ liệu eKYC dài hạn | Có — user-facing và gọi VHM API/SDK runtime | Không giữ secret, không tự quyết định lifecycle status hoặc final outcome |
 | 2 | **eKYC SDK** | Camera UX, front/back capture, liveness/face data và gọi init/OCR/liveness | Media/data-plane trong SDK flow | Provider SDK package cho Mobile/Web | Theo SDK contract | Có — chỉ gọi VHM BFF sau bootstrap | Không sở hữu trạng thái nghiệp vụ VHM |
 | 3 | **VHM BFF** | User/service authentication, business-object authorization, request-size/rate policy, SDK streaming route và upload control-plane routing | Security context, business reference, upload metadata/manifest; SDK media transit | VHM BFF standard — version TBD | Không phải system of record | Có — VHM API và SDK ingress | Không nhận provider callback, không nhận/proxy presigned durable-media bytes hoặc quyết định eKYC |
 | 4 | **VHM eKYC Service** | System of record và integration/proxy point tới eKYC Provider Backend | Session, policy, state, callback, Canonical Result, media manifest; provider media transit | Java 25, Spring Boot 4.0.4 | PostgreSQL + S3 Media Vault qua dedicated modules | Business API chỉ qua BFF; provider callback dùng route riêng qua platform ingress | Không thực hiện thuật toán OCR/liveness/face |
@@ -454,7 +454,7 @@ bên trong service được mô tả riêng tại mục 2.4.
 | 8 | **Callback Inbox** | Authenticate, durable receive, dedupe và xử lý callback | Encrypted minimal callback payload, hash và processing state | Callback API/worker của VHM eKYC Service | PostgreSQL encrypted inbox; payload processed `24h`, failed/quarantine `7d` | Callback endpoint của VHM eKYC Service qua platform ingress; không qua BFF | Không lưu media hoặc raw payload dài hạn |
 | 9 | **Result Normalizer** | Ánh xạ provider result sang Canonical Result | Fixed OCR fields, canonical checks/warnings | VHM eKYC Service application module | PostgreSQL qua persistence port | Không | Không cập nhật business object |
 | 10 | **Decision Mapper** | Ánh xạ canonical checks theo fixed policy version | Decision, outcome, reason và policy version | VHM eKYC Service domain policy | PostgreSQL check/result/history | Không | Không hard-code threshold chưa phê duyệt |
-| 11 | **Reconciliation Job** | Khôi phục callback thất lạc/session treo bằng bounded polling | Due schedule, recovery attempt và official result | VHM eKYC Service scheduler/worker, Resilience4j | PostgreSQL | Có — outbound Get Result | Không polling mọi session liên tục |
+| 11 | **Reconciliation Job** | Khôi phục callback thất lạc/session treo bằng bounded polling | Due schedule, recovery attempt và provider result | VHM eKYC Service scheduler/worker, Resilience4j | PostgreSQL | Có — outbound Get Result | Không polling mọi session liên tục |
 | 12 | **Result API** | Trả fixed Canonical Result với authorization, masking và audit | Authorized masked result projection | VHM eKYC Service module | PostgreSQL | Không; qua BFF | Không trả raw provider response/resource URL |
 | 13 | **PostgreSQL** | System of record cho VHM eKYC Service | Session, run, check, field, inbox, result và history | Amazon RDS PostgreSQL 17 Multi-AZ | Encrypted RDS/PITR | Không — private data subnet | Không lưu binary media SDK flow |
 | 14 | **Media Upload API** | Tạo upload session và exact presigned PUT/multipart request | Media ID/type/size/checksum, object key reference và upload state | VHM eKYC Service module + AWS SDK | PostgreSQL metadata; không nhận media body | Không; qua VHM BFF | Không nhận arbitrary bucket/key/URL từ client |
@@ -521,7 +521,7 @@ sequenceDiagram
         APP->>S3: Direct PUT/multipart MEDIA BYTES
         S3-->>APP: Object version/ETag/checksum response
     end
-    APP->>BFF: Submit outcome + manifest(mediaId, ETag/version, checksum)
+    APP->>BFF: Submit SDK outcome + manifest(mediaId, ETag/version, checksum)
     BFF->>MEDIA: Authorized idempotent submit
     MEDIA->>S3: Validate existence, size, type, checksum and object version
     S3-->>MEDIA: Object metadata
@@ -530,14 +530,14 @@ sequenceDiagram
         MEDIA->>MEDIA: evaluateFinalization()
     else Thiếu hoặc không hợp lệ
         MEDIA->>DB: Keep evidence pending or mark failed by policy
-        MEDIA->>MEDIA: Do not expose terminal outcome
+        MEDIA->>MEDIA: Do not expose final lifecycle/outcome
     end
 ```
 
 Media bytes đi trực tiếp từ VHM Application tới VHM S3 bằng presigned request;
 VHM BFF và Media Upload API chỉ xử lý control-plane/manifest, không proxy hoặc
 buffer binary upload. `submit` và provider callback có thể đến theo mọi thứ tự, nhưng
-terminal outcome chỉ được expose sau khi finalization guard xác nhận provider
+`status=COMPLETED` và final outcome chỉ được expose sau khi finalization guard xác nhận provider
 result và toàn bộ media bắt buộc theo failure/stage policy đã `READY`. Với SDK fail trước khi capture hoàn
 tất, client upload toàn bộ artifact thực tế có trong documents/media list và
 submit manifest kèm trạng thái thiếu tương ứng; không giả định mọi failure đều có
@@ -618,7 +618,7 @@ case đã được phê duyệt; client không được tự đổi flow.
 | Camera OCR | SDK kiểm tra permission và chất lượng capture | SDK kiểm tra camera permission và chất lượng capture | Phải pass trước khi start |
 | Document sides | Front và back trong cùng SDK run/attempt | Front và back trong cùng SDK run/attempt | Một mặt fail thì whole attempt fail |
 | Liveness | SDK hướng dẫn/thu thập trong `FULL_EKYC` | SDK hướng dẫn/thu thập trong `FULL_EKYC` | eKYC Provider Backend xử lý sâu; thiếu capability trả `CHANNEL_CAPABILITY_REQUIRED` |
-| Face matching | Qua eKYC Provider Backend | Qua eKYC Provider Backend | Chỉ official result được dùng cho decision |
+| Face matching | Qua eKYC Provider Backend | Qua eKYC Provider Backend | Chỉ provider result đã normalize được dùng cho decision |
 | Resume | Query backend status trước khi resume | Query backend status sau refresh/reopen | Không lưu VHM SDK session token dài hạn; unsupported resume chuyển retry |
 
 ### 2.2.8. Thông tin dữ liệu
@@ -628,7 +628,7 @@ case đã được phê duyệt; client không được tự đổi flow.
 | Internal session | `verificationId`, domain, purpose | Internal | PostgreSQL | UUID random; domain/object isolation |
 | Business references | `businessRef`, `subjectRef` | Personal-reference | PostgreSQL | Opaque; không nhúng PII |
 | Provider correlation | `verificationId` truyền dưới dạng Client UUID; `providerSessionId` nếu có | Internal | PostgreSQL | Client UUID do VHM sở hữu; provider session chỉ là optional external reference |
-| State/timestamps | status, attempts, expiry | Internal | PostgreSQL | Guard + optimistic lock + append-only history |
+| Lifecycle/milestones/outcome | `status`, `submissionStatus`, `mediaStatus`, `providerResultStatus`, `reviewStatus`, final `outcome`, attempts và expiry | Internal/Sensitive decision | PostgreSQL | Lifecycle enum tách final outcome; guard + optimistic lock + append-only history |
 | OCR fields | document number, name, DOB, address | Personal data | Field-level encrypted; chỉ bộ field cố định đã phê duyệt | Mask theo Result API contract |
 | Confidence/warnings | score, reason code | Sensitive inference | Check table/JSONB | Versioned mapping, hạn chế UI |
 | Liveness/face result | status, score | Biometric-related sensitive | Status/score tối thiểu trong PostgreSQL | Media liên quan lưu tách biệt trong encrypted Media Vault; không tạo face template |
@@ -659,70 +659,65 @@ case đã được phê duyệt; client không được tự đổi flow.
 | Timeout | Theo approved journey/session policy; backend và SDK config dùng cùng versioned policy |
 | Retry | Tạo session mới, link `retryOfVerificationId`; không reuse external session |
 | Resume | Chỉ khi SDK contract hỗ trợ; backend không giả định resume |
-| Client completion | `SUBMITTED` chỉ sau khi backend accept SDK outcome + complete media manifest cho pass/fail; không phải verified |
-| Media completion | Mọi mandatory media đạt `READY` sau validate/checksum, private S3 persistence và AES-GCM sealing của object reference |
-| Provider completion | Callback hợp lệ; Get Result chỉ hoàn tất qua reconciliation fallback |
-| Business completion | Sau official result processing + mandatory media `READY` + fixed decision mapping trong finalization guard |
+| Client completion | `submissionStatus=RECEIVED` sau khi backend accept SDK outcome và manifest của toàn bộ artifact thực tế có trong documents/media list; không tự đặt lifecycle/outcome cuối |
+| Media completion | `mediaStatus=READY` khi tập media bắt buộc theo journey/failure stage đã validate checksum, lưu private S3 và seal AES-GCM object reference |
+| Provider completion | `providerResultStatus=RECEIVED` khi callback hợp lệ được xử lý; `NOT_REQUIRED` chỉ cho failure class chưa tạo provider processing; `UNRECOVERABLE` chỉ sau approved recovery budget/deadline |
+| Business completion | `status=COMPLETED` và gán `outcome` sau khi finalization guard xác nhận submission, media và provider-result milestones cần thiết |
 | Channel | `MOBILE_APP` hoặc `WEB_APP`; ghi nhận tại session/run |
 | Capability | Camera/liveness capability là client hint; backend validate theo Mobile/Web compatibility policy |
 
 ### 2.3.3. Verification Session State Machine (L2 optional)
 
-Đây là state machine chi tiết của một thực thể `IdentityVerification`. Các state
-đều là trạng thái bền được lưu trong PostgreSQL; bảng transition ngay dưới sơ đồ
-là path mapping bắt buộc cho các sequence tại mục 5.2.
+Đây là lifecycle state machine tối giản của một `IdentityVerification`. Lifecycle
+state được lưu bền trong PostgreSQL nhưng không chứa business outcome hoặc trạng
+thái kỹ thuật của submit/media/provider. Các milestone trực giao được mô tả tại
+mục 2.3.4 và là guard bắt buộc cho các sequence tại mục 5.2.
 
 ```mermaid
 stateDiagram-v2
-    [*] --> INITIATED: create
-    INITIATED --> SDK_STARTED: client started
-    INITIATED --> CANCELLED: cancel before start
-    INITIATED --> EXPIRED: timeout
-    INITIATED --> NEED_RETRY: SDK init recoverable error
-    INITIATED --> PROCESSING: official result arrives early
+    [*] --> CREATED: create
+    CREATED --> IN_PROGRESS: client started
+    CREATED --> PROCESSING: valid submit received
+    CREATED --> CANCELLED: cancel before processing
+    CREATED --> EXPIRED: session timeout
 
-    SDK_STARTED --> SUBMITTED: media manifest accepted
-    SDK_STARTED --> CANCELLED: user exits
-    SDK_STARTED --> NEED_RETRY: SDK/client recoverable error
-    SDK_STARTED --> EXPIRED: timeout
-    SDK_STARTED --> PROCESSING: official result arrives early
+    IN_PROGRESS --> PROCESSING: valid submit received
+    IN_PROGRESS --> CANCELLED: cancel before submit
+    IN_PROGRESS --> EXPIRED: session timeout
 
-    SUBMITTED --> PROCESSING: await official result/media READY
-    PROCESSING --> COMPLETED: OCR_ONLY pass + media READY
-    PROCESSING --> VERIFIED: FULL_EKYC pass + media READY
-    PROCESSING --> REJECTED: official hard fail + media READY
-    PROCESSING --> NEED_RETRY: recoverable result + required evidence READY
-    PROCESSING --> PROVIDER_ERROR: recovery exhausted/unrecoverable
-    PROCESSING --> EXPIRED
+    PROCESSING --> COMPLETED: finalization guard satisfied
+    PROCESSING --> EXPIRED: abandonment/session expiry
 
     COMPLETED --> [*]
-    VERIFIED --> [*]
-    REJECTED --> [*]
-    NEED_RETRY --> [*]
-    PROVIDER_ERROR --> [*]
     CANCELLED --> [*]
     EXPIRED --> [*]
+
+    note right of PROCESSING
+      submissionStatus, mediaStatus and
+      providerResultStatus are separate milestones
+      outcome is assigned only on completion
+    end note
 ```
 
 ### 2.3.4. State Transition Guard
 
 | **From** | **To** | **Điều kiện** | **Tác động** |
 | --- | --- | --- | --- |
-| INITIATED | SDK_STARTED | Chưa expire; caller đúng owner; bootstrap hợp lệ | Ghi startedAt/channel/app/sdk version |
-| SDK_STARTED/PROCESSING | SUBMITTED/PROCESSING | Client submit idempotent; external reference match; manifest chỉ chứa server-issued `mediaId`; mọi required object đã upload | Ghi `submittedAt/sdkOutcome`, upsert manifest; không cập nhật official decision; callback đến trước vẫn nhận submit |
-| SUBMITTED | PROCESSING | Official result hoặc media finalization chưa đủ điều kiện terminal | Lập reconciliation/finalization schedule |
-| INITIATED/SDK_STARTED/SUBMITTED/PROCESSING | COMPLETED | `OCR_ONLY` official result pass và mandatory media `READY` | Persist result/history; không diễn giải là đã xác minh danh tính |
-| INITIATED/SDK_STARTED/SUBMITTED/PROCESSING | VERIFIED | `FULL_EKYC` official result hợp lệ + policy pass và mandatory media `READY` | Persist result/history; chấp nhận callback đến trước client submit nhưng không bỏ qua manifest |
-| INITIATED/SDK_STARTED/SUBMITTED/PROCESSING | REJECTED | Hard fail theo approved policy và required evidence `READY` | Lưu canonical reasons; không nhầm timeout |
-| INITIATED/SDK_STARTED/SUBMITTED/PROCESSING | NEED_RETRY | Recoverable quality/user error; media requirements theo failure class đã đạt | Đóng attempt; cho tạo session mới nếu còn quota |
-| PROCESSING | PROVIDER_ERROR | Hết reconciliation budget hoặc lỗi tích hợp không retryable | Đóng attempt; trả support/retry action theo policy |
-| Any non-terminal | EXPIRED | `expiresAt < now`, chưa final | History + retry eligibility |
-| Terminal | Any business state | Không cho chuyển ngược | Callback trễ chỉ audit; duplicate submit trả manifest hiện hữu, không ghi đè media/result |
+| CREATED | IN_PROGRESS | Chưa expire; caller đúng owner; bootstrap hợp lệ | Ghi `startedAt`, channel, app và SDK version |
+| CREATED/IN_PROGRESS | PROCESSING | Client submit idempotent; đúng verification/run; manifest chỉ chứa server-issued `mediaId` và phản ánh documents/media list của current run | Ghi `submissionStatus=RECEIVED`, `submittedAt`, SDK outcome và manifest; không gán final outcome |
+| CREATED/IN_PROGRESS/PROCESSING | Không đổi lifecycle | Callback/result hợp lệ đến trước hoặc sau submit | Ghi `providerResultStatus=RECEIVED` cùng normalized result; gọi finalization guard nhưng không last-write-wins |
+| PROCESSING | Không đổi lifecycle | Media Finalizer hoàn tất tập media bắt buộc theo journey/failure stage | Ghi `mediaStatus=READY`; gọi finalization guard |
+| PROCESSING | COMPLETED | `submissionStatus=RECEIVED`, `mediaStatus=READY` và `providerResultStatus` là `RECEIVED`, `NOT_REQUIRED` hoặc `UNRECOVERABLE` theo policy | Persist canonical `outcome`, reason, result/history trong transaction ngắn; `UNRECOVERABLE` chỉ map `PROVIDER_ERROR` |
+| CREATED/IN_PROGRESS | CANCELLED | User cancel trước khi submit; policy cho phép | Ghi reason/history; callback trễ không khôi phục session |
+| Any non-terminal | EXPIRED | `expiresAt < now` và policy phân loại attempt abandoned/không có đủ milestone để gán final outcome | Ghi history và retry action; không dùng `EXPIRED` thay cho provider recovery exhaustion |
+| COMPLETED/CANCELLED/EXPIRED | Any lifecycle state | Không cho chuyển ngược | Callback trễ chỉ audit; duplicate submit trả state/milestone hiện hữu, không ghi đè media/result |
 
-Business state không thay thế các milestone trực giao `mediaStatus`,
-`officialResultStatus` và `reviewStatus`. Finalization guard phải đọc và cập nhật
-các milestone này trong cùng transaction ngắn; client không được tự khai báo
-`mediaStatus=READY` hoặc official outcome.
+`status` chỉ nhận `CREATED`, `IN_PROGRESS`, `PROCESSING`, `COMPLETED`,
+`CANCELLED` hoặc `EXPIRED`. `outcome` tách riêng và chỉ được gán khi
+`status=COMPLETED`: `OCR_COMPLETED`, `VERIFIED`, `REJECTED`, `NEED_RETRY` hoặc
+`PROVIDER_ERROR`. Các milestone trực giao gồm `submissionStatus`, `mediaStatus`,
+`providerResultStatus` và `reviewStatus`; client không được tự khai báo
+`mediaStatus=READY`, provider result hoặc final outcome.
 
 
 ## 2.4. Data Model
@@ -793,17 +788,17 @@ erDiagram
 | **Logical entity** | **Vai trò trong mô hình** | **Cardinality/invariant chính** |
 | --- | --- | --- |
 | `CONSENT_EVIDENCE` | Bằng chứng consent do VHM Consent System sở hữu | Một consent có thể authorize nhiều session; VHM eKYC Service chỉ lưu logical reference |
-| `VERIFICATION_SESSION` | Aggregate root cho một attempt OCR/eKYC | Một session có tối đa một active run; whole-attempt retry tạo session mới và nối retry chain |
+| `VERIFICATION_SESSION` | Aggregate root cho một attempt OCR/eKYC; sở hữu lifecycle status và completion milestones | Một session có tối đa một active run; lifecycle enum tách final outcome; whole-attempt retry tạo session mới và nối retry chain |
 | `VERIFICATION_RUN` | Vòng chạy SDK gắn với session | Chỉ được tạo khi session bắt đầu; không dùng lại cho retry session mới |
 | `CALLBACK_INBOX` | Durable ingress cho provider callback | Một session có thể nhận nhiều event do retry/duplicate/out-of-order; xử lý phải idempotent |
-| `CANONICAL_RESULT` | Kết quả chuẩn hóa của một run | Tối đa một official result hiện hành; terminal result không bị client/callback trễ đảo ngược |
+| `CANONICAL_RESULT` | Kết quả provider đã chuẩn hóa cùng final outcome/reason sau finalization | Tối đa một provider result hiện hành; chỉ gán final outcome khi session `COMPLETED` và không bị client/callback trễ đảo ngược |
 | `VERIFICATION_CHECK` | Kết quả document, liveness, face match và quality check đã chuẩn hóa | Thuộc Canonical Result; không chứa media hoặc raw provider payload |
 | `MEDIA_ASSET` | Manifest và lifecycle của một document/direct-face/liveness object | Unique trên `(runId, mediaType, logicalPart)`; lưu checksum, object version, AES-GCM-encrypted reference, retention metadata và state; không lưu binary/plaintext path trong DB |
 | `MANUAL_REVIEW_CASE` | Case purpose-bound được assign cho reviewer | Không tự cấp quyền media; assignment và case state được revalidate mỗi request |
-| `MANUAL_REVIEW_DECISION` | Quyết định hậu kiểm và lý do | Append-only; không sửa provider official result; override cần policy/approval riêng |
+| `MANUAL_REVIEW_DECISION` | Quyết định hậu kiểm và lý do | Append-only; không sửa provider result; override cần policy/approval riêng |
 | `AUDIT_LOG` | Access audit cho list/reveal media | Append-only `VIEW_IDENTITY_MEDIA`/`REVEAL_IDENTITY_MEDIA`, entity `IDENTITY_VERIFICATION`, `verificationId`, actor/role, case/purpose/reason/step-up context, request/outcome/time và media types/logical parts/poses/count; không chứa ciphertext/path/URL/PII |
 | `IV_HISTORY` | Decision lifecycle của verification | Lưu verified/auto-failed/manual decision events; tách khỏi media access audit |
-| `STATE_ACCESS_HISTORY` | Lịch sử state transition và truy cập có audit | Append-only; một session có một hoặc nhiều record lịch sử |
+| `STATE_ACCESS_HISTORY` | Lịch sử lifecycle, milestone và final-outcome transition có audit | Append-only; một session có một hoặc nhiều record lịch sử |
 | `RECONCILIATION_TASK` | Lịch khôi phục result khi callback quá SLA/session treo | Có thể có nhiều lần chạy bounded; không polling liên tục |
 
 ERD biểu diễn quan hệ logic và invariant giữa các entity. Binary media không nằm
@@ -841,17 +836,17 @@ Kiểm soát:
 - Submit handler, Callback Worker và Reconciliation Worker cùng gọi
   `evaluateFinalization()` trong transaction ngắn và khóa cùng verification row
   bằng bounded `SELECT ... FOR UPDATE` hoặc compare-and-set `rowVersion`.
-- Hai nguồn sở hữu cột khác nhau: submit cập nhật SDK outcome/media milestone;
-  official-result processor cập nhật provider result/checks. Không dùng last-write-wins.
-- Callback đến trước được persist ở `officialResultStatus=PROCESSED` nhưng chưa
-  expose terminal outcome cho tới khi mandatory media `READY`. Submit đến sau
+- Hai nguồn sở hữu cột khác nhau: submit cập nhật SDK outcome/submission milestone;
+  provider-result processor cập nhật provider result/checks. Không dùng last-write-wins.
+- Callback đến trước được persist ở `providerResultStatus=RECEIVED` nhưng không
+  gán final outcome cho tới khi submission và tập media bắt buộc đều `READY`. Submit đến sau
   vẫn được accept và không bị coi là late event chỉ để audit.
-- Unique constraint cho submit fingerprint, media logical part và official result
+- Unique constraint cho submit fingerprint, media logical part và provider result
   ngăn duplicate; cùng idempotency key khác manifest trả conflict.
 
 ### 2.5.4. Callback và reconciliation cùng chạy
 
-- Cả hai gọi chung `processOfficialResult()`.
+- Cả hai gọi chung `processProviderResult()`.
 - Callback HTTP request chỉ authenticate, dedupe và durable-insert inbox; không
   giữ session row lock trong request thread trước khi trả 2xx.
 - Callback Worker và Reconciliation Worker khóa session bằng
@@ -866,7 +861,7 @@ Kiểm soát:
 | Lock timeout/deadlock | Rollback toàn bộ; không đổi session/result; inbox vẫn ở trạng thái retryable |
 | Worker retry | Bounded retry với exponential backoff + jitter theo approved worker policy; sau đó chuyển delayed retry/reconciliation, không spin |
 | Callback acknowledgement | Chỉ phụ thuộc durable inbox, không chờ normalize/finalize; phải nằm trong provider callback timeout với safety margin |
-| Metrics/alert | `db_lock_wait_seconds`, `db_lock_timeout_total`, `official_result_retry_total`, inbox oldest age |
+| Metrics/alert | `db_lock_wait_seconds`, `db_lock_timeout_total`, `provider_result_retry_total`, inbox oldest age |
 
 Giá trị lock/statement timeout và retry schedule phải được chốt bằng lock/load test
 và approved DB/Operations baseline. Không được
@@ -878,14 +873,14 @@ Trong local transaction xử lý client submit:
 
 1. Upsert idempotent media manifest/internal object references.
 2. Chuyển media/submission milestone hợp lệ.
-3. Evaluate finalization guard trên official result hiện có.
+3. Evaluate finalization guard trên provider result hiện có.
 4. Append state/audit history.
 
-Trong local transaction xử lý official result:
+Trong local transaction xử lý provider result:
 
 1. Upsert verification checks.
 2. Lưu normalized fields được phép.
-3. Chuyển official-result milestone và evaluate finalization guard với media state.
+3. Chuyển `providerResultStatus` và evaluate finalization guard với submission/media milestones.
 4. Append history.
 
 Không gọi S3, KMS, eKYC Provider Backend hoặc dependency ngoài transaction
@@ -902,14 +897,14 @@ commit `mediaStatus=READY` và gọi lại `evaluateFinalization()` trong transa
 | 2 | **Consent Guard** | Kiểm tra consent đúng subject, purpose, version, channel và thời hạn trước khi tạo phiên. |
 | 3 | **Khởi tạo phiên** | Tạo `verificationId`/Client UUID, integrity proof, active-session guard, expiry và VHM SDK session token; hỗ trợ `Idempotency-Key`. |
 | 4 | **Capability Preflight** | Kiểm tra camera, permission, Mobile/Web SDK compatibility và liveness capability trước khi start. |
-| 5 | **Mobile/Web SDK Integration** | Quản lý permission, client lifecycle, SDK started/submitted/error, resume và security signal trên hai kênh. |
+| 5 | **Mobile/Web SDK Integration** | Quản lý permission, client lifecycle, SDK started/submit/error, resume và security signal trên hai kênh. |
 | 6 | **OCR giấy tờ** | SDK thu nhận front/back; VHM eKYC Service chuẩn hóa field, confidence, quality và warning từ kết quả server-to-server. |
 | 7 | **Liveness** | SDK hướng dẫn/thu thập trong `FULL_EKYC`; eKYC Provider Backend xử lý và VHM eKYC Service chuẩn hóa outcome. |
 | 8 | **Face Matching** | Chuẩn hóa match result/score/reason; không dùng score đơn lẻ khi threshold chưa được duyệt. |
 | 9 | **Callback Reception** | Endpoint server-to-server, authentication, timestamp/replay guard, schema/body limit, durable inbox và dedupe. |
 | 10 | **Reconciliation/Get Result** | Khôi phục callback quá SLA/session treo với bounded batch, backoff và circuit breaker. |
 | 11 | **Result Normalization** | Chuyển payload eKYC Provider Backend thành Canonical Result, tolerant với optional/new fields và strict với critical fields. |
-| 12 | **Decision Mapping** | Ánh xạ canonical checks thành `COMPLETED/VERIFIED/REJECTED/NEED_RETRY/PROVIDER_ERROR`; lưu policy version. |
+| 12 | **Decision Mapping** | Ánh xạ canonical checks thành final `outcome` (`OCR_COMPLETED/VERIFIED/REJECTED/NEED_RETRY/PROVIDER_ERROR`) khi lifecycle đạt `COMPLETED`; lưu policy version. |
 | 13 | **Result API** | Trả Canonical Result với bộ field cố định đã phê duyệt; authorize, mask và audit quyền truy cập. |
 | 14 | **Retry Chain** | Tạo whole attempt mới với external session mới; giữ liên kết, reason và attempt count. |
 | 15 | **Expiry Management** | Expire session/run theo policy; xử lý callback trễ và grace reconciliation có audit. |
@@ -928,46 +923,41 @@ commit `mediaStatus=READY` và gọi lại `evaluateFinalization()` trong transa
 | BR-001 | Một `(domain, useCase, businessRef, subjectRef, purpose, journey)` chỉ có tối đa một session active. |
 | BR-002 | `verificationId` do VHM sinh, unique, không chứa PII và không tái sử dụng. |
 | BR-003 | External session ID không được dùng làm public/internal primary key. |
-| BR-004 | Kết quả client/SDK phía Mobile/Web không được chuyển trực tiếp thành `COMPLETED`, `VERIFIED` hoặc `REJECTED`. |
+| BR-004 | Kết quả client/SDK phía Mobile/Web không được tự đặt `status=COMPLETED` hoặc final `outcome`. |
 | BR-005 | Nguồn hoàn tất session tuân thủ `RESULT-01`. |
-| BR-006 | `OCR_ONLY` thành công chuyển `COMPLETED`, có `ekycOutcome=NOT_PERFORMED` và không được hiển thị là đã xác minh danh tính. |
-| BR-007 | Chỉ `FULL_EKYC` pass mới chuyển `VERIFIED`. |
+| BR-006 | `OCR_ONLY` thành công có `status=COMPLETED`, `outcome=OCR_COMPLETED`, `ekycOutcome=NOT_PERFORMED` và không được hiển thị là đã xác minh danh tính. |
+| BR-007 | Chỉ `FULL_EKYC` pass mới có `outcome=VERIFIED`; `VERIFIED` không phải lifecycle state. |
 | BR-008 | Callback trùng không được cập nhật state, result, history hoặc side effect lần hai. |
-| BR-009 | Timeout/network/eKYC Provider Backend unavailable giữ `PROCESSING` trong recovery budget; hết budget mới thành `PROVIDER_ERROR`, không phải `REJECTED`. |
-| BR-010 | Lỗi ảnh, permission hoặc thao tác recoverable có thể chuyển `NEED_RETRY`. |
+| BR-009 | Timeout/network/eKYC Provider Backend unavailable giữ `status=PROCESSING` trong recovery budget; hết budget đóng `status=COMPLETED`, `outcome=PROVIDER_ERROR`, không phải `REJECTED`. |
+| BR-010 | Lỗi ảnh, permission hoặc thao tác recoverable có thể hoàn tất với `outcome=NEED_RETRY`. |
 | BR-011 | VHM Application chỉ nhận bộ normalized fields cố định đã được Product/Privacy phê duyệt. |
 | BR-012 | Auto-fill chỉ ghi field trống; overwrite field đã xác nhận cần explicit confirmation hoặc business rule được phê duyệt. |
 | BR-013 | Retry tạo session/provider transaction mới và không ghi đè lịch sử attempt trước. |
 | BR-014 | Mặt trước và mặt sau phải thuộc cùng một `runId`; lỗi một mặt làm whole attempt thất bại. |
 | BR-015 | Không tái sử dụng ảnh mặt đã pass để ghép với attempt mới. |
-| BR-016 | Terminal state không chuyển ngược qua API hoặc callback trễ. |
+| BR-016 | Lifecycle terminal `COMPLETED/CANCELLED/EXPIRED` không chuyển ngược qua API hoặc callback trễ. |
 | BR-017 | Mọi threshold/decision/config thay đổi phải version hóa và có change ticket. |
 | BR-018 | Mobile/Web capability là untrusted hint; backend đối chiếu compatibility policy. |
 | BR-019 | OCR/eKYC result không được sử dụng cho purpose khác purpose đã consent. |
 | BR-020 | Chỉ lỗi kỹ thuật/transient phù hợp mới retry tự động; validation fail/mismatch không retry kỹ thuật. |
 | BR-021 | Trang kết quả của SDK phải đặt `OFF`; VHM Application sở hữu processing/result screen. |
-| BR-022 | Khi SDK phát completion/error event, Mobile/Web hoàn tất presigned upload rồi gửi idempotent `submitted` kèm SDK outcome và server-issued media manifest; không gửi official decision. |
-| BR-023 | Mọi SDK pass/fail phải submit required media manifest; terminal business outcome chỉ expose khi official result và required media đều `READY`, trừ client technical failure class được policy phê duyệt không tạo official result. |
+| BR-022 | Khi SDK phát completion/error event, Mobile/Web hoàn tất presigned upload rồi gửi idempotent submit kèm SDK outcome và server-issued media manifest; không gửi final lifecycle state/outcome. |
+| BR-023 | Mọi SDK pass/fail phải submit manifest cho documents/media list của current run; `status=COMPLETED` và final outcome chỉ expose khi submission, tập media bắt buộc và provider-result milestone cuối đã sẵn sàng. Failure class chưa tạo provider processing dùng `NOT_REQUIRED`; recovery hết budget dùng `UNRECOVERABLE`. |
 | BR-024 | Presigned URL chỉ dùng cho exact VHM object write; client không được chọn bucket/key, list/read object hoặc submit arbitrary URL. |
 | BR-025 | Manual Review GET chỉ trả encrypted stored refs sau role/assignment/object/purpose-scope check và audit. POST reveal bắt buộc `caseId`, controlled `reasonCode`, recent step-up, chỉ chấp nhận tối đa 16 refs của đúng verification/run và trả short-lived presigned URLs theo `REVIEW-01`; exceptional access cần Supervisor/JIT approval cùng opaque `ticketRef`. |
-| BR-026 | Provider official result là immutable evidence; manual decision lưu riêng. Override effective outcome cần reason, policy version và approval theo segregation of duties. |
-| BR-027 | Upload/finalize thất bại không được biến thành user `REJECTED`; giữ processing/evidence-pending trong recovery budget và alert khi quá SLA. |
+| BR-026 | Provider result đã normalize là immutable evidence; manual decision lưu riêng. Override effective outcome cần reason, policy version và approval theo segregation of duties. |
+| BR-027 | Upload/finalize thất bại không được biến thành `outcome=REJECTED`; giữ `status=PROCESSING`/evidence-pending trong recovery budget và alert khi quá SLA. |
 
 ## 3.3. Ma trận trạng thái và hành động
 
-| **Status** | Get status | Start SDK | Client submit | Retry | Result API | Reconcile |
+| **Lifecycle status** | Get status | Start SDK | Client submit | Retry | Result API | Reconcile |
 | --- | --- | --- | --- | --- | --- | --- |
-| INITIATED | ✔️ | ✔️ | ❌ | ❌ | ❌ | ❌ |
-| SDK_STARTED | ✔️ | Idempotent/same run | ✔️ | ❌ | ❌ | Gần timeout theo policy |
-| SUBMITTED | ✔️ | ❌ | Idempotent | ❌ | Chưa final | ✔️ sau initial delay |
-| PROCESSING | ✔️ | ❌ | Accept idempotent manifest/return current | ❌ | Chưa final | ✔️ |
-| COMPLETED | ✔️ | ❌ | Duplicate manifest only; không overwrite | ❌ | OCR result | ❌ |
-| VERIFIED | ✔️ | ❌ | Duplicate manifest only; không overwrite | ❌ | eKYC result | ❌ |
-| REJECTED | ✔️ | ❌ | Duplicate manifest only; không overwrite | Theo policy | Canonical outcome | ❌ |
-| NEED_RETRY | ✔️ | ❌ | Duplicate manifest only; không overwrite | ✔️ nếu còn attempt/quota | Canonical outcome | ❌ |
-| PROVIDER_ERROR | ✔️ | ❌ | Accept missing manifest trong recovery policy | Sau recovery/Ops gate | Canonical technical outcome | ❌ |
-| CANCELLED | ✔️ | ❌ | Ignore | ✔️ theo policy | ❌ | Grace check nếu provider đã final |
-| EXPIRED | ✔️ | ❌ | Ignore | ✔️ theo policy | ❌ | Grace reconcile theo policy |
+| CREATED | ✔️ | ✔️ | Accept khi run context hợp lệ; chuyển `PROCESSING` | ❌ | Chưa final | Chỉ khi provider milestone được kỳ vọng |
+| IN_PROGRESS | ✔️ | Idempotent/same run | Accept idempotent; chuyển `PROCESSING` | ❌ | Chưa final | Theo provider-result policy |
+| PROCESSING | ✔️ | ❌ | Idempotent/return current milestones | ❌ | Chưa final | ✔️ khi `providerResultStatus=PENDING` và result bắt buộc |
+| COMPLETED | ✔️ | ❌ | Duplicate manifest only; không overwrite | Theo final `outcome` và quota/policy | Canonical result + final `outcome` | ❌ |
+| CANCELLED | ✔️ | ❌ | Ignore/audit | ✔️ theo policy | ❌ | Chỉ late-result audit theo policy |
+| EXPIRED | ✔️ | ❌ | Ignore/audit | ✔️ theo policy | ❌ | Grace recovery theo policy |
 
 ## 3.4. Channel Rules
 
@@ -994,14 +984,14 @@ commit `mediaStatus=READY` và gọi lại `evaluateFinalization()` trong transa
 | --- | --- | --- | --- | --- | --- | --- |
 | INT-01 | Session Lifecycle | VHM Application → VHM BFF → VHM eKYC Service | Synchronous control-plane | Tạo/đọc session, bootstrap, retry, consent và business context | Confidential/PII reference; user authentication và object authorization | VHM API Specification |
 | INT-02 | SDK Data-plane | eKYC SDK → VHM BFF → VHM eKYC Service → eKYC Provider Backend | Synchronous streaming | Init, OCR và liveness; document/biometric media chỉ transit | Restricted; VHM SDK token, workload/provider authentication, `MEDIA-01` và `DATA-01` | SDK Proxy/Provider Integration Contract |
-| INT-03 | Client Lifecycle Event | VHM Application → VHM BFF → VHM eKYC Service | Idempotent event/command | Started, cancelled và client error phục vụ lifecycle/UX; media-bearing submitted thuộc INT-10 | Sensitive metadata; user authentication và session/run binding; không phải official result | Mobile/Web Lifecycle Specification + VHM API Specification |
+| INT-03 | Client Lifecycle Event | VHM Application → VHM BFF → VHM eKYC Service | Idempotent event/command | Started, cancelled và client error phục vụ lifecycle/UX; media-bearing submit thuộc INT-10 | Sensitive metadata; user authentication và session/run binding; không phải provider result hoặc final outcome | Mobile/Web Lifecycle Specification + VHM API Specification |
 | INT-04 | Callback Authentication | eKYC Provider Backend → VHM IAM | Synchronous control-plane | Lấy short-lived access token theo approved callback authentication contract | Secret; client credential, scope/environment binding và rotation theo mục 7.1 | Callback Security Contract |
 | INT-05 | Provider Result Callback | eKYC Provider Backend → callback endpoint của VHM eKYC Service | Asynchronous callback | Truyền provider OCR/eKYC result server-to-server; không nhận media | Restricted result/PII; authentication, binding, replay/dedupe và durable receive | Callback API Specification |
 | INT-06 | Result Reconciliation | VHM eKYC Service → eKYC Provider Backend | Scheduled synchronous query | Get Result khi callback quá SLA hoặc session treo | Restricted; provider credential, bounded retry, quota guard và retention deadline | Provider Get Result Contract |
 | INT-07 | Result Query | VHM Application → VHM BFF → VHM eKYC Service | Synchronous query | Trả trạng thái, next action và masked Canonical Result | Restricted; object authorization, field allowlist, masking và access audit | Result API Specification |
 | INT-08 | Media Upload Session | VHM Application → VHM BFF → Media Upload API | Synchronous control-plane | Create/reissue upload session; cấp `mediaId`, exact short-lived presigned PUT/multipart request cho VHM S3 Intake | Restricted; `AUTH-01`, `MEDIA-STORE-01`, run/type/size/checksum binding; không binary body | Media Upload API Specification |
 | INT-09 | Presigned Media Upload | VHM Application → VHM S3 Intake | Direct object upload | Upload document/direct-face/liveness artifact cho pass/fail | TLS, exact method/key, signed checksum/headers, no read/list và S3 public-access block | S3 Upload Contract |
-| INT-10 | Media Manifest Submit | VHM Application → VHM BFF → Media Upload API | Idempotent command | Submit SDK outcome và server-issued media manifest sau upload | User/object/run authorization, manifest fingerprint, object validation; không binary body và không phải official result | Client Submit Specification |
+| INT-10 | Media Manifest Submit | VHM Application → VHM BFF → Media Upload API | Idempotent command | Submit SDK outcome và server-issued media manifest sau upload | User/object/run authorization, manifest fingerprint, object validation; không binary body, provider result hoặc final outcome | Client Submit Specification |
 | INT-11 | Manual Review List | Approved review role → `GET /manual-review/verifications/{verificationId}/media` | Privileged synchronous query | Resolve authorized verification/run/business-object/purpose scope; audit successful list và trả encrypted refs/types/logical parts/poses | `REVIEW-01`; active case assignment; no plaintext path/URL/PII in audit | Platform Reveal & Audit Specification |
 | INT-12 | Manual Review Reveal | Approved review role → `POST /manual-review/verifications/{verificationId}/media/reveal` | Privileged synchronous command | Nhận `caseId`, controlled `reasonCode`, optional/required-by-policy opaque `ticketRef`; verify recent step-up, de-duplicate/cap 16, bind all ciphertexts to verification/run refs, decrypt ref/path, prepare short-lived presigned URLs | Whole-call fail on stale step-up/foreign ref; AES-GCM/KMS, cache TTL < URL validity và PII-safe reveal audit; exceptional scope cần Supervisor/JIT approval | Platform Reveal & Audit Specification |
 
@@ -1011,7 +1001,7 @@ commit `mediaStatus=READY` và gọi lại `evaluateFinalization()` trong transa
 | --- | --- | --- |
 | VHM ingress | Session/result, SDK và upload control-plane/manifest qua VHM BFF; provider callback đi vào VHM eKYC Service qua callback route riêng; media bytes dùng presigned request đi thẳng VHM S3 | VHM BFF không kết nối trực tiếp provider; VHM eKYC Service là integration point duy nhất tới provider |
 | Provider isolation | Provider-specific API và payload được cô lập trong Provider Adapter | Thay đổi provider contract không làm thay đổi contract của VHM Application |
-| Official result | Client/SDK event chỉ phục vụ UX; chỉ callback đã xác thực hoặc Get Result qua reconciliation được finalize kết quả | Ngăn client result giả mạo hoặc đảo state |
+| Provider result | Client/SDK event chỉ phục vụ UX; provider result chỉ được nhận từ callback đã xác thực hoặc Get Result qua reconciliation | Ngăn client giả mạo result/final outcome hoặc đảo lifecycle |
 | Callback acceptance | Callback phải được authenticate, bind đúng session/environment, chống replay, dedupe và durable receive trước acknowledgement | Callback lỗi xác thực không thay đổi business state; duplicate không finalize lần hai |
 | Callback payload | Không nhận binary media và không tự động tải resource URL trong callback | Giảm rủi ro data exfiltration, malware và lưu media ngoài kiểm soát |
 | Reconciliation | Chỉ kích hoạt khi callback quá SLA/session treo; bounded retry, quota guard và retention deadline | Không dùng polling liên tục; không vượt provider quota/retention |
@@ -1031,7 +1021,7 @@ recovery thuộc mục 6.8 và 8.2.
 | Verification metadata | Verification/run reference, journey, channel, schema/policy version và result source | Truy vết được source/version; không lộ provider credential |
 | Document outcome | Loại giấy tờ, trạng thái OCR, fixed approved fields và quality warnings | Field allowlist theo purpose; mã hóa khi lưu và mask khi trả |
 | eKYC outcome | Liveness và face-match outcome cho `FULL_EKYC` | Không có trong `OCR_ONLY`; biometric score không trả đại trà |
-| Platform decision | OCR outcome, eKYC outcome, platform status, canonical reason và next action | Không dùng trực tiếp raw provider code/score làm quyết định nghiệp vụ |
+| Platform decision | Lifecycle status, final outcome, OCR/eKYC outcome, canonical reason và next action | Tách lifecycle khỏi outcome; không dùng trực tiếp raw provider code/score làm quyết định nghiệp vụ |
 | Media evidence | Required-media readiness, media manifest version/checksum/provenance, encrypted object reference và retention policy ID | Binary object ở private Media Vault; Result API không trả media ref/URL |
 | Audit evidence | Result source, received time, policy/config version, state transition và manual-review decision/access | Raw callback chỉ tồn tại tạm thời; không ghi plaintext media vào history |
 
@@ -1041,14 +1031,14 @@ masking và reason-code mapping phải được version hóa và phê duyệt th
 
 ## 4.4. Outcome Mapping Baseline
 
-| **Official condition** | **Platform outcome** | **Architectural behavior** |
-| --- | --- | --- |
-| `OCR_ONLY` đạt yêu cầu, đủ fixed field và mandatory media `READY` | `COMPLETED` | Cho phép tiếp tục luồng dùng OCR; không thể hiện là đã xác minh danh tính |
-| `FULL_EKYC` đạt document, liveness, face match và mandatory media `READY` | `VERIFIED` | Cho phép tiếp tục use case đã được Product/Risk phê duyệt |
-| Lỗi chất lượng/user action có thể phục hồi | `NEED_RETRY` | Whole-attempt retry theo quota; không reuse media/result cũ |
-| Official hard fail theo policy đã phê duyệt | `REJECTED` | Trả canonical outcome; không suy diễn chỉ từ similarity/score |
-| Provider/transport/callback technical error | Giữ `PROCESSING`, sau recovery budget thành `PROVIDER_ERROR` | Không chuyển lỗi kỹ thuật thành `REJECTED`; reconciliation trước retry |
-| Callback mất và result hết provider retention | `PROVIDER_ERROR` với `RESULT_UNRECOVERABLE_AFTER_RETENTION` | Không reuse media/result; contact support hoặc whole-attempt retry; mở incident nếu theo cụm |
+| **Condition** | **Lifecycle status** | **Final outcome** | **Architectural behavior** |
+| --- | --- | --- | --- |
+| `OCR_ONLY` đạt yêu cầu, đủ fixed field và media bắt buộc `READY` | `COMPLETED` | `OCR_COMPLETED` | Cho phép tiếp tục luồng dùng OCR; không thể hiện là đã xác minh danh tính |
+| `FULL_EKYC` đạt document, liveness, face match và media bắt buộc `READY` | `COMPLETED` | `VERIFIED` | Cho phép tiếp tục use case đã được Product/Risk phê duyệt |
+| Lỗi chất lượng/user action có thể phục hồi và evidence requirement đã đạt | `COMPLETED` | `NEED_RETRY` | Whole-attempt retry theo quota; không reuse media/result cũ |
+| Provider hard fail theo policy đã phê duyệt | `COMPLETED` | `REJECTED` | Trả canonical outcome; không suy diễn chỉ từ similarity/score |
+| Provider/transport/callback technical error còn trong recovery budget | `PROCESSING` | Chưa có | Không chuyển lỗi kỹ thuật thành `REJECTED`; recovery trước khi đóng attempt |
+| Recovery hết budget hoặc result không thể phục hồi | `COMPLETED` | `PROVIDER_ERROR` | Trả canonical technical outcome/retry action; không reuse media/result cũ |
 
 Fixed decision mapping, threshold, canonical reason catalogue và UX message phải
 được Product/Risk/Architecture phê duyệt, version hóa và contract-test.
@@ -1124,8 +1114,8 @@ Chart này chỉ mô tả provider-processing data-plane. Durable media persiste
 | Người dùng | Cung cấp ảnh giấy tờ/liveness | eKYC SDK | Front/back trong cùng run; `FULL_EKYC` bổ sung liveness/face capture. |
 | eKYC SDK | Gửi init/OCR/liveness | VHM BFF → VHM eKYC Service | BFF xác thực/stream; VHM eKYC Service validate session/run, inject credential và stream tới eKYC Provider Backend. |
 | VHM Application | Lưu media cho pass/fail | VHM BFF → Media Upload API; client → VHM S3 Intake | Xin exact presigned request và submit manifest qua VHM BFF; media bytes upload trực tiếp vào S3. |
-| eKYC Provider Backend | Xử lý OCR/eKYC | eKYC Provider Backend | Xử lý data-plane và gửi token-authenticated official result. |
-| VHM eKYC Service | Chuẩn hóa và hoàn tất kết quả | Callback/Result Processing + Media Upload Finalizer | Authenticate, dedupe, normalize; validate media/seal encrypted ref; chỉ expose terminal outcome khi official result và required media đều ready. |
+| eKYC Provider Backend | Xử lý OCR/eKYC | eKYC Provider Backend | Xử lý data-plane và gửi token-authenticated provider result. |
+| VHM eKYC Service | Chuẩn hóa và hoàn tất kết quả | Callback/Result Processing + Media Upload Finalizer | Authenticate, dedupe, normalize; validate media/seal encrypted ref; chỉ gán `status=COMPLETED` và final outcome khi submission, required media và required provider result đều ready. |
 | Manual Review Operator/Supervisor | Xem evidence và ghi hậu kiểm | Manual Review Reveal API + Private File Service | Platform role + assignment/business-object scope; GET audit/list encrypted refs, POST bind/decrypt refs và trả short-lived presigned URLs có audit. |
 | VHM Application | Tra cứu và sử dụng kết quả | BFF + Result API | Nhận fixed, authorized, masked outcome/next action theo purpose. |
 | Operations | Khôi phục callback thất lạc | Reconciliation Worker | Chỉ Get Result khi callback quá SLA/session treo, theo bounded backoff/quota. |
@@ -1144,7 +1134,7 @@ sequenceDiagram
     BFF->>EKYC_SERVICE: Create authorized session + idempotency key
     EKYC_SERVICE->>EKYC_SERVICE: Validate consent/journey/channel/capability
     EKYC_SERVICE->>EKYC_SERVICE: Generate verificationId/Client UUID/proof/runId
-    EKYC_SERVICE->>EKYC_SERVICE: Persist INITIATED session idempotently
+    EKYC_SERVICE->>EKYC_SERVICE: Persist status=CREATED idempotently
     EKYC_SERVICE-->>BFF: verificationId + VHM SDK bootstrap
     BFF-->>APP: verificationId + SDK bootstrap
 ```
@@ -1174,9 +1164,10 @@ sequenceDiagram
     alt Front fail
         SDK-->>APP: Completion/error - untrusted
         Note over APP,EKYC_SERVICE: Run failure-evidence upload per 2.2.4.1
-        APP->>BFF: submitted(runId, sdkOutcome, media manifest)
+        APP->>BFF: submit(runId, sdkOutcome, media manifest)
         BFF->>EKYC_SERVICE: Idempotent authorized submit
-        Note right of APP: Whole attempt ends, evidence retained by policy
+        EKYC_SERVICE->>EKYC_SERVICE: submissionStatus=RECEIVED + evaluate failure-stage guard
+        Note right of APP: Final outcome depends on required media and provider-result policy
     else Front pass
         SDK->>User: Capture document back
         User->>SDK: Back image
@@ -1188,12 +1179,12 @@ sequenceDiagram
         BFF-->>SDK: Opaque SDK response
         SDK-->>APP: Completion/close - untrusted + media artifacts
         Note over APP,EKYC_SERVICE: Run front/back upload per 2.2.4.1
-        APP->>BFF: submitted(runId, sdkOutcome, media manifest)
+        APP->>BFF: submit(runId, sdkOutcome, media manifest)
         BFF->>EKYC_SERVICE: Idempotent authorized submit
         EKYC_SERVICE->>EKYC_SERVICE: Finalizer validates S3 and marks media READY
         BACKEND->>EKYC_SERVICE: Authenticated provider callback result
-        EKYC_SERVICE->>EKYC_SERVICE: Normalize + finalization guard
-        EKYC_SERVICE->>EKYC_SERVICE: COMPLETED only when required media READY
+        EKYC_SERVICE->>EKYC_SERVICE: providerResultStatus=RECEIVED + normalize
+        EKYC_SERVICE->>EKYC_SERVICE: Finalize status=COMPLETED, outcome=OCR_COMPLETED when all milestones ready
         APP->>BFF: GET status/result
         BFF->>EKYC_SERVICE: Authorized query
         EKYC_SERVICE-->>BFF: OCR outcome + masked fields
@@ -1201,15 +1192,15 @@ sequenceDiagram
     end
 ```
 
-Mobile và Web dùng cùng result/state contract. Khác biệt lifecycle chỉ nằm ở client
-integration; backend không thay đổi official-result rule.
+Mobile và Web dùng cùng lifecycle/outcome contract. Khác biệt lifecycle chỉ nằm ở
+client integration; backend dùng cùng provider-result và finalization rules.
 
 Two-side processing là hành vi cố định theo contract của SDK/provider và không
 được thay đổi động trong runtime:
 
 | **Provider capability** | **Cách Mobile/Web xử lý** | **Failure rule** |
 | --- | --- | --- |
-| Một lần gửi front + back | SDK thu đủ hai mặt rồi gửi trong cùng `runId` | Bất kỳ mặt nào fail thì whole attempt `NEED_RETRY` |
+| Một lần gửi front + back | SDK thu đủ hai mặt rồi gửi trong cùng `runId` | Bất kỳ mặt nào fail thì whole attempt hoàn tất với `outcome=NEED_RETRY` nếu guard được thỏa mãn |
 | Một lần chỉ gửi một mặt | SDK xử lý front trước; front pass mới tiếp tục back trong cùng `runId` | Front fail thì dừng ngay; back không được capture/send. Back fail cũng đóng whole attempt |
 
 Attempt sau phải capture lại từ đầu; không giữ front/back đã pass để ghép với ảnh
@@ -1241,15 +1232,16 @@ sequenceDiagram
     SDK-->>APP: Completion/close - untrusted + media artifacts
     APP->>APP: Hiển thị Đang xử lý kết quả
     Note over APP,EKYC_SERVICE: Run document/face/liveness upload per 2.2.4.1
-    APP->>BFF: submitted(runId, sdkOutcome, media manifest)
+    APP->>BFF: submit(runId, sdkOutcome, media manifest)
     BFF->>EKYC_SERVICE: Idempotent authorized submit
     EKYC_SERVICE->>EKYC_SERVICE: Finalizer validates S3 and marks media READY
     BACKEND->>EKYC_SERVICE: Authenticated provider callback result
-    EKYC_SERVICE->>EKYC_SERVICE: Normalize + finalization guard(result + media READY)
+    EKYC_SERVICE->>EKYC_SERVICE: Persist provider milestone + evaluate finalization guard
+    EKYC_SERVICE->>EKYC_SERVICE: Complete only when submission/media/provider guard is ready
     APP->>BFF: GET status/result
     BFF->>EKYC_SERVICE: Authorized query
     EKYC_SERVICE-->>BFF: Canonical outcome
-    BFF-->>APP: VERIFIED / REJECTED / NEED_RETRY / PROVIDER_ERROR
+    BFF-->>APP: status=COMPLETED + final outcome/nextAction
 ```
 
 ### **5.2.4. FULL_EKYC trên Web — Sequence L2**
@@ -1278,11 +1270,12 @@ sequenceDiagram
     SDK-->>WEB: Completion/close - untrusted + media artifacts
     WEB->>WEB: Hiển thị Đang xử lý kết quả
     Note over WEB,EKYC_SERVICE: Run document/face/liveness upload per 2.2.4.1
-    WEB->>BFF: submitted(runId, sdkOutcome, media manifest)
+    WEB->>BFF: submit(runId, sdkOutcome, media manifest)
     BFF->>EKYC_SERVICE: Idempotent authorized submit
     EKYC_SERVICE->>EKYC_SERVICE: Finalizer validates S3 and marks media READY
     BACKEND->>EKYC_SERVICE: Authenticated provider callback result
-    EKYC_SERVICE->>EKYC_SERVICE: Normalize + finalization guard(result + media READY)
+    EKYC_SERVICE->>EKYC_SERVICE: Persist provider milestone + evaluate finalization guard
+    EKYC_SERVICE->>EKYC_SERVICE: Complete only when submission/media/provider guard is ready
     WEB->>BFF: GET status/result
     BFF->>EKYC_SERVICE: Authorized query
     EKYC_SERVICE-->>BFF: Canonical outcome/nextAction
@@ -1293,7 +1286,7 @@ Refresh/reopen/multi-tab phải query backend status. Web không lưu VHM SDK se
 dài hạn và không tự tạo run mới khi lease còn active.
 
 
-### **5.2.5. Callback đến trước client submitted — Sequence L2**
+### **5.2.5. Callback đến trước client submit — Sequence L2**
 
 ```mermaid
 sequenceDiagram
@@ -1302,18 +1295,18 @@ sequenceDiagram
     participant EKYC_SERVICE as VHM eKYC Service
     participant CLIENT as Mobile / Web
     BACKEND->>EKYC_SERVICE: Authenticated provider callback result
-    EKYC_SERVICE->>EKYC_SERVICE: Auth + durable inbox + process official result
-    EKYC_SERVICE->>EKYC_SERVICE: Store result milestone, await media READY
+    EKYC_SERVICE->>EKYC_SERVICE: Auth + durable inbox + process provider result
+    EKYC_SERVICE->>EKYC_SERVICE: providerResultStatus=RECEIVED + await submission/media
     Note over CLIENT,EKYC_SERVICE: Run presigned upload per 2.2.4.1 after callback
-    CLIENT->>BFF: submitted(runId, sdkOutcome, media manifest)
+    CLIENT->>BFF: submit(runId, sdkOutcome, media manifest)
     BFF->>EKYC_SERVICE: Authorized idempotent submit
     EKYC_SERVICE->>EKYC_SERVICE: Finalizer validates S3 and marks media READY
     EKYC_SERVICE->>EKYC_SERVICE: Short lock + evaluate finalization guard
-    EKYC_SERVICE-->>BFF: Submit accepted + current outcome/status
-    BFF-->>CLIENT: Terminal only after result + media READY
+    EKYC_SERVICE-->>BFF: Submit accepted + lifecycle/milestones/outcome
+    BFF-->>CLIENT: COMPLETED only after submission + required media + provider-result guard
 ```
 
-Client submit đến sau không được ghi đè official result nhưng vẫn phải persist
+Client submit đến sau không được ghi đè provider result nhưng vẫn phải persist
 media manifest. Không sử dụng last-write-wins; callback và submit cập nhật hai
 milestone độc lập rồi hội tụ tại finalization guard.
 
@@ -1322,11 +1315,11 @@ milestone độc lập rồi hội tụ tại finalization guard.
 
 | **Tình huống** | **Client event** | **Backend action** |
 | --- | --- | --- |
-| User cancel trước submitted | `cancelled` với canonical reason | Chuyển `CANCELLED` nếu state cho phép |
+| User cancel trước submit | `cancelled` với canonical reason | Chuyển `status=CANCELLED` nếu lifecycle cho phép |
 | Mobile force-close | Có thể không có event | Giữ active đến expiry/reconcile; khi mở lại query status |
 | Web refresh/reopen | Có thể không có event | Không auto cancel; query status và kiểm tra run lease |
 | Mất mạng | Có thể không có event | Session timeout/reconcile theo policy |
-| Official result đến sau cancel | Late result | Lưu late-result audit; không đảo `CANCELLED` |
+| Provider result đến sau cancel | Late result | Lưu late-result audit; không đảo `status=CANCELLED` |
 
 ### **5.2.7. Retry session — Sequence L2**
 
@@ -1337,7 +1330,7 @@ sequenceDiagram
     participant EKYC_SERVICE as VHM eKYC Service
     APP->>BFF: POST retry + Idempotency-Key
     BFF->>EKYC_SERVICE: Authorized retry command
-    EKYC_SERVICE->>EKYC_SERVICE: Authorize + validate terminal retry state/cap
+    EKYC_SERVICE->>EKYC_SERVICE: Authorize + validate terminal lifecycle/final outcome/quota
     EKYC_SERVICE->>EKYC_SERVICE: Create new verificationId/Client UUID/proof/runId + retry link
     EKYC_SERVICE-->>BFF: New verificationId + VHM SDK bootstrap
     BFF-->>APP: New verificationId/bootstrap
@@ -1406,12 +1399,12 @@ verified/auto-failed/manual lưu tại `iv_histories`, không trộn với acces
 
 | **Tình huống** | **Detection** | **Platform state** | **Recovery/User action** | **Ops** |
 | --- | --- | --- | --- | --- |
-| Camera permission denied | Client canonical error | `NEED_RETRY` theo policy | Cấp quyền rồi whole-attempt retry | Metric/spike alert |
+| Camera permission denied | Client canonical error + failure manifest đã submit | Khi guard đủ: `status=COMPLETED`, `outcome=NEED_RETRY` | Cấp quyền rồi whole-attempt retry | Metric/spike alert |
 | Client/SDK unsupported | Compatibility policy | Không start SDK | Upgrade VHM Application | Metric |
-| Front hoặc back quality fail | Official result/client error | `NEED_RETRY` | Retry whole attempt; không reuse ảnh pass | Quality metric |
-| SDK init/crash | Client canonical error | `NEED_RETRY` | Retry có giới hạn | Alert nếu spike |
-| Provider timeout/5xx | Adapter | Giữ `PROCESSING` trong recovery budget | Reconciliation/backoff | Dependency alert |
-| Provider 401/403 | Adapter | `PROVIDER_ERROR` | Không tự retry; Ops sửa credential/config | Critical alert |
+| Front hoặc back quality fail | Provider result/client error | Khi guard đủ: `status=COMPLETED`, `outcome=NEED_RETRY` | Retry whole attempt; không reuse ảnh pass | Quality metric |
+| SDK init/crash | Client canonical error | Khi guard đủ: `status=COMPLETED`, `outcome=NEED_RETRY` | Retry có giới hạn | Alert nếu spike |
+| Provider timeout/5xx | Adapter | Giữ `status=PROCESSING`, `outcome` chưa có trong recovery budget | Reconciliation/backoff | Dependency alert |
+| Provider 401/403 | Adapter | Đóng `status=COMPLETED`, `outcome=PROVIDER_ERROR` theo non-retryable policy | Không tự retry; Ops sửa credential/config | Critical alert |
 | Callback auth fail | CallbackAuthenticator | Không đổi business state | Provider sửa auth/retry | Security alert |
 | Callback duplicate | Inbox unique key | Giữ state | Trả 2xx | Duplicate metric |
 | Callback schema invalid | Schema validation | Không finalize | Provider sửa contract/payload | High alert |
@@ -1421,16 +1414,16 @@ verified/auto-failed/manual lưu tại `iv_histories`, không trộn với acces
 | Presigned URL hết hạn/chưa upload | S3/client upload result | Giữ media `CREATED/UPLOADING`; không final | Xin upload session mới cho cùng server-issued media slot theo policy | Upload-expiry/failure metric |
 | Upload sai key/type/size/checksum | S3 policy/HeadObject/finalizer | Reject/quarantine media; không final | Client whole-attempt recovery theo error class; không accept arbitrary URL | Security/DLP alert nếu lặp |
 | Upload xong nhưng không submit | Orphan lifecycle/manifest scan | Không gắn media vào result | Resume submit nếu run còn hợp lệ; hết window purge orphan | Orphan count/oldest-age alert |
-| Callback đến trước submit | Official result milestone | Giữ `PROCESSING`, result persisted; chờ media | Accept late idempotent manifest và evaluate guard | Callback-submit race metric |
+| Callback đến trước submit | Provider-result milestone | Ghi `providerResultStatus=RECEIVED`; lifecycle chưa hoàn tất và chờ submission/media | Accept late idempotent manifest và evaluate guard | Callback-submit race metric |
 | Encrypted-reference/KMS finalization fail | Media Upload Finalizer | `mediaStatus=FAILED/RETRYABLE`; không expose terminal | Bounded retry; crypto/S3 incident escalation | Critical media-finalizer alert |
 | Reviewer ngoài role/assignment/business-object scope | Authorization policy + case assignment | Không đổi case/result | Trả `MANUAL_REVIEW_ACCESS_DENIED` | PII-safe denied-access security event |
 | Foreign/invalid ciphertext trong reveal | Verification/run stored-ref binding | Fail toàn bộ request; không trả partial URL | Trả `IDENTITY_MEDIA_REVEAL_FAILED` | Security-deny metric/log; không ghi business reveal audit |
 | Presign cache/Redis lỗi | Caffeine/Redisson/File client | Không đổi case/result | Fallback direct `prepareDownload`; vẫn audit trước response | Cache fallback/error metric |
 | Reveal audit write fail | Append-only audit store | Không trả presigned URL | Fail closed; retry request theo policy | Critical audit-pipeline alert |
-| Callback lost | Reconciliation due | Giữ `SUBMITTED/PROCESSING` | Get Result bounded | Reconcile metric |
-| Session stuck hết budget | Recovery counter | `PROVIDER_ERROR` | Contact support/retry theo policy | Incident review |
-| Callback lost và provider hết retention | Get Result `not found/expired` sau recovery deadline | `PROVIDER_ERROR`, reason `RESULT_UNRECOVERABLE_AFTER_RETENTION` | Không reuse media/result; contact support hoặc whole-attempt retry | Incident nếu theo cụm; review retention/backlog |
-| Provider outage kéo dài | Circuit breaker/health/SLA breach | Dừng create mới; session đã submit giữ `PROCESSING`, không chuyển `REJECTED` | Tiếp tục durable callback; ưu tiên reconciliation khi provider phục hồi | Escalate provider; theo dõi retention-at-risk |
+| Callback lost | Reconciliation due | `status=PROCESSING`, `providerResultStatus=PENDING` | Get Result bounded | Reconcile metric |
+| Session stuck hết budget | Recovery counter | `status=COMPLETED`, `outcome=PROVIDER_ERROR` | Contact support/retry theo policy | Incident review |
+| Callback lost và provider hết retention | Get Result `not found/expired` sau recovery deadline | `status=COMPLETED`, `outcome=PROVIDER_ERROR`, reason `RESULT_UNRECOVERABLE_AFTER_RETENTION` | Không reuse media/result; contact support hoặc whole-attempt retry | Incident nếu theo cụm; review retention/backlog |
+| Provider outage kéo dài | Circuit breaker/health/SLA breach | Dừng create mới; session đã submit giữ `status=PROCESSING`, không gán `outcome=REJECTED` | Tiếp tục durable callback; ưu tiên reconciliation khi provider phục hồi | Escalate provider; theo dõi retention-at-risk |
 | Concurrent create | Unique/idempotency guard | Một active session | Trả session hiện hữu/conflict | Metric |
 | Result API access sai scope | Authorization | Không đổi state | `403/404` | Security audit |
 
@@ -1680,7 +1673,7 @@ khi có calculator export/share link, provider quotation và tổng chi phí th�
 
 | **Layer** | **Nội dung** | **Gate** |
 | --- | --- | --- |
-| Unit | State guard, idempotency, mapping, masking, retry rules | Critical branches `>=80%` |
+| Unit | Lifecycle/outcome/milestone guard, idempotency, mapping, masking và retry rules | Critical branches `>=80%` |
 | DB Integration | Constraint, index, locking, inbox, history, reconciliation query | Bắt buộc pass |
 | Provider Contract | SDK init/OCR/liveness proxy, callback, Get Result và error fixtures | Bắt buộc pass |
 | Mobile SDK | Permission, lifecycle, front/back, result page OFF, compatibility matrix | Bắt buộc pass |
@@ -1716,7 +1709,7 @@ reconciliation nếu các control bảo mật/toàn vẹn vẫn an toàn.
 | Backend | Java 25, Spring Boot 4.0.4, Spring Data JPA, Maven | Strong typing, transaction support và phù hợp state/idempotency-heavy service | Go/Node giảm footprint nhưng làm tăng divergence stack và không tạo lợi ích đủ lớn cho contract này | Selected |
 | Client integration | VHM Mobile, VHM Web và eKYC SDK được pin version | Hỗ trợ hai kênh đã chốt và cô lập implementation trong SDK | Tự xây capture/liveness bị loại do tăng security, UX và certification scope | Selected |
 | System of record | Amazon RDS PostgreSQL 17 Multi-AZ | ACID, unique constraint, locking, history và PITR phù hợp session/callback dedupe | DynamoDB/NoSQL giảm vận hành scale nhưng phức tạp transaction/query và consistency invariant | Selected |
-| Ephemeral cache | Amazon ElastiCache Redis 7.4 | Rate limit, replay guard và short-lived cache tách khỏi source of truth | Chỉ dùng PostgreSQL đơn giản hơn nhưng tăng contention/load; Redis không được giữ official state | Selected with boundary |
+| Ephemeral cache | Amazon ElastiCache Redis 7.4 | Rate limit, replay guard và short-lived cache tách khỏi source of truth | Chỉ dùng PostgreSQL đơn giản hơn nhưng tăng contention/load; Redis không được giữ lifecycle/final outcome | Selected with boundary |
 | Runtime | Amazon EKS + Nginx Ingress Controller | Tách scale API/callback/worker, rolling/canary và dùng V-App cluster | VM/serverless giảm một số ops nhưng lệch runtime baseline và worker/connection model hiện tại | Selected |
 | CI/CD | Azure DevOps (TFS) + immutable artifact promotion | Có quality/security gates và không rebuild giữa environment | Manual deployment bị loại do thiếu repeatability/audit | Selected |
 | Secret/encryption | AWS Secrets Manager + KMS | Central lifecycle, workload access, encryption và audit | Secret trong ConfigMap/repo/image bị cấm | Selected |
@@ -1836,7 +1829,7 @@ cho tới khi artefact này được cung cấp, các SLI/SLO dưới đây là 
 | Callback ingress | Durable acknowledgement rate/latency | Durable receive và trả 2xx trong provider callback timeout với approved safety margin | Duplicate hợp lệ đo riêng, không tính là business failure. |
 | Callback processing | Callback durable→Canonical Result latency, oldest inbox age, processing success và quarantine count | Theo approved callback-processing SLO và Ops alert policy | Không dùng PII/provider session làm metric label; durable-ack và processing là hai SLI riêng. |
 | Reconciliation | Due backlog age, estimated drain time, recovered-session rate và provider error rate | Hoàn tất trước provider retention với approved safety margin | Số item backlog tối đa = sustainable Get Result throughput × thời gian còn lại trước recovery deadline; throughput/quota phải được load test/provider xác nhận. |
-| Mobile/Web journey | Start→submit→official outcome funnel theo channel/version | Baseline và alert threshold TBD sau UAT/performance test | Không gửi OCR field/media/token vào analytics. |
+| Mobile/Web journey | Start→submit→final outcome funnel theo channel/version | Baseline và alert threshold TBD sau UAT/performance test | Không gửi OCR field/media/token vào analytics. |
 
 Telemetry volume, retention và cost phải nằm trong cost estimate; sai lệch khỏi
 monitoring standard cần Architecture/Ops/Data Privacy phê duyệt.
@@ -1905,7 +1898,7 @@ monitoring standard cần Architecture/Ops/Data Privacy phê duyệt.
 - Result/status/history API enforce object-level authorization chống IDOR.
 - Fixed result fields và mask policy áp thống nhất cho caller đã được phê duyệt.
 - Unmask yêu cầu elevated scope, reason và access audit.
-- Ops reprocess/retry cần role riêng và reason; không được sửa official result.
+- Ops reprocess/retry cần role riêng và reason; không được sửa provider result.
 - Manual Review list yêu cầu platform review role, active assignment và
   domain/use-case/business-object/purpose scope. Reveal revalidate toàn bộ scope,
   yêu cầu `caseId`, controlled `reasonCode` và step-up còn hiệu lực theo VHM IAM policy.
@@ -1940,7 +1933,7 @@ monitoring standard cần Architecture/Ops/Data Privacy phê duyệt.
 | Verification/Result API | Method policy + object-level authorization | Kiểm tra domain/use case, `businessRef/subjectRef`, purpose và caller scope trước read/write. |
 | SDK Proxy API của VHM eKYC Service | Workload identity + session/run/journey binding | Revalidate context trước khi gọi outbound adapter. |
 | Callback API | Callback token + Client UUID/session/environment binding | Provider đã xác thực chỉ được ghi event khớp `verificationId`/Client UUID; không có quyền đọc Result API. |
-| Ops endpoints/workers | Workload identity + privileged role + reason | Retry/reprocess/reconcile có audit; không cho sửa official result trực tiếp. |
+| Ops endpoints/workers | Workload identity + privileged role + reason | Retry/reprocess/reconcile có audit; không cho sửa provider result hoặc final outcome trực tiếp. |
 | Media Upload API/S3 Intake | BFF-authenticated context + run/media binding + SigV4 presign | Chỉ server-issued media slot; exact key/type/size/checksum; no client list/read và submit phải bind manifest. |
 | Manual Review Reveal API | Platform review role + assignment/object/purpose ABAC + recent step-up | Re-check scope ở cả GET và POST; POST validate case/reason/exception approval, cap/dedupe/bind toàn bộ encrypted refs; no partial reveal. |
 | Private File Service/Presign cache | Workload IAM + scoped cache key/TTL | Plaintext path transient; URL validity ngắn; audit success trước response; cache không dùng chéo security scope. |
@@ -1961,11 +1954,11 @@ monitoring standard cần Architecture/Ops/Data Privacy phê duyệt.
 
 #### Zero Trust cho client result
 
-- Không nhận OCR field, official decision, provider score, arbitrary resource URL
+- Không nhận OCR field, final decision/outcome, provider score, arbitrary resource URL
   hoặc media bytes trong client submit. Chỉ nhận SDK outcome và server-issued
   media manifest; object bytes đi trực tiếp bằng presigned upload.
 - Nguồn kết quả và điều kiện finalize tuân thủ `RESULT-01`.
-- Callback/client event không được đảo terminal state; duplicate manifest chỉ trả
+- Callback/client event không được đảo terminal lifecycle; duplicate manifest chỉ trả
   state hiện hữu. Callback đến trước terminal vẫn phải accept late required manifest.
 
 #### Callback Security
@@ -2243,7 +2236,7 @@ flowchart TB
     RESULT_API(("P5 · Authorized Result API")):::process
     MEDIA_API(("P6 · Media Upload / Reveal API")):::process
     INBOX[("D1 · Encrypted Inbox<br/>24h / 7d")]:::sensitive
-    RESULT[("D2 · Canonical Result<br/>fixed fields")]:::sensitive
+    RESULT[("D2 · Canonical Result<br/>fixed fields · final outcome")]:::sensitive
     MEDIA[("D3 · Private VHM Media Vault<br/>SSE-KMS objects · encrypted refs")]:::sensitive
     AUDIT[("D4 · audit_logs / iv_histories")]:::sensitive
 
@@ -2258,7 +2251,7 @@ flowchart TB
     EKYC_SERVICE_PROXY -->|"4. server credential + stream"| BACKEND
     BACKEND -->|"5. authenticated provider callback result"| RESULT_PROCESS
     RESULT_PROCESS -->|"7. encrypted minimal payload"| INBOX
-    INBOX -->|"8. claimed official result"| RESULT_PROCESS
+    INBOX -->|"8. claimed provider result"| RESULT_PROCESS
     RESULT_PROCESS -->|"9. canonical fixed fields"| RESULT
     APP -->|"10. status/result query"| BFF
     BFF -->|"11. authorized result query"| RESULT_API
@@ -2355,7 +2348,7 @@ Purge implementation bắt buộc:
 | IDOR/cross-domain | Đổi verificationId/businessRef hoặc giả mạo domain | Object/domain authorization |
 | Web XSS lấy token | Script độc hại | CSP, encoding, dependency security, memory-only token |
 | Multi-tab/run race | Hai client run cho một session | Server-issued runId, lease, idempotency, state guard |
-| Mobile tamper | Modified client/device | SDK integrity/security signal; server official result |
+| Mobile tamper | Modified client/device | SDK integrity/security signal; server-side provider result |
 | PII leakage | Log/APM/analytics/crash report | Redaction, allowlist logging, DLP/PII scan |
 | Media leakage | BFF/VHM eKYC Service vi phạm media handling | `MEDIA-01`, metadata allowlist, DLP test |
 | Presigned upload misuse | URL bị lộ/reuse, overwrite sai media slot hoặc upload content giả | `MEDIA-STORE-01`, exact random key/method/header/checksum, short expiry, no read/list, finalizer validation |
@@ -2375,7 +2368,7 @@ Purge implementation bắt buộc:
 - Duplicate/out-of-order callback và cùng event ID khác payload.
 - Callback body quá size/depth, wrong content type và malicious resource URL.
 - Cross-domain/business-object create/status/result/retry access.
-- Client gửi OCR fields/decision/score/media/token trong submitted/error event.
+- Client gửi OCR fields/decision/score/media/token trong submit/error event.
 - Concurrent create/run/retry và stale client event.
 - Mobile token persistence, telemetry leakage và SDK integrity evidence.
 - Web XSS/CSP/CSRF/CORS, storage leakage và multi-tab run conflict.
@@ -2449,13 +2442,13 @@ Không backup như business source:
 | --- | --- | --- | --- | --- |
 | Verification/Result API | Stateless horizontal replicas, readiness và circuit breaker | Timeout/bounded retry cho safe operation; không retry blind mutation | Artifact/config redeploy + RDS recovery | Không nếu theo platform standard |
 | Callback API/Inbox | Durable inbox, dedupe key và independent scaling | Durable ack trước async processing; quarantine invalid schema | Inbox nằm trong RDS/PITR nhưng payload tuân thủ TTL | ANBM/Ops cho auth/TTL baseline |
-| Reconciliation Worker | Lease/`SKIP LOCKED`, backoff và provider quota guard | Recover callback lost/stuck session; hết budget thành `PROVIDER_ERROR` | Schedule/state phục hồi từ PostgreSQL | eKYC Provider Backend/Ops cho quota/recovery budget |
+| Reconciliation Worker | Lease/`SKIP LOCKED`, backoff và provider quota guard | Recover callback lost/stuck session; hết budget đóng `status=COMPLETED`, `outcome=PROVIDER_ERROR` | Schedule/state phục hồi từ PostgreSQL | eKYC Provider Backend/Ops cho quota/recovery budget |
 | PostgreSQL | RDS Multi-AZ, connection pool, PITR | Automatic failover; degrade create/read theo incident mode | Restore drill chứng minh RTO/RPO và idempotency | DBA/Ops |
-| Redis | Managed service, TTL và không là source of truth | Cache/replay degradation không được làm sai official state | Có thể rebuild; không yêu cầu business restore | Không |
-| S3 Intake/Media Upload Finalizer | Direct presigned upload + idempotent manifest + orphan lifecycle | Upload URL có thể cấp lại; finalizer bounded retry; không expose terminal khi required media chưa `READY` | Intake không backup; submitted object phải finalize hoặc purge theo policy | Cloud/Ops/ANBM |
+| Redis | Managed service, TTL và không là source of truth | Cache/replay degradation không được làm sai lifecycle/final outcome | Có thể rebuild; không yêu cầu business restore | Không |
+| S3 Intake/Media Upload Finalizer | Direct presigned upload + idempotent manifest + orphan lifecycle | Upload URL có thể cấp lại; finalizer bounded retry; không expose `status=COMPLETED`/final outcome khi required media chưa `READY` | Intake không backup; submitted object phải finalize hoặc purge theo policy | Cloud/Ops/ANBM |
 | S3 Media Vault | Private SSE-KMS object store, version/lifecycle/inventory | S3/KMS lỗi giữ evidence-pending; reveal fail closed | Versioning/replication/restore theo approved DR; retention sweep ngăn resurrect purged media | Cloud/Ops/Data Privacy |
 | Reveal API/Presign cache | Stateless API + Caffeine L1/Redisson L2 + direct-presign fallback | Redis lỗi fallback direct; audit store lỗi không trả URL | Cache/presigned URL không backup; rebuild/expire tự nhiên; encrypted refs phục hồi từ RDS | ANBM/Ops/Audit |
-| eKYC Provider Backend dependency | Timeout, circuit breaker, callback + Get Result reconciliation | Tạm dừng create khi dependency incident; không biến lỗi kỹ thuật thành `REJECTED` | Khôi phục result trong provider retention window | SLA/risk acceptance bắt buộc |
+| eKYC Provider Backend dependency | Timeout, circuit breaker, callback + Get Result reconciliation | Tạm dừng create khi dependency incident; không biến lỗi kỹ thuật thành `outcome=REJECTED` | Khôi phục result trong provider retention window | SLA/risk acceptance bắt buộc |
 
 Single point of dependency còn lại là eKYC Provider Backend của một provider; rủi ro và
 acceptance được ghi tại Architecture Risk Register.
@@ -2463,7 +2456,8 @@ acceptance được ghi tại Architecture Risk Register.
 ### 8.2.2. Provider outage và backlog recovery
 
 - Khi provider unavailable, VHM dừng create/session mới theo circuit-breaker policy;
-  các session đã submit giữ `PROCESSING`, không chuyển thành `REJECTED` do lỗi kỹ thuật.
+  các session đã submit giữ `status=PROCESSING`, chưa gán final outcome và không
+  chuyển thành `outcome=REJECTED` do lỗi kỹ thuật.
 - Callback API vẫn durable receive nếu provider còn gửi được callback. Reconciliation
   tạm backoff có quota guard và được ưu tiên drain ngay khi provider phục hồi.
 - Từ thời điểm provider phục hồi, Ops ưu tiên session có retention deadline gần nhất.
@@ -2474,8 +2468,9 @@ acceptance được ghi tại Architecture Risk Register.
 - Nếu outage làm vi phạm approved safety margin, kích hoạt critical incident,
   provider escalation và retention-at-risk dashboard. Outage kéo dài bằng hoặc vượt
   provider retention không được coi là recoverable mặc định.
-- Nếu callback mất và Get Result đã hết retention, đóng attempt ở `PROVIDER_ERROR`
-  với reason `RESULT_UNRECOVERABLE_AFTER_RETENTION`; không reuse media/result,
+- Nếu callback mất và Get Result đã hết retention, đóng attempt với
+  `status=COMPLETED`, `outcome=PROVIDER_ERROR` và reason
+  `RESULT_UNRECOVERABLE_AFTER_RETENTION`; không reuse media/result,
   cho `CONTACT_SUPPORT` hoặc whole-attempt retry theo policy. Sự cố theo cụm phải mở
   incident và review lại retention/quota/backlog control.
 
@@ -2501,7 +2496,7 @@ RTO/RPO cuối cùng phải được System Owner và Operations xác nhận b�
 - Có thể dừng create trong khi callback/reconciliation vẫn chạy.
 - Pending/failed inbox được xử lý bounded và không finalize trùng.
 - Non-terminal session được reconcile trong provider retention window.
-- Terminal state không bị đảo bởi callback/client event trễ.
+- Terminal lifecycle không bị đảo bởi callback/client event trễ.
 - Retry chain, idempotency và active-session constraint còn đúng.
 - Callback encrypted payload TTL/purge job resume đúng.
 - S3 Media Vault object/version/replica khớp manifest/encrypted ref và không có
@@ -2520,7 +2515,7 @@ RTO/RPO cuối cùng phải được System Owner và Operations xác nhận b�
 | --- | --- | --- |
 | System criticality/security level | Tier 2 — Business Critical; xử lý dữ liệu định danh/sinh trắc học | System Owner + ANBM + Data Privacy |
 | RTO/RPO | RTO `<=4h`, RPO `<=15m` | Restore drill và Ops sign-off |
-| Blast radius — client channel | Mobile hoặc Web lỗi không được làm hỏng official result của channel còn lại | Channel dashboard/E2E evidence |
+| Blast radius — client channel | Mobile hoặc Web lỗi không được làm hỏng provider result/final outcome của channel còn lại | Channel dashboard/E2E evidence |
 | Blast radius — provider | Có thể dừng create mới; callback/reconciliation tiếp tục trong safe mode | Incident mode/runbook và provider escalation |
 | Blast radius — callback worker | API vẫn durable receive tới capacity; backlog được alert và bounded drain | Load/restart test |
 | Blast radius — media upload/finalizer | Có thể dừng create nếu evidence-ready SLA bị vi phạm; uploaded object bounded và không mất manifest | S3/KMS/finalizer incident drill |
@@ -2533,9 +2528,9 @@ RTO/RPO cuối cùng phải được System Owner và Operations xác nhận b�
 
 | **Test type** | **Scope** | **Environment** | **Success criterion/release gate** |
 | --- | --- | --- | --- |
-| System/Integration | State guard, DB constraint/locking, callback auth/dedupe, normalization, masking | Dev/SIT | Critical branches `>=80%`; toàn bộ contract/DB test pass. |
+| System/Integration | Lifecycle/outcome/milestone guard, DB constraint/locking, callback auth/dedupe, normalization và masking | Dev/SIT | Critical branches `>=80%`; toàn bộ contract/DB test pass. |
 | Provider contract | SDK init/OCR/liveness, callback, Get Result, error/schema evolution fixtures | SIT/provider staging | Pass supported/unsupported/duplicate/timeout cases; no raw payload leakage. |
-| Mobile/Web E2E | OCR_ONLY và FULL_EKYC; permission/lifecycle/front-back/result-page OFF | UAT/provider staging | Happy path và failure path cho cả Mobile/Web; official-result rule luôn đúng. |
+| Mobile/Web E2E | OCR_ONLY và FULL_EKYC; permission/lifecycle/front-back/result-page OFF | UAT/provider staging | Happy path và failure path cho cả Mobile/Web; provider-result/finalization rule luôn đúng. |
 | Media persistence | Presigned PUT/multipart, checksum/type/size, submit/callback race, finalizer, retention/orphan purge | SIT — isolated media bucket | Pass/fail media đều `READY`; không cross-run overwrite/list/read; terminal guard đúng. |
 | Manual Review reveal/audit | Role/assignment/object scope, case/reason/recent step-up, exceptional approval/ticket, cap/dedupe/binding, encrypted-ref tamper, cache fallback, presign expiry và audit | SIT/OAT | Không cross-verification/partial reveal; stale step-up/invalid context bị deny; audit PII-safe; audit failure không trả URL. |
 | Performance/capacity | API p95/p99, callback burst, inbox/reconciliation backlog, DB lock/pool | SIT — dedicated performance window | Đạt NFR và capacity target mục 6.4; không mất/duplicate finalization. |
@@ -2559,10 +2554,10 @@ Appendix C là release checklist và không thay thế evidence của từng qua
 | AR-004 | Performance | Concurrent media streams, size/duration, TPS/callback burst và provider quota chưa chốt | Quá tải BFF/VHM eKYC Service/network/inbox hoặc vượt quota/cost | High | High | Capacity inputs, streaming load test, HPA/pool riêng, bounded buffer/worker, quota alert | Medium | Product/Ops | OPEN |
 | AR-005 | Compatibility | Mobile/Web/SDK compatibility và lifecycle matrix chưa có evidence | Journey lỗi theo device/browser/version, tăng retry/drop-off | Medium | High | Pin version, preflight, cohort rollout, E2E matrix và rollback | Low/Medium | Client/SDK Teams | OPEN |
 | AR-006 | Data/Security | Fixed result field, masking và retention chưa được chốt theo từng approved purpose | Over-collection hoặc lộ PII cho caller không đúng quyền | Medium | High | Fixed schema, allowlist, object authorization, masking/unmask audit | Low sau approval | Product/Business/Data Privacy | OPEN |
-| AR-007 | Operations | Reconciliation vượt provider retention/quota khi callback backlog lớn hoặc provider outage kéo dài | Session treo hoặc official result không thể khôi phục | Medium | High | p95/oldest-age alert, approved recovery safety margin, bounded lease/backoff, quota-aware drain, `RESULT_UNRECOVERABLE_AFTER_RETENTION` runbook | Medium | Ops/eKYC Provider Backend | OPEN |
+| AR-007 | Operations | Reconciliation vượt provider retention/quota khi callback backlog lớn hoặc provider outage kéo dài | Session treo hoặc provider result không thể khôi phục | Medium | High | p95/oldest-age alert, approved recovery safety margin, bounded lease/backoff, quota-aware drain, `RESULT_UNRECOVERABLE_AFTER_RETENTION` runbook | Medium | Ops/eKYC Provider Backend | OPEN |
 | AR-008 | Security/Performance | BFF/VHM eKYC Service vi phạm media handling | Rò rỉ dữ liệu nhạy cảm, memory/disk exhaustion và tăng blast radius | Medium | Critical | `MEDIA-01`, metadata allowlist và load/DLP evidence | Low sau sign-off | BFF/VHM eKYC Service/Ops/ANBM | OPEN — go-live blocker |
 | AR-009 | Security/Data | Presigned upload/reveal URL bị lộ, reuse hoặc cache chéo security scope | Upload giả/overwrite media hoặc người không có quyền tải dữ liệu định danh/sinh trắc | Medium | Critical | Exact key/method/checksum, short expiry, no list/read, scoped cache, no URL log, bind refs và PII-safe audit | Low/Medium sau security test | ANBM/Cloud/Client/Manual Review | OPEN — go-live blocker |
-| AR-010 | Integrity | Media client upload không chứng minh byte-for-byte giống media provider đã xử lý | Manual reviewer có thể xem evidence khác với input tạo official result | Medium | High | Checksum/provenance/providerSession correlation; yêu cầu provider/SDK digest khi có; không tuyên bố equivalence nếu thiếu evidence | Medium | Architect/SDK/eKYC Provider Backend/Risk | OPEN — decision/evidence required |
+| AR-010 | Integrity | Media client upload không chứng minh byte-for-byte giống media provider đã xử lý | Manual reviewer có thể xem evidence khác với input tạo provider result | Medium | High | Checksum/provenance/providerSession correlation; yêu cầu provider/SDK digest khi có; không tuyên bố equivalence nếu thiếu evidence | Medium | Architect/SDK/eKYC Provider Backend/Risk | OPEN — decision/evidence required |
 | AR-011 | Privacy/Cost | Media type mix, video scope và versioned retention classes chưa được phê duyệt | Over-retention biometric data, S3/KMS/egress cost và backup/purge không sizing được | High | Critical | Purpose registry, external retention policy, `retainUntil`, lifecycle/version purge, capacity/cost scenario và DPIA | Medium sau approval | Product/Legal/Data Privacy/Cloud/Finance | OPEN — go-live blocker |
 | AR-012 | Security/Audit | Reveal audit/cache contract không fail closed hoặc lưu ciphertext/path/URL/PII | Không truy vết được disclosure hoặc audit trở thành nguồn rò rỉ | Medium | Critical | Audit-before-response, append-only events, PII-safe payload, cap/binding, cache TTL/scope và SIEM deny log | Low sau evidence | ANBM/Audit/Manual Review/Ops | OPEN — go-live blocker |
 
@@ -2585,15 +2580,15 @@ owner, phạm vi, thời hạn và approver tương ứng được ghi trong phi
 | --- | --- |
 | OCR | Optical Character Recognition - đọc và chuẩn hóa dữ liệu từ ảnh giấy tờ. |
 | eKYC | Xác minh danh tính điện tử bằng document verification, liveness và face matching. |
-| OCR_ONLY | Journey chỉ đọc front/back; kết thúc `COMPLETED`, `ekycOutcome=NOT_PERFORMED`. |
-| FULL_EKYC | Journey OCR front/back → liveness → face matching; pass mới thành `VERIFIED`. |
+| OCR_ONLY | Journey chỉ đọc front/back; khi thành công có `status=COMPLETED`, `outcome=OCR_COMPLETED`, `ekycOutcome=NOT_PERFORMED`. |
+| FULL_EKYC | Journey OCR front/back → liveness → face matching; khi pass có `status=COMPLETED`, `outcome=VERIFIED`. |
 | VHM Application | Ứng dụng Mobile và Web của VHM tích hợp eKYC SDK. |
 | VHM eKYC Service | Service trung tâm sau VHM BFF, quản lý session/result và là integration/proxy point duy nhất gọi eKYC Provider Backend bằng server credential. |
 | VHM BFF | Điểm ingress từ Mobile/Web/SDK; xác thực, authorize, áp policy và stream request xuống VHM eKYC Service; không nhận provider callback, không giữ provider credential hoặc xử lý eKYC result. |
 | eKYC SDK | SDK chạy trên Mobile/Web để điều khiển capture và gửi init/OCR/liveness tới VHM BFF. |
 | eKYC Provider Backend | Hệ thống xử lý OCR, liveness và face matching; gửi callback/cung cấp Get Result. |
 | Provider Adapter | Lớp cô lập API/auth/payload/error của eKYC Provider Backend khỏi VHM contract. |
-| Official Result | Kết quả server-to-server từ callback đã xác thực hoặc Get Result qua reconciliation. |
+| Provider Result | Kết quả server-to-server từ callback đã xác thực hoặc Get Result qua reconciliation. |
 | Canonical Result | Mô hình kết quả chuẩn VHM, không phụ thuộc raw provider payload. |
 | Callback Inbox | Bảng durable receive/dedupe, lưu payload tối thiểu đã mã hóa theo TTL. |
 | Reconciliation | Job khôi phục callback quá SLA hoặc session treo bằng Provider Get Result. |
@@ -2608,7 +2603,9 @@ owner, phạm vi, thời hạn và approver tương ứng được ghi trong phi
 | Manual Review Reveal | Platform-role/assignment-scoped flow list encrypted refs và bounded reveal thành short-lived presigned download URL với PII-safe audit. |
 | `VIEW_IDENTITY_MEDIA` | Append-only audit event ghi actor đã list encrypted media refs của một verification. |
 | `REVEAL_IDENTITY_MEDIA` | Append-only audit event ghi actor được cấp short-lived URL cho selected media types/parts; không chứa ciphertext/path/URL. |
-| Terminal State | `COMPLETED`, `VERIFIED`, `REJECTED`, `NEED_RETRY`, `PROVIDER_ERROR`, `CANCELLED`, `EXPIRED`. |
+| Lifecycle Status | Trạng thái vòng đời `CREATED`, `IN_PROGRESS`, `PROCESSING`, `COMPLETED`, `CANCELLED` hoặc `EXPIRED`; không chứa kết luận nghiệp vụ. |
+| Final Outcome | Kết luận chỉ gán khi `status=COMPLETED`: `OCR_COMPLETED`, `VERIFIED`, `REJECTED`, `NEED_RETRY` hoặc `PROVIDER_ERROR`. |
+| Completion Milestone | Trạng thái trực giao `submissionStatus`, `mediaStatus`, `providerResultStatus` và `reviewStatus`; provider-result terminal milestone là `RECEIVED`, `NOT_REQUIRED` hoặc `UNRECOVERABLE`. |
 
 ---
 
@@ -2628,6 +2625,7 @@ owner, phạm vi, thời hạn và approver tương ứng được ghi trong phi
 | Fixed result field set và masking cho VHM Application | Product/Business/Data Privacy | Trước Result API contract test |
 | Consent text/version/purpose/withdrawal behavior | Product/Legal/Data Privacy | Trước UAT |
 | Fixed decision mapping, threshold và reason code UX | Product/Risk/Architect | Trước decision contract test |
+| Lifecycle status, final outcome, completion-milestone enum và Result API mapping | Product/Architect/Backend/Mobile/Web | Trước API/state-machine contract sign-off |
 | Whole-attempt retry cap, user message và support action | Product/Risk/Ops | Trước failure-path UAT |
 | Business owner chịu trách nhiệm sử dụng result | Business Owner | Trước production readiness |
 | Approved purpose registry cho media persistence/manual review/dispute; không dùng mô tả “nhiều mục đích” | Product/Legal/Data Privacy | Trước consent/privacy sign-off |
@@ -2643,7 +2641,7 @@ owner, phạm vi, thời hạn và approver tương ứng được ghi trong phi
 | Camera permission, capture UX và quality guidance | SDK/Product/UX | Trước journey UAT |
 | Front/back gửi cùng call hay lần lượt; fail-fast semantics | SDK Technical Team | Trước two-side implementation |
 | Completion/close/error event và payload contract | SDK Technical Team | Trước client lifecycle integration |
-| Result page `OFF` nhưng completion/close event vẫn phát | SDK Technical Team | Trước submitted integration test |
+| Result page `OFF` nhưng completion/close event vẫn phát | SDK Technical Team | Trước submit integration test |
 | Liveness/face behavior trong `FULL_EKYC` | SDK/Product/Risk | Trước FULL_EKYC E2E |
 | Mobile background/force-close/reopen behavior | Mobile/SDK Team | Trước lifecycle test |
 | Mobile certificate-pinning decision; nếu bật phải có VHM BFF primary/backup SPKI pin, rollover và compatibility evidence | ANBM/Mobile/SDK Team | Trước security sign-off |
@@ -2716,12 +2714,12 @@ không thay thế sign-off chính thức.
 | ADR-002 | Sử dụng một SDK/provider | Giữ integration và operations rõ ràng | Provider contract là dependency chính | Accepted baseline | TBD link |
 | ADR-003 | Hỗ trợ Mobile và Web | Đáp ứng hai kênh VHM đã chốt | Cần compatibility/E2E matrix cho cả hai | Accepted baseline | TBD link |
 | ADR-004 | Chỉ document `NATIONAL_ID_CHIP`, front/back | Thu hẹp mapping, test và data scope | Loại giấy tờ khác cần cập nhật TDD | Accepted baseline | TBD link |
-| ADR-005 | Hai journey `OCR_ONLY` và `FULL_EKYC` | Tách đọc giấy tờ khỏi xác minh danh tính | State/result phải tách OCR/eKYC outcome | Accepted baseline | TBD link |
+| ADR-005 | Hai journey `OCR_ONLY` và `FULL_EKYC` | Tách đọc giấy tờ khỏi xác minh danh tính | Lifecycle status phải tách khỏi OCR/eKYC outcome | Accepted baseline | TBD link |
 | ADR-006 | Tuân thủ `RESULT-01` | Chống giả mạo client result | Mobile/Web phải có processing UX | Accepted baseline | TBD link |
-| ADR-007 | Callback đã xác thực là official-result ingress chính | Server-to-server trust | Cần callback auth/dedupe/durable inbox | Accepted baseline | TBD link |
+| ADR-007 | Callback đã xác thực là provider-result ingress chính | Server-to-server trust | Cần callback auth/dedupe/durable inbox | Accepted baseline | TBD link |
 | ADR-008 | Get Result theo `RESULT-01` | Khôi phục callback lost/session stuck | Không polling mọi session | Accepted baseline | TBD link |
 | ADR-009 | Provider Adapter + Canonical Result | Cô lập provider payload | VHM contract ổn định và fixed schema | Accepted baseline | TBD link |
-| ADR-010 | OCR_ONLY pass thành `COMPLETED`, không `VERIFIED` | Tránh khẳng định sai về danh tính | UX/API phải tách outcome | Accepted baseline | TBD link |
+| ADR-010 | OCR_ONLY pass có `status=COMPLETED`, `outcome=OCR_COMPLETED`; FULL_EKYC pass mới có `outcome=VERIFIED` | Tránh khẳng định sai về danh tính và state explosion | UX/API phải tách lifecycle status khỏi outcome | Accepted baseline | TBD link |
 | ADR-011 | Retry whole attempt | Giữ history và front/back correlation rõ ràng | Không reuse ảnh/result attempt cũ | Accepted baseline | TBD link |
 | ADR-012 | Tách provider transit `MEDIA-01` khỏi VHM durable media `MEDIA-STORE-01`/`DATA-01` | BFF/service không persist body nhưng VHM vẫn sở hữu S3 media theo approved purpose | Bắt buộc load/DLP/S3/privacy evidence | Accepted baseline | TBD link |
 | ADR-013 | Callback payload mã hóa tạm thời trong inbox | Async durable processing cần payload | TTL/purge/encryption bắt buộc | Accepted baseline | TBD link |
@@ -2729,7 +2727,7 @@ không thay thế sign-off chính thức.
 | ADR-015 | PostgreSQL là source of truth | Transaction, locking, dedupe và PITR | Cần index/retention/restore test | Accepted baseline | TBD link |
 | ADR-016 | Tuân thủ `DP-01`/`CRED-01` | VHM kiểm soát auth, credential và network audit | BFF/VHM eKYC Service chịu media throughput và cần resource pool tách control/data | Accepted baseline | TBD link |
 | ADR-017 | Upload control-plane/manifest qua VHM BFF; client upload pass/fail media bytes trực tiếp vào VHM S3 bằng server-issued presigned PUT/multipart; backend sync từ provider ngoài scope | Bảo đảm VHM kiểm soát authorization/slot nhưng tránh media body qua BFF và lưu bền độc lập callback/provider retention | Cần client artifact/checksum, orphan cleanup, S3/KMS/capacity/privacy controls; đổi ingress path cần ADR mới | Accepted baseline | TBD link |
-| ADR-018 | Submit manifest và provider callback là hai milestone độc lập, hội tụ bằng short locked finalization guard | Chống race callback-before-submit và không làm mất media evidence | Terminal outcome chờ required media `READY`; cần idempotency/lock/load test | Accepted baseline | TBD link |
+| ADR-018 | Submission, media và provider result là các milestone độc lập, hội tụ bằng short locked finalization guard | Chống race callback-before-submit và không làm mất media evidence | `status=COMPLETED`/final outcome chỉ gán khi milestone bắt buộc sẵn sàng; cần idempotency/lock/load test | Accepted baseline | TBD link |
 | ADR-019 | Manual Review list encrypted refs, bounded POST reveal và short-lived presigned S3 GET với PII-safe append-only audit | Khớp workflow vận hành, subject binding và không lộ plaintext path trong DB/API list | Presigned URL là bearer residual risk; cần expiry/scope/cache/no-log/audit fail-closed | Accepted with controls | TBD link |
 | ADR-020 | Media retention duration nằm trong external versioned purpose-bound policy, không hard-code trong TDD | Cho phép Legal/Data Privacy ratify và thay đổi policy có governance | Mỗi media lưu policy ID/class/retainUntil; go-live bị chặn nếu thiếu effective policy | Accepted baseline | TBD link |
 
@@ -2739,6 +2737,7 @@ không thay thế sign-off chính thức.
 
 ## C.1. Functional
 
+- [ ] Lifecycle chỉ dùng `CREATED/IN_PROGRESS/PROCESSING/COMPLETED/CANCELLED/EXPIRED`; final outcome và completion milestones được persist/contract-test tách biệt.
 - [ ] Create session idempotent và active-session concurrency.
 - [ ] Bootstrap TTL/binding/lease và expired-token reissue.
 - [ ] Mobile `OCR_ONLY` front/back pass/fail/whole-attempt retry.
@@ -2746,14 +2745,14 @@ không thay thế sign-off chính thức.
 - [ ] Mobile `FULL_EKYC` document/liveness/face pass và failure paths.
 - [ ] Web `FULL_EKYC` document/liveness/face pass và failure paths.
 - [ ] SDK result page `OFF`; completion/close event vẫn phát.
-- [ ] Started/submitted/error/cancel idempotency và late-event handling.
+- [ ] Started/submit/error/cancel idempotency và late-event handling.
 - [ ] Pass/fail đều tạo presigned upload session, upload required media và submit server-issued manifest.
 - [ ] Create/reissue upload session và submit manifest qua VHM BFF; binary/base64 media upload vào BFF bị từ chối.
-- [ ] Callback trước/sau submitted, duplicate/out-of-order và finalization guard chỉ terminal khi official result + required media `READY`.
+- [ ] Callback trước/sau submit, duplicate/out-of-order và finalization guard chỉ gán `status=COMPLETED`/final outcome khi submission + required media + required provider result sẵn sàng.
 - [ ] Presigned image/video multipart resume, expired URL reissue, checksum/object validation và orphan cleanup.
 - [ ] Callback Worker/Reconciliation lock contention, `lock_timeout`, deadlock và delayed retry pass; callback HTTP thread không chờ finalize.
 - [ ] Callback lost → reconciliation final/pending/not-found/error.
-- [ ] `OCR_ONLY → COMPLETED`, `FULL_EKYC → VERIFIED` đúng contract.
+- [ ] `OCR_ONLY → status=COMPLETED/outcome=OCR_COMPLETED`, `FULL_EKYC pass → status=COMPLETED/outcome=VERIFIED` đúng contract.
 - [ ] Definitive failure, recoverable quality và technical error mapping đúng.
 - [ ] Result API fixed fields, `RESULT_NOT_READY` và authorization.
 - [ ] Whole-attempt retry link/history/cap và không reuse media/result.
