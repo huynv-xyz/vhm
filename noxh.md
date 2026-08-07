@@ -109,14 +109,14 @@ Uses case: Trên Vinhome Agent Admin cần tạo danh sách biểu mẫu giấy 
 
 **User case:** Đại lý chụp CCCD mặt trước/sau trên Agent để hệ thống OCR và gợi ý thông tin khi tạo hồ sơ NOXH.
 
-**Hiện trạng:** Agent Backend tự tích hợp trực tiếp với OCR provider. Cách này đáp ứng nhanh cho một use case nhưng đưa logic đặc thù của provider, credential, xử lý lỗi và dữ liệu định danh vào Business Backend.
+**Bối cảnh:** Năng lực OCR được sử dụng bởi từ hai domain nghiệp vụ trở lên. Nếu mỗi Business Backend tự tích hợp FPT AI, các domain sẽ lặp lại logic quản lý credential, session, callback, retry, error mapping, audit và chính sách dữ liệu định danh; đồng thời cùng phụ thuộc trực tiếp vào contract của provider.
 
 | **Hướng tiếp cận** | **Ưu điểm** | **Nhược điểm** | **Lựa chọn (Yes/No)** |
 | --- | --- | --- | --- |
 | **Agent Backend tích hợp trực tiếp FPT AI** | Ít thành phần; thời gian triển khai ban đầu ngắn | Business Backend phải xử lý luồng ảnh, credential, callback, retry và mã lỗi riêng của FPT AI; khó tái sử dụng cho hệ thống khác; thay đổi SDK/provider tác động trực tiếp nghiệp vụ NOXH; tăng tải và rủi ro dữ liệu định danh trên Agent Backend | **No** |
-| **OCR Proxy trung tâm** | Tách OCR khỏi nghiệp vụ NOXH; quản lý tập trung credential, session, callback, retry, quota, audit và chuẩn hóa kết quả; dùng chung cho nhiều hệ thống; cô lập thay đổi SDK/provider; cho phép scale và vận hành độc lập | Thêm một service và một network hop; cần đầu tư monitoring, HA và đội vận hành riêng | **Yes** |
+| **OCR Proxy trung tâm** | Business Backend chỉ cần gọi contract nội bộ create/status/result; toàn bộ SDK/provider integration, credential, session, callback, retry, quota, lưu trữ, bảo mật, audit và chuẩn hóa kết quả được xử lý một lần tại Proxy; dùng chung cho mọi domain; thay SDK/provider không yêu cầu sửa nghiệp vụ NOXH | Thêm một service và một network hop; OCR Proxy phải đáp ứng HA/SLA vì là dependency dùng chung | **Yes** |
 
-**Phương án chọn:** Sử dụng **OCR Proxy** làm nền tảng tích hợp OCR trung tâm. Agent Backend chỉ kiểm tra quyền nghiệp vụ, tạo yêu cầu OCR và nhận kết quả chuẩn hóa; không gọi trực tiếp hoặc phụ thuộc contract của FPT AI.
+**Phương án chọn:** Sử dụng **OCR Proxy** làm nền tảng tích hợp OCR dùng chung cho nhiều domain. Mỗi Business Backend chỉ kiểm tra quyền và thực hiện nghiệp vụ của domain, sau đó tạo phiên và nhận kết quả OCR qua contract nội bộ thống nhất; không gọi trực tiếp hoặc phụ thuộc contract của FPT AI.
 
 ```mermaid
 flowchart LR
@@ -128,13 +128,15 @@ flowchart LR
 
     subgraph VHM["Hạ tầng VHM"]
         BFF["Agent BFF<br/>Xác thực và routing"]
-        NOXH["NOXH Backend<br/>Nghiệp vụ hồ sơ"]
-        PROXY["OCR Proxy<br/>Session · Provider Adapter · Callback<br/>Normalize · Retry · Audit"]
+        NOXH["NOXH Backend — thin domain<br/>Authorize · businessRef · Apply result"]
+        DOMAINS["Các Business Domain khác"]
+        PROXY["OCR Proxy — shared platform<br/>SDK/Provider · Session · Data · Callback<br/>Normalize · Resilience · Security · Audit"]
         DB[("OCR Database<br/>Session và kết quả chuẩn hóa")]
 
         BFF --> NOXH
         BFF ==>|"Luồng SDK OCR"| PROXY
-        NOXH -->|"Tạo phiên / lấy kết quả"| PROXY
+        NOXH -->|"create / status / result"| PROXY
+        DOMAINS -->|"contract nội bộ dùng chung"| PROXY
         PROXY --> DB
     end
 
@@ -147,7 +149,21 @@ flowchart LR
 
 ```
 
-Giải pháp này tạo một integration boundary thống nhất cho dữ liệu định danh và tránh lặp lại tích hợp OCR tại từng Business Backend. Độ trễ tăng thêm một network hop được chấp nhận để đổi lấy khả năng kiểm soát, tái sử dụng và vận hành tập trung.
+Giải pháp này tạo một integration boundary thống nhất cho dữ liệu định danh và tránh lặp lại tích hợp OCR tại từ hai domain trở lên. Chi phí của một service và một network hop được phân bổ cho nhiều consumer, đổi lại credential, quota, callback, dữ liệu, audit và vận hành provider chỉ cần quản lý tại một nơi.
+
+**Phân định ownership:**
+
+| **Năng lực** | **Business Backend (NOXH và các domain)** | **OCR Proxy** |
+| --- | --- | --- |
+| Nghiệp vụ | Kiểm tra quyền trên business object; gửi `businessRef`; quyết định sử dụng kết quả | Không xử lý rule nghiệp vụ của domain |
+| API tích hợp | Chỉ gọi API nội bộ `create/status/result` | Quản lý SDK/API contract và credential FPT AI |
+| Phiên xử lý | Không quản lý state machine OCR | Quản lý session, attempt, timeout, idempotency và trạng thái |
+| Kết quả | Chỉ nhận Canonical Result cần thiết | Nhận callback/Get Result, chuẩn hóa field và error code |
+| Dữ liệu | Không lưu ảnh hoặc raw provider payload | Quản lý ảnh/tham chiếu ảnh, mã hóa, masking và retention |
+| Resilience | Không retry trực tiếp với FPT AI | Retry, reconciliation, circuit breaker, rate limit và quota |
+| Audit/Monitoring | Chỉ audit việc áp dụng kết quả vào nghiệp vụ | Audit toàn bộ vòng đời OCR và vận hành provider |
+
+Nhờ đó, khi thêm một domain mới, domain chỉ tích hợp contract nội bộ ổn định; không phải triển khai lại SDK/provider adapter, callback endpoint, database OCR, retry, security và monitoring.
 
 **Trách nhiệm của OCR Proxy:**
 
@@ -158,6 +174,12 @@ Giải pháp này tạo một integration boundary thống nhất cho dữ liệ
 - Quản lý retry, timeout, circuit breaker, quota/rate limit và cô lập sự cố provider khỏi Business Backend.
 - Áp dụng kiểm soát truy cập, mã hóa dữ liệu nhạy cảm, masking, audit và chính sách lưu/xóa dữ liệu OCR.
 - Cung cấp API dùng chung để tạo phiên, tra cứu trạng thái và lấy kết quả OCR.
+
+**Trách nhiệm tối thiểu của NOXH Backend:**
+
+- Kiểm tra Đại lý có quyền thao tác hồ sơ/dự án.
+- Gửi `businessRef=dossierId` khi tạo phiên và lấy Canonical Result từ OCR Proxy.
+- Cho Đại lý xác nhận dữ liệu trước khi cập nhật khách hàng hoặc hồ sơ NOXH.
 
 **Cách hoạt động:**
 
