@@ -89,8 +89,8 @@ chung hoặc trao đổi miệng để thay cho owner/sign-off cụ thể.
 > - **eKYC SDK**: SDK chạy trên Mobile/Web, điều khiển camera, hỗ trợ kiểm tra chất
 >   lượng đầu vào, thu thập dữ liệu và gọi endpoint eKYC qua VHM BFF.
 > - **eKYC Provider Backend**: hệ thống ngoài VHM khởi tạo/xử lý phiên SDK, OCR,
->   liveness và face matching; gửi official result tới VHM BFF để route vào VHM
->   eKYC Service.
+>   liveness và face matching; gửi kết quả tới callback endpoint của VHM eKYC
+>   Service.
 > - **Provider Adapter**: lớp cô lập chi tiết SDK/API/payload/error khỏi contract nội bộ VHM.
 > - **Canonical Result**: mô hình kết quả chuẩn nội bộ, không phụ thuộc SDK/provider cụ thể.
 > - Nội dung đánh dấu **TBD** phải được xác nhận trước khi tài liệu được APPROVED.
@@ -130,7 +130,7 @@ một domain nghiệp vụ. Giải pháp gồm các thành phần logic sau:
    - Ánh xạ kết quả kỹ thuật thành quyết định xác minh nội bộ.
    - Cung cấp Canonical Result cho VHM Application qua Result API và VHM BFF.
    - Quản lý media manifest, trạng thái lưu bền và finalization guard giữa
-     client submit với official callback.
+     client submit với provider callback.
    - Cung cấp Manual Review API và kiểm soát view/decrypt media có audit.
    - Ghi audit, cung cấp reconciliation và khả năng truy vết.
 4. **eKYC SDK**
@@ -140,7 +140,7 @@ một domain nghiệp vụ. Giải pháp gồm các thành phần logic sau:
      VHM eKYC Service gọi eKYC Provider Backend.
 5. **eKYC Provider Backend**
    - Khởi tạo/xử lý phiên SDK, OCR, liveness và face matching.
-   - Gửi official result qua callback tới VHM BFF để route xuống VHM eKYC Service.
+   - Gửi kết quả qua callback endpoint của VHM eKYC Service.
    - Cung cấp Get Result API cho reconciliation khi callback quá SLA hoặc thất lạc;
      polling không phải happy path.
 > **Quyết định kiến trúc:** VHM eKYC Service là service trung tâm và control-plane
@@ -362,7 +362,7 @@ flowchart LR
     USER(["Người dùng Mobile / Web"]):::entity
     OPS(["Platform Operations"]):::entity
     APP["VHM Application<br/>Mobile / Web"]:::owned
-    BFF["VHM BFF<br/>API · SDK · callback ingress"]:::owned
+    BFF["VHM BFF<br/>API · SDK ingress"]:::owned
     IAM["VHM IAM / Consent"]:::owned
     OBS["VHM Audit / Monitoring"]:::owned
     VAULT["VHM S3 Media Vault<br/>encrypted media"]:::owned
@@ -380,7 +380,6 @@ flowchart LR
     CORE -->|validate/finalize media · controlled reveal| VAULT
     CORE -->|xác thực và consent| IAM
     CORE <-->|init/OCR/liveness · Get Result| PROVIDER
-    PROVIDER -->|official callback| BFF
     CORE -.->|audit và telemetry| OBS
 
     style SCOPE stroke:#d9b84a,stroke-width:2px
@@ -400,7 +399,7 @@ event/telemetry bất đồng bộ.
 | Platform Operations | Actor |  | ✓ | Theo dõi hệ thống và thực hiện assigned manual review qua controlled access theo quyền; chi tiết role nằm tại mục 7.1.2. |
 | VHM eKYC Service | Software System | ✓ |  | Service trung tâm quản lý hành trình, control-plane, data-plane và kết quả eKYC. |
 | VHM Application | Software System | ✓ |  | Kênh Mobile/Web khởi chạy SDK và hiển thị kết quả VHM. |
-| VHM BFF | Software System | ✓ |  | Ingress cho session/result, SDK/callback, create upload session và submit manifest; không nhận presigned media bytes. |
+| VHM BFF | Software System | ✓ |  | Ingress cho session/result, SDK, create upload session và submit manifest; không nhận presigned media bytes hoặc provider callback. |
 | VHM IAM/Consent | Software System | ✓ |  | Xác thực principal và cung cấp bằng chứng consent. |
 | VHM Audit/Monitoring | Software System | ✓ |  | Nhận audit và telemetry đã loại bỏ dữ liệu nhạy cảm. |
 | VHM S3 Media Vault | Software System | ✓ |  | Sở hữu media object/lifecycle; không public hoặc lộ raw path, chỉ cấp short-lived URL sau Reveal API. |
@@ -420,7 +419,7 @@ flowchart LR
         APP["VHM Application<br/>Mobile / Web"]:::bc
         S3["VHM S3 Intake / Media Vault"]:::owned
         subgraph VHMBE["Server-side application boundary"]
-            BFF["VHM BFF<br/>auth · API/SDK/callback ingress"]:::bc
+            BFF["VHM BFF<br/>auth · API/SDK ingress"]:::bc
             EKYC_SERVICE["VHM eKYC Service<br/>session/result · eKYC integration"]:::bc
         end
     end
@@ -432,8 +431,7 @@ flowchart LR
     BFF <-->|authorized command / response| EKYC_SERVICE
     APP ==>|presigned MEDIA BYTES pass/fail| S3
     EKYC_SERVICE <==>|server credential · SDK stream · Get Result| BACKEND
-    BACKEND -->|official callback · HTTPS| BFF
-    BFF -->|callback ingress · body/headers không biến đổi| EKYC_SERVICE
+    BACKEND -->|provider callback · HTTPS| EKYC_SERVICE
     EKYC_SERVICE -->|principal/consent check| IAM
     EKYC_SERVICE -->|validate/checksum/finalize media<br/>+ controlled reveal presign| S3
     EKYC_SERVICE -.->|audit/telemetry| OBS
@@ -445,7 +443,7 @@ flowchart LR
 ```
 
 Server-side boundary trong sơ đồ gồm VHM BFF và VHM eKYC Service. VHM BFF xử lý
-session/result, SDK/callback ingress, create upload session và submit manifest;
+session/result, SDK ingress, create upload session và submit manifest;
 presigned media bytes đi trực tiếp từ client tới S3. VHM eKYC Service sở hữu
 trạng thái xác minh và tích hợp/proxy tới eKYC Provider Backend. Cấu trúc module
 bên trong service được mô tả riêng tại mục 2.4.
@@ -456,12 +454,12 @@ bên trong service được mô tả riêng tại mục 2.4.
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | 1 | **VHM Application (Mobile/Web)** | Consent UX, capability check, create session, SDK lifecycle và VHM result UX | Consent reference, bootstrap và trạng thái UX trong memory | VHM Mobile/Web client + eKYC SDK được pin version | Không lưu dữ liệu eKYC dài hạn | Có — user-facing và gọi VHM API/SDK runtime | Không giữ secret, không tự quyết định `VERIFIED` |
 | 2 | **eKYC SDK** | Camera UX, front/back capture, liveness/face data và gọi init/OCR/liveness | Media/data-plane trong SDK flow | Provider SDK package cho Mobile/Web | Theo SDK contract | Có — chỉ gọi VHM BFF sau bootstrap | Không sở hữu trạng thái nghiệp vụ VHM |
-| 3 | **VHM BFF** | User/service authentication, business-object authorization, request-size/rate policy, SDK/provider streaming route và upload control-plane routing | Security context, business reference, upload metadata/manifest; provider-processing media transit | VHM BFF standard — version TBD | Không phải system of record | Có — VHM API, SDK và callback ingress | Không nhận/proxy presigned durable-media bytes hoặc quyết định eKYC |
-| 4 | **VHM eKYC Service** | System of record và integration/proxy point tới eKYC Provider Backend | Session, policy, state, callback, Canonical Result, media manifest; provider media transit | Java 25, Spring Boot 4.0.4 | PostgreSQL + S3 Media Vault qua dedicated modules | Không public trực tiếp; chỉ qua BFF | Không thực hiện thuật toán OCR/liveness/face |
+| 3 | **VHM BFF** | User/service authentication, business-object authorization, request-size/rate policy, SDK streaming route và upload control-plane routing | Security context, business reference, upload metadata/manifest; SDK media transit | VHM BFF standard — version TBD | Không phải system of record | Có — VHM API và SDK ingress | Không nhận provider callback, không nhận/proxy presigned durable-media bytes hoặc quyết định eKYC |
+| 4 | **VHM eKYC Service** | System of record và integration/proxy point tới eKYC Provider Backend | Session, policy, state, callback, Canonical Result, media manifest; provider media transit | Java 25, Spring Boot 4.0.4 | PostgreSQL + S3 Media Vault qua dedicated modules | Business API chỉ qua BFF; provider callback dùng route riêng qua platform ingress | Không thực hiện thuật toán OCR/liveness/face |
 | 5 | **Verification API** | Validate contract và điều phối use case | Session command/query và canonical response | VHM eKYC Service module | Qua persistence port tới PostgreSQL | Không; qua BFF | Không thực hiện thuật toán OCR/liveness |
 | 6 | **Session Manager** | Active guard, state machine, expiry, retry chain và optimistic locking | Verification session/run/state/history | VHM eKYC Service domain/application module | PostgreSQL | Không | Không phụ thuộc raw SDK payload |
 | 7 | **Provider Adapter** | Stream init/OCR/liveness, inject server credential, Get Result và translate error | Media transient, provider reference/config và response tạm thời | VHM eKYC Service outbound adapter, streaming HTTP client, Resilience4j | Không | Có — outbound tới eKYC Provider Backend | Không áp business rule domain |
-| 8 | **Callback Inbox** | Authenticate, durable receive, dedupe và xử lý callback | Encrypted minimal callback payload, hash và processing state | Callback API/worker của VHM eKYC Service | PostgreSQL encrypted inbox; payload processed `24h`, failed/quarantine `7d` | Không; callback qua BFF | Không lưu media hoặc raw payload dài hạn |
+| 8 | **Callback Inbox** | Authenticate, durable receive, dedupe và xử lý callback | Encrypted minimal callback payload, hash và processing state | Callback API/worker của VHM eKYC Service | PostgreSQL encrypted inbox; payload processed `24h`, failed/quarantine `7d` | Callback endpoint của VHM eKYC Service qua platform ingress; không qua BFF | Không lưu media hoặc raw payload dài hạn |
 | 9 | **Result Normalizer** | Ánh xạ provider result sang Canonical Result | Fixed OCR fields, canonical checks/warnings | VHM eKYC Service application module | PostgreSQL qua persistence port | Không | Không cập nhật business object |
 | 10 | **Decision Mapper** | Ánh xạ canonical checks theo fixed policy version | Decision, outcome, reason và policy version | VHM eKYC Service domain policy | PostgreSQL check/result/history | Không | Không hard-code threshold chưa phê duyệt |
 | 11 | **Reconciliation Job** | Khôi phục callback thất lạc/session treo bằng bounded polling | Due schedule, recovery attempt và official result | VHM eKYC Service scheduler/worker, Resilience4j | PostgreSQL | Có — outbound Get Result | Không polling mọi session liên tục |
@@ -484,7 +482,7 @@ flowchart LR
     USER(["Người dùng"]):::entity
     BACKEND(["eKYC Provider Backend"]):::entity
     APP(("VHM Application<br/>Mobile / Web + SDK")):::process
-    BFF(("VHM BFF<br/>auth · API/SDK/callback ingress")):::process
+    BFF(("VHM BFF<br/>auth · API/SDK ingress")):::process
     EKYC_SERVICE(("VHM eKYC Service<br/>session · provider integration · result · media control")):::process
     DB[("PostgreSQL<br/>session · result · manifest")]:::datastore
     S3[("VHM S3<br/>Intake / Media Vault")]:::datastore
@@ -496,7 +494,6 @@ flowchart LR
     EKYC_SERVICE -->|validate/finalize media| S3
     EKYC_SERVICE -->|session/result/manifest| DB
     EKYC_SERVICE <==>|init/OCR/liveness · Get Result| BACKEND
-    BACKEND -->|official callback| BFF
 
     classDef entity fill:#3a3320,stroke:#d9b84a,color:#fff;
     classDef process fill:#1f3a5f,stroke:#4a90d9,color:#fff;
@@ -545,7 +542,7 @@ sequenceDiagram
 
 Media bytes đi trực tiếp từ VHM Application tới VHM S3 bằng presigned request;
 VHM BFF và Media Upload API chỉ xử lý control-plane/manifest, không proxy hoặc
-buffer binary upload. `submit` và official callback có thể đến theo mọi thứ tự, nhưng
+buffer binary upload. `submit` và provider callback có thể đến theo mọi thứ tự, nhưng
 terminal outcome chỉ được expose sau khi finalization guard xác nhận official
 result và toàn bộ required media đã `READY`.
 
@@ -557,7 +554,7 @@ result và toàn bộ required media đã `READY`.
 | Mobile/Web → VHM S3 Intake | Exact presigned PUT/multipart upload | Untrusted media ingress | Short expiry, exact key/method, size/MIME/checksum, no read/list, TLS và orphan lifecycle |
 | VHM BFF → VHM eKYC Service | Authorized control request hoặc media stream | Internal Zero Trust | Workload identity, session/run binding, timeout |
 | VHM eKYC Service → eKYC Provider Backend | Init/OCR/liveness và reconciliation | External dependency | TLS, destination allowlist, circuit breaker |
-| eKYC Provider Backend → VHM BFF → VHM eKYC Service | Official callback | External server | WAF, token authentication, schema/replay/dedupe |
+| eKYC Provider Backend → callback endpoint của VHM eKYC Service | Provider callback | External server | WAF, token authentication, schema/replay/dedupe |
 | VHM eKYC Service → VHM Application qua BFF | Result API | Zero Trust | User/session identity, object scope, fixed schema, masking |
 | VHM eKYC Service → PostgreSQL | Restricted storage | Restricted | Private subnet, IAM, encryption, least privilege; cấm media |
 | Media Upload Finalizer/Private File Service → VHM S3/KMS | Finalize object/encrypted reference hoặc prepare short-lived download | Restricted sensitive storage | Workload IAM, private endpoint, AES-GCM/KMS, no path/URL log và audit |
@@ -592,9 +589,8 @@ flowchart TB
     WID -->|cấp workload identity| EKYC_SERVICE
     KEY -->|provider credential/key reference| EKYC_SERVICE
     EKYC_SERVICE ==>|TLS + server credential + stream| BACKEND
-    BACKEND -->|callback token + result| BFF
-    BFF -.->|callback ingress policy| PDP
-    BFF -->|callback ingress · body/headers không biến đổi| EKYC_SERVICE
+    BACKEND -->|callback token + result| EKYC_SERVICE
+    EKYC_SERVICE -.->|callback ingress policy| PDP
 
     classDef bc fill:#1f3a5f,stroke:#4a90d9,color:#fff;
     classDef entity fill:#3a3320,stroke:#d9b84a,color:#fff;
@@ -602,10 +598,10 @@ flowchart TB
 ```
 
 Caller identity, workload identity và object-level authorization là các kiểm tra
-độc lập. VHM BFF chỉ nhận upload control-plane/manifest; presigned media bytes đi
-trực tiếp từ client tới S3. Với callback, VHM BFF chỉ áp chính sách ingress và
-route body/header; VHM eKYC Service sở hữu authentication, binding, replay/dedupe
-và durable inbox.
+độc lập. VHM BFF chỉ nhận VHM API, SDK data-plane và upload
+control-plane/manifest; presigned media bytes đi trực tiếp từ client tới S3.
+Provider callback đi thẳng vào callback endpoint của VHM eKYC Service qua
+platform ingress; không đi qua VHM BFF.
 
 ### 2.2.6. Journey Policy Model
 
@@ -802,7 +798,7 @@ erDiagram
 | `CONSENT_EVIDENCE` | Bằng chứng consent do VHM Consent System sở hữu | Một consent có thể authorize nhiều session; VHM eKYC Service chỉ lưu logical reference |
 | `VERIFICATION_SESSION` | Aggregate root cho một attempt OCR/eKYC | Một session có tối đa một active run; whole-attempt retry tạo session mới và nối retry chain |
 | `VERIFICATION_RUN` | Vòng chạy SDK gắn với session | Chỉ được tạo khi session bắt đầu; không dùng lại cho retry session mới |
-| `CALLBACK_INBOX` | Durable ingress cho official callback | Một session có thể nhận nhiều event do retry/duplicate/out-of-order; xử lý phải idempotent |
+| `CALLBACK_INBOX` | Durable ingress cho provider callback | Một session có thể nhận nhiều event do retry/duplicate/out-of-order; xử lý phải idempotent |
 | `CANONICAL_RESULT` | Kết quả chuẩn hóa của một run | Tối đa một official result hiện hành; terminal result không bị client/callback trễ đảo ngược |
 | `VERIFICATION_CHECK` | Kết quả document, liveness, face match và quality check đã chuẩn hóa | Thuộc Canonical Result; không chứa media hoặc raw provider payload |
 | `MEDIA_ASSET` | Manifest và lifecycle của một document/direct-face/liveness object | Unique trên `(runId, mediaType, logicalPart)`; lưu checksum, object version, AES-GCM-encrypted reference, retention metadata và state; không lưu binary/plaintext path trong DB |
@@ -1003,7 +999,7 @@ commit `mediaStatus=READY` và gọi lại `evaluateFinalization()` trong transa
 | INT-02 | SDK Data-plane | eKYC SDK → VHM BFF → VHM eKYC Service → eKYC Provider Backend | Synchronous streaming | Init, OCR và liveness; document/biometric media chỉ transit | Restricted; VHM SDK token, workload/provider authentication, `MEDIA-01` và `DATA-01` | SDK Proxy/Provider Integration Contract |
 | INT-03 | Client Lifecycle Event | VHM Application → VHM BFF → VHM eKYC Service | Idempotent event/command | Started, cancelled và client error phục vụ lifecycle/UX; media-bearing submitted thuộc INT-10 | Sensitive metadata; user authentication và session/run binding; không phải official result | Mobile/Web Lifecycle Specification + VHM API Specification |
 | INT-04 | Callback Authentication | eKYC Provider Backend → VHM IAM | Synchronous control-plane | Lấy short-lived access token theo approved callback authentication contract | Secret; client credential, scope/environment binding và rotation theo mục 7.1 | Callback Security Contract |
-| INT-05 | Official Result Callback | eKYC Provider Backend → VHM BFF → VHM eKYC Service | Asynchronous callback | Truyền official OCR/eKYC result server-to-server; không nhận media | Restricted result/PII; authentication, binding, replay/dedupe và durable receive | Callback API Specification |
+| INT-05 | Provider Result Callback | eKYC Provider Backend → callback endpoint của VHM eKYC Service | Asynchronous callback | Truyền provider OCR/eKYC result server-to-server; không nhận media | Restricted result/PII; authentication, binding, replay/dedupe và durable receive | Callback API Specification |
 | INT-06 | Result Reconciliation | VHM eKYC Service → eKYC Provider Backend | Scheduled synchronous query | Get Result khi callback quá SLA hoặc session treo | Restricted; provider credential, bounded retry, quota guard và retention deadline | Provider Get Result Contract |
 | INT-07 | Result Query | VHM Application → VHM BFF → VHM eKYC Service | Synchronous query | Trả trạng thái, next action và masked Canonical Result | Restricted; object authorization, field allowlist, masking và access audit | Result API Specification |
 | INT-08 | Media Upload Session | VHM Application → VHM BFF → Media Upload API | Synchronous control-plane | Create/reissue upload session; cấp `mediaId`, exact short-lived presigned PUT/multipart request cho VHM S3 Intake | Restricted; `AUTH-01`, `MEDIA-STORE-01`, run/type/size/checksum binding; không binary body | Media Upload API Specification |
@@ -1016,7 +1012,7 @@ commit `mediaStatus=READY` và gọi lại `evaluateFinalization()` trong transa
 
 | **Decision** | **Architecture requirement** | **Approval concern** |
 | --- | --- | --- |
-| VHM ingress | Session/result, SDK/callback và upload control-plane/manifest qua VHM BFF; media bytes dùng presigned request đi thẳng VHM S3 | VHM BFF enforce AuthN/AuthZ, rate/schema/body limit theo route; VHM eKYC Service vẫn là integration point duy nhất tới provider |
+| VHM ingress | Session/result, SDK và upload control-plane/manifest qua VHM BFF; provider callback đi vào VHM eKYC Service qua callback route riêng; media bytes dùng presigned request đi thẳng VHM S3 | VHM BFF không kết nối trực tiếp provider; VHM eKYC Service là integration point duy nhất tới provider |
 | Provider isolation | Provider-specific API và payload được cô lập trong Provider Adapter | Thay đổi provider contract không làm thay đổi contract của VHM Application |
 | Official result | Client/SDK event chỉ phục vụ UX; chỉ callback đã xác thực hoặc Get Result qua reconciliation được finalize kết quả | Ngăn client result giả mạo hoặc đảo state |
 | Callback acceptance | Callback phải được authenticate, bind đúng session/environment, chống replay, dedupe và durable receive trước acknowledgement | Callback lỗi xác thực không thay đổi business state; duplicate không finalize lần hai |
@@ -1110,8 +1106,7 @@ flowchart LR
     SDK <-->|init/OCR/liveness · response| BFF
     BFF <-->|bounded stream · response| EKYC_SERVICE
     EKYC_SERVICE <==>|server credential · provider processing| BACKEND
-    BACKEND -->|official callback| BFF
-    BFF -->|callback ingress| EKYC_SERVICE
+    BACKEND -->|provider callback| EKYC_SERVICE
     EKYC_SERVICE -->|minimal encrypted payload| INBOX
 
     classDef entity fill:#3a3320,stroke:#d9b84a,color:#fff;
@@ -1199,8 +1194,7 @@ sequenceDiagram
         APP->>BFF: submitted(runId, sdkOutcome, media manifest)
         BFF->>EKYC_SERVICE: Idempotent authorized submit
         EKYC_SERVICE->>EKYC_SERVICE: Finalizer validates S3 and marks media READY
-        BACKEND->>BFF: Callback token + official result
-        BFF->>EKYC_SERVICE: Authenticated callback
+        BACKEND->>EKYC_SERVICE: Authenticated provider callback result
         EKYC_SERVICE->>EKYC_SERVICE: Normalize + finalization guard
         EKYC_SERVICE->>EKYC_SERVICE: COMPLETED only when required media READY
         APP->>BFF: GET status/result
@@ -1253,8 +1247,7 @@ sequenceDiagram
     APP->>BFF: submitted(runId, sdkOutcome, media manifest)
     BFF->>EKYC_SERVICE: Idempotent authorized submit
     EKYC_SERVICE->>EKYC_SERVICE: Finalizer validates S3 and marks media READY
-    BACKEND->>BFF: Callback token + official result
-    BFF->>EKYC_SERVICE: Authenticated callback
+    BACKEND->>EKYC_SERVICE: Authenticated provider callback result
     EKYC_SERVICE->>EKYC_SERVICE: Normalize + finalization guard(result + media READY)
     APP->>BFF: GET status/result
     BFF->>EKYC_SERVICE: Authorized query
@@ -1291,8 +1284,7 @@ sequenceDiagram
     WEB->>BFF: submitted(runId, sdkOutcome, media manifest)
     BFF->>EKYC_SERVICE: Idempotent authorized submit
     EKYC_SERVICE->>EKYC_SERVICE: Finalizer validates S3 and marks media READY
-    BACKEND->>BFF: Callback token + official result
-    BFF->>EKYC_SERVICE: Authenticated callback
+    BACKEND->>EKYC_SERVICE: Authenticated provider callback result
     EKYC_SERVICE->>EKYC_SERVICE: Normalize + finalization guard(result + media READY)
     WEB->>BFF: GET status/result
     BFF->>EKYC_SERVICE: Authorized query
@@ -1312,8 +1304,7 @@ sequenceDiagram
     participant BFF as VHM BFF
     participant EKYC_SERVICE as VHM eKYC Service
     participant CLIENT as Mobile / Web
-    BACKEND->>BFF: Official callback final
-    BFF->>EKYC_SERVICE: Ingress policy + routed callback
+    BACKEND->>EKYC_SERVICE: Authenticated provider callback result
     EKYC_SERVICE->>EKYC_SERVICE: Auth + durable inbox + process official result
     EKYC_SERVICE->>EKYC_SERVICE: Store result milestone, await media READY
     Note over CLIENT,EKYC_SERVICE: Run presigned upload per 2.2.4.1 after callback
@@ -1507,8 +1498,9 @@ flowchart TB
     CLIENT -->|upload session / manifest| GATEWAY
     OPERATIONS -->|IAM + step-up · controlled review| GATEWAY
     CLIENT -->|short-lived exact presigned PUT/multipart| S3
-    PROVIDER -->|callback token + official result| GATEWAY
+    PROVIDER -->|provider callback result| GATEWAY
     GATEWAY -->|route VHM and SDK requests| BFF
+    GATEWAY -->|route provider callback| EKYC_SERVICE
     BFF -->|workload identity + bounded stream| EKYC_SERVICE
     EKYC_SERVICE -->|read/write/claim| RDS
     EKYC_SERVICE -->|rate/replay state| REDIS
@@ -1549,9 +1541,9 @@ tới eKYC Provider Backend; chi tiết giao thức/cổng nằm trong Network F
 | Mobile/Web | VHM BFF | HTTPS 443 | Session/status/retry/result | JWT, WAF, rate limit |
 | Mobile/Web SDK | VHM BFF | HTTPS 443 | Init/OCR/liveness stream | SDK session token, Client UUID/run binding, body-size limit |
 | Mobile/Web | VHM S3 Intake | HTTPS 443 | Document/direct-face/liveness upload | Exact short-lived presigned PUT/multipart, size/MIME/checksum, no read/list |
-| VHM BFF | VHM eKYC Service | HTTPS/mTLS | Authorized command/query, media stream, callback | Workload identity, timeout, backpressure |
+| VHM BFF | VHM eKYC Service | HTTPS/mTLS | Authorized command/query và SDK media stream | Workload identity, timeout, backpressure |
 | VHM eKYC Service | eKYC Provider Backend | HTTPS 443 | Init/OCR/liveness stream, Get Result | Provider authentication, allowlist, circuit breaker |
-| eKYC Provider Backend | VHM BFF → Callback API của VHM eKYC Service | HTTPS 443 | Official result | Callback authentication, WAF, replay/dedupe |
+| eKYC Provider Backend | Platform ingress → Callback API của VHM eKYC Service | HTTPS 443 | Provider result | Callback authentication, WAF, replay/dedupe; không qua VHM BFF |
 | VHM eKYC Service/Worker | PostgreSQL | TLS | Session/result/inbox/audit | Security group, DB role, KMS |
 | VHM eKYC Service | Redis | TLS | Rate limit/replay/ephemeral cache | Private endpoint, auth, TTL |
 | Media Upload Finalizer | S3 Intake/Vault + KMS | HTTPS 443/private endpoint | Validate object, seal AES-GCM-encrypted reference và lifecycle metadata | Workload IAM, KMS context, no plaintext path log/persistence |
@@ -1873,7 +1865,7 @@ monitoring standard cần Architecture/Ops/Data Privacy phê duyệt.
 | --- | --- | --- | --- |
 | WAF/API protection | VHM WAF/API Gateway | Managed OWASP rules + SDK-stream/callback-specific rule; exact rule version TBD | Mobile/Web API, SDK data-plane và callback ingress |
 | Network segmentation | VPC, public/private/data subnet, security group/network policy | RDS/Redis private; chỉ approved workload được kết nối | Toàn bộ VHM platform |
-| Rate limiting | API Gateway/BFF + Redis | Threshold theo caller/interface: TBD trước performance/security test | Create/status/result/retry/callback |
+| Rate limiting | API Gateway + BFF/eKYC Service + Redis | Threshold theo caller/interface: TBD trước performance/security test | BFF áp cho create/status/result/retry; eKYC Service áp riêng cho callback |
 | Request size/depth | WAF, ingress, BFF và schema validator | JSON depth/field-length; media content-type/size/part-count limit theo contract | Mọi JSON và SDK streaming endpoint |
 | Bot/abuse protection | WAF/bot control theo risk | Không dùng CAPTCHA trong SDK flow nếu làm hỏng journey; rule cụ thể cần Product/ANBM duyệt | Public user-facing ingress |
 | Egress control | Destination allowlist/NAT-egress control | Chỉ eKYC Provider Backend endpoint, TLS và approved port | Provider Adapter/Reconciliation của VHM eKYC Service |
@@ -1891,7 +1883,7 @@ monitoring standard cần Architecture/Ops/Data Privacy phê duyệt.
 | Mobile/Web → BFF | OIDC/JWT qua VHM Core IAM |
 | eKYC SDK → BFF | VHM SDK session token bind `verificationId/runId/journey/channel/expiry` |
 | BFF → VHM eKYC Service | Workload identity/JWT hoặc mTLS + authorized context |
-| eKYC Provider Backend → BFF → Callback API của VHM eKYC Service | Dynamic Bearer Token; Fixed Token cần ANBM risk acceptance |
+| eKYC Provider Backend → platform ingress → Callback API của VHM eKYC Service | Dynamic Bearer Token; Fixed Token cần ANBM risk acceptance |
 | VHM eKYC Service → eKYC Provider Backend | Provider credential lấy từ Secret Manager theo contract |
 | VHM eKYC Service → RDS/Redis/Secrets | Workload role, private network và least privilege |
 | Mobile/Web → VHM S3 Intake | Short-lived exact presigned PUT/multipart; không cấp AWS credential cho client |
@@ -1945,7 +1937,7 @@ monitoring standard cần Architecture/Ops/Data Privacy phê duyệt.
 
 | **Module/component** | **Authorization mechanism** | **Mô tả enforcement** |
 | --- | --- | --- |
-| VHM BFF | JWT/VHM SDK session token validation, scope/rate/body-size policy | Thực thi `AUTH-01`; route session/result, SDK provider-processing stream và callback. |
+| VHM BFF | JWT/VHM SDK session token validation, scope/rate/body-size policy | Thực thi `AUTH-01`; chỉ route session/result, SDK provider-processing stream và upload control-plane/manifest; không nhận provider callback. |
 | Verification/Result API | Method policy + object-level authorization | Kiểm tra domain/use case, `businessRef/subjectRef`, purpose và caller scope trước read/write. |
 | SDK Proxy API của VHM eKYC Service | Workload identity + session/run/journey binding | Revalidate context trước khi gọi outbound adapter. |
 | Callback API | Callback token + Client UUID/session/environment binding | Provider đã xác thực chỉ được ghi event khớp `verificationId`/Client UUID; không có quyền đọc Result API. |
@@ -2264,8 +2256,7 @@ flowchart TB
     CAPTURE ==>|"presigned MEDIA BYTES pass/fail"| MEDIA
     BFF -->|"3. authenticated bounded stream"| EKYC_SERVICE_PROXY
     EKYC_SERVICE_PROXY -->|"4. server credential + stream"| BACKEND
-    BACKEND -->|"5. callback token + official result"| BFF
-    BFF -->|"6. callback ingress · body/headers không biến đổi"| RESULT_PROCESS
+    BACKEND -->|"5. authenticated provider callback result"| RESULT_PROCESS
     RESULT_PROCESS -->|"7. encrypted minimal payload"| INBOX
     INBOX -->|"8. claimed official result"| RESULT_PROCESS
     RESULT_PROCESS -->|"9. canonical fixed fields"| RESULT
@@ -2599,7 +2590,7 @@ owner, phạm vi, thời hạn và approver tương ứng được ghi trong phi
 | FULL_EKYC | Journey OCR front/back → liveness → face matching; pass mới thành `VERIFIED`. |
 | VHM Application | Ứng dụng Mobile và Web của VHM tích hợp eKYC SDK. |
 | VHM eKYC Service | Service trung tâm sau VHM BFF, quản lý session/result và là integration/proxy point duy nhất gọi eKYC Provider Backend bằng server credential. |
-| VHM BFF | Điểm ingress từ Mobile/Web/SDK/eKYC Provider Backend; xác thực, authorize, áp policy và stream request xuống VHM eKYC Service; không giữ provider credential hoặc xử lý eKYC result. |
+| VHM BFF | Điểm ingress từ Mobile/Web/SDK; xác thực, authorize, áp policy và stream request xuống VHM eKYC Service; không nhận provider callback, không giữ provider credential hoặc xử lý eKYC result. |
 | eKYC SDK | SDK chạy trên Mobile/Web để điều khiển capture và gửi init/OCR/liveness tới VHM BFF. |
 | eKYC Provider Backend | Hệ thống xử lý OCR, liveness và face matching; gửi callback/cung cấp Get Result. |
 | Provider Adapter | Lớp cô lập API/auth/payload/error của eKYC Provider Backend khỏi VHM contract. |
@@ -2739,7 +2730,7 @@ không thay thế sign-off chính thức.
 | ADR-015 | PostgreSQL là source of truth | Transaction, locking, dedupe và PITR | Cần index/retention/restore test | Accepted baseline | TBD link |
 | ADR-016 | Tuân thủ `DP-01`/`CRED-01` | VHM kiểm soát auth, credential và network audit | BFF/VHM eKYC Service chịu media throughput và cần resource pool tách control/data | Accepted baseline | TBD link |
 | ADR-017 | Upload control-plane/manifest qua VHM BFF; client upload pass/fail media bytes trực tiếp vào VHM S3 bằng server-issued presigned PUT/multipart; backend sync từ provider ngoài scope | Bảo đảm VHM kiểm soát authorization/slot nhưng tránh media body qua BFF và lưu bền độc lập callback/provider retention | Cần client artifact/checksum, orphan cleanup, S3/KMS/capacity/privacy controls; đổi ingress path cần ADR mới | Accepted baseline | TBD link |
-| ADR-018 | Submit manifest và official callback là hai milestone độc lập, hội tụ bằng short locked finalization guard | Chống race callback-before-submit và không làm mất media evidence | Terminal outcome chờ required media `READY`; cần idempotency/lock/load test | Accepted baseline | TBD link |
+| ADR-018 | Submit manifest và provider callback là hai milestone độc lập, hội tụ bằng short locked finalization guard | Chống race callback-before-submit và không làm mất media evidence | Terminal outcome chờ required media `READY`; cần idempotency/lock/load test | Accepted baseline | TBD link |
 | ADR-019 | Manual Review list encrypted refs, bounded POST reveal và short-lived presigned S3 GET với PII-safe append-only audit | Khớp workflow vận hành, subject binding và không lộ plaintext path trong DB/API list | Presigned URL là bearer residual risk; cần expiry/scope/cache/no-log/audit fail-closed | Accepted with controls | TBD link |
 | ADR-020 | Media retention duration nằm trong external versioned purpose-bound policy, không hard-code trong TDD | Cho phép Legal/Data Privacy ratify và thay đổi policy có governance | Mỗi media lưu policy ID/class/retainUntil; go-live bị chặn nếu thiếu effective policy | Accepted baseline | TBD link |
 
