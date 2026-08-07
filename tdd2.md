@@ -2234,6 +2234,7 @@ Các evidence dưới đây phải được đính kèm và ký duyệt; mọi d
 ```mermaid
 flowchart TB
     APP(["Người dùng qua<br/>VHM Application"]):::entity
+    REVIEWER(["Authorized Review Caller"]):::entity
     BACKEND(["eKYC Provider Backend"]):::entity
     CAPTURE(("P1 · Mobile/Web SDK Capture")):::process
     BFF(("P2 · VHM BFF<br/>auth / bounded stream")):::process
@@ -2264,10 +2265,9 @@ flowchart TB
     RESULT -->|"12. scoped canonical fields"| RESULT_API
     RESULT_API -->|"13. masked canonical result"| BFF
     BFF -->|"14. outcome/next action"| APP
-    APP -->|"15. authorized review list/reveal"| BFF
-    BFF -->|"16. role/assignment/object scope"| MEDIA_API
-    MEDIA_API -->|"17. encrypted refs / short-lived presigned URL"| BFF
-    MEDIA_API -.->|"18. PII-safe access/decision events"| AUDIT
+    REVIEWER -->|"15. authorized media list/reveal"| MEDIA_API
+    MEDIA_API -->|"16. encrypted refs / short-lived presigned URL"| REVIEWER
+    MEDIA_API -.->|"17. PII-safe access/decision events"| AUDIT
 
     classDef entity fill:#3a3320,stroke:#d9b84a,color:#fff;
     classDef process fill:#1f3a5f,stroke:#4a90d9,color:#fff;
