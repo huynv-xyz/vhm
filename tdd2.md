@@ -363,7 +363,6 @@ flowchart LR
     OPS(["Platform Operations"]):::entity
     APP["VHM Application<br/>Mobile / Web"]:::owned
     BFF["VHM BFF<br/>API · SDK ingress"]:::owned
-    IAM["VHM IAM / Consent"]:::owned
     OBS["VHM Audit / Monitoring"]:::owned
     VAULT["VHM S3 Media Vault<br/>encrypted media"]:::owned
     PROVIDER(["eKYC Provider Backend<br/>external processing service"]):::entity
@@ -378,7 +377,6 @@ flowchart LR
     BFF <-->|authorized request / response| CORE
     APP ==>|presigned MEDIA BYTES pass/fail| VAULT
     CORE -->|validate/finalize media · controlled reveal| VAULT
-    CORE -->|xác thực và consent| IAM
     CORE <-->|init/OCR/liveness · Get Result| PROVIDER
     CORE -.->|audit và telemetry| OBS
 
@@ -400,7 +398,6 @@ event/telemetry bất đồng bộ.
 | VHM eKYC Service | Software System | ✓ |  | Service trung tâm quản lý hành trình, control-plane, data-plane và kết quả eKYC. |
 | VHM Application | Software System | ✓ |  | Kênh Mobile/Web khởi chạy SDK và hiển thị kết quả VHM. |
 | VHM BFF | Software System | ✓ |  | Ingress cho session/result, SDK, create upload session và submit manifest; không nhận presigned media bytes hoặc provider callback. |
-| VHM IAM/Consent | Software System | ✓ |  | Xác thực principal và cung cấp bằng chứng consent. |
 | VHM Audit/Monitoring | Software System | ✓ |  | Nhận audit và telemetry đã loại bỏ dữ liệu nhạy cảm. |
 | VHM S3 Media Vault | Software System | ✓ |  | Sở hữu media object/lifecycle; không public hoặc lộ raw path, chỉ cấp short-lived URL sau Reveal API. |
 | eKYC Provider Backend | External System |  | ✓ | Nhận data-plane từ VHM eKYC Service, xử lý OCR/liveness/face và trả official result. |
@@ -412,7 +409,6 @@ flowchart LR
     USER(["Người dùng"]):::entity
     SDK(["eKYC SDK runtime (ext)"]):::entity
     BACKEND(["eKYC Provider Backend (ext)"]):::entity
-    IAM["VHM IAM / Consent"]:::owned
     OBS["VHM Audit / Monitoring"]:::owned
 
     subgraph SYS["VHM-managed application boundary"]
@@ -432,7 +428,6 @@ flowchart LR
     APP ==>|presigned MEDIA BYTES pass/fail| S3
     EKYC_SERVICE <==>|server credential · SDK stream · Get Result| BACKEND
     BACKEND -->|provider callback · HTTPS| EKYC_SERVICE
-    EKYC_SERVICE -->|principal/consent check| IAM
     EKYC_SERVICE -->|validate/checksum/finalize media<br/>+ controlled reveal presign| S3
     EKYC_SERVICE -.->|audit/telemetry| OBS
 
