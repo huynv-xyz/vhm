@@ -360,7 +360,6 @@ tham chiếu control ID và chỉ mô tả chi tiết riêng của section.
 ```mermaid
 flowchart LR
     USER(["Người dùng Mobile / Web"]):::entity
-    OPS(["Platform Operations"]):::entity
     APP["VHM Application<br/>Mobile / Web"]:::owned
     BFF["VHM BFF<br/>API · SDK ingress"]:::owned
     OBS["VHM Audit / Monitoring"]:::owned
@@ -372,7 +371,6 @@ flowchart LR
     end
 
     USER -->|thực hiện OCR/eKYC| APP
-    OPS -->|vận hành · assigned manual review| CORE
     APP <-->|API · SDK · upload control · result| BFF
     BFF <-->|authorized request / response| CORE
     APP ==>|presigned MEDIA BYTES pass/fail| VAULT
@@ -394,7 +392,6 @@ event/telemetry bất đồng bộ.
 | **Tác nhân/Hệ thống** | **Loại** | **Internal** | **External** | **Vai trò** |
 | --- | --- | --- | --- | --- |
 | Người dùng Mobile/Web | Actor |  | ✓ | Thực hiện hành trình OCR/eKYC qua VHM Application. |
-| Platform Operations | Actor |  | ✓ | Theo dõi hệ thống và thực hiện assigned manual review qua controlled access theo quyền; chi tiết role nằm tại mục 7.1.2. |
 | VHM eKYC Service | Software System | ✓ |  | Service trung tâm quản lý hành trình, control-plane, data-plane và kết quả eKYC. |
 | VHM Application | Software System | ✓ |  | Kênh Mobile/Web khởi chạy SDK và hiển thị kết quả VHM. |
 | VHM BFF | Software System | ✓ |  | Ingress cho session/result, SDK, create upload session và submit manifest; không nhận presigned media bytes hoặc provider callback. |
@@ -463,7 +460,7 @@ bên trong service được mô tả riêng tại mục 2.4.
 | 14 | **Media Upload API** | Tạo upload session và exact presigned PUT/multipart request | Media ID/type/size/checksum, object key reference và upload state | VHM eKYC Service module + AWS SDK | PostgreSQL metadata; không nhận media body | Không; qua VHM BFF | Không nhận arbitrary bucket/key/URL từ client |
 | 15 | **S3 Intake** | Nhận media trực tiếp từ client bằng presigned request | Document/direct-face/liveness media tạm thời, SSE-KMS | Amazon S3 | Private intake bucket/prefix + lifecycle | Chỉ exact presigned write; không có client read | Không phải nguồn manual-review cuối cùng |
 | 16 | **Media Upload Finalizer / Media Vault** | Verify object metadata/checksum, seal immutable manifest và AES-GCM-encrypt S3 reference/path | Media object, encrypted reference, checksum/object version và retention metadata | Worker + application crypto/KMS + Amazon S3 | Private SSE-KMS Media Vault | Không public; workload IAM only | Chỉ finalize client presigned upload; không sync từ provider; không log plaintext path |
-| 17 | **Manual Review Reveal API** | Platform-role/assignment-scoped list encrypted refs và bind/decrypt selected refs | Verification/run/business scope, case/reason/step-up context, encrypted media refs, types/logical parts/poses và reveal request | VHM eKYC Service module | PostgreSQL + append-only `audit_logs` | Chỉ approved review role qua operations ingress | GET/POST theo `REVIEW-01`; no cross-verification/cross-business-object reveal |
+| 17 | **Manual Review Reveal API** | Platform-role/assignment-scoped list encrypted refs và bind/decrypt selected refs | Verification/run/business scope, case/reason/step-up context, encrypted media refs, types/logical parts/poses và reveal request | VHM eKYC Service module | PostgreSQL + append-only `audit_logs` | Chỉ authorized caller qua platform ingress | GET/POST theo `REVIEW-01`; no cross-verification/cross-business-object reveal |
 | 18 | **Private File Service / PresignUrlCache** | Chuẩn bị short-lived download URL sau successful binding | Internal decrypted S3 path transiently, Caffeine L1/Redisson L2 cache entry và presigned URL | `FilePrivateServiceClient`, Caffeine, Redisson, Amazon S3 | Cache TTL nhỏ hơn URL validity; không source of truth | URL chỉ trả từ POST reveal | Cache failure fallback direct presign; không log path/URL/ciphertext |
 
 ### 2.2.4. Luồng dữ liệu OCR/eKYC
@@ -1460,7 +1457,6 @@ nếu chưa có phê duyệt Data Privacy bằng văn bản.
 ```mermaid
 flowchart TB
     CLIENT(["VHM Mobile / Web<br/>+ eKYC SDK"]):::entity
-    OPERATIONS(["Platform Operations<br/>managed workstation"]):::entity
     PROVIDER(["eKYC Provider Backend (ext)"]):::entity
 
     subgraph LZ["AWS Landing Zone — Singapore (ap-southeast-1)"]
@@ -1491,7 +1487,6 @@ flowchart TB
 
     CLIENT -->|session / SDK / status / result| GATEWAY
     CLIENT -->|upload session / manifest| GATEWAY
-    OPERATIONS -->|IAM + step-up · controlled review| GATEWAY
     CLIENT -->|short-lived exact presigned PUT/multipart| S3
     PROVIDER -->|provider callback result| GATEWAY
     GATEWAY -->|route VHM and SDK requests| BFF
@@ -1542,7 +1537,7 @@ tới eKYC Provider Backend; chi tiết giao thức/cổng nằm trong Network F
 | VHM eKYC Service/Worker | PostgreSQL | TLS | Session/result/inbox/audit | Security group, DB role, KMS |
 | VHM eKYC Service | Redis | TLS | Rate limit/replay/ephemeral cache | Private endpoint, auth, TTL |
 | Media Upload Finalizer | S3 Intake/Vault + KMS | HTTPS 443/private endpoint | Validate object, seal AES-GCM-encrypted reference và lifecycle metadata | Workload IAM, KMS context, no plaintext path log/persistence |
-| Manual Review operations UI | BFF → Reveal API/Private File Service | HTTPS 443 | Encrypted-ref list, bounded reveal request và short-lived presigned download | IAM, platform role, assignment/business-object scope, cap/binding, URL expiry/cache control và access audit |
+| Authorized manual-review caller | Platform ingress → Reveal API/Private File Service | HTTPS 443 | Encrypted-ref list, bounded reveal request và short-lived presigned download | IAM, platform role, assignment/business-object scope, cap/binding, URL expiry/cache control và access audit |
 | Services | Monitoring/Logging | TLS | Masked telemetry | No PII/secret, access control |
 
 ## 6.3. Thành phần lưu trữ dữ liệu
@@ -1988,7 +1983,7 @@ thấp hơn thì dùng giới hạn thấp hơn.
 | Provider callback JSON | `2 MiB` | JSON depth `<= 30`; không nhận binary/base64 media | Theo provider callback contract; chỉ ack sau durable receive |
 | Get Result response | `2 MiB` | JSON only; resource URL không được tự động fetch | Theo approved provider API timeout policy |
 | Create media upload session/submit manifest | `256 KiB` | Chỉ server schema; bounded object count; không binary/base64/raw URL | Theo VHM API timeout policy |
-| Manual Review reveal request | `64 KiB` | Tối đa `16` encrypted refs sau de-duplicate; fail toàn bộ nếu một ref invalid/foreign | Theo operations API policy |
+| Manual Review reveal request | `64 KiB` | Tối đa `16` encrypted refs sau de-duplicate; fail toàn bộ nếu một ref invalid/foreign | Theo platform API policy |
 
 Enforcement bắt buộc:
 
