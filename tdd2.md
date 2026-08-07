@@ -374,15 +374,13 @@ flowchart LR
 
     USER -->|thực hiện OCR/eKYC| APP
     OPS -->|vận hành · assigned manual review| CORE
-    APP -->|session · SDK · upload control · result| BFF
-    BFF -->|authorized request · bounded SDK stream| CORE
-    CORE -->|bootstrap · presigned request · result| BFF
-    BFF -->|authorized response| APP
+    APP <-->|API · SDK · upload control · result| BFF
+    BFF <-->|authorized request / response| CORE
     APP ==>|presigned MEDIA BYTES pass/fail| VAULT
     CORE -->|validate/finalize media · controlled reveal| VAULT
     CORE -->|xác thực và consent| IAM
-    CORE -->|forward init/OCR/liveness + Get Result| PROVIDER
-    PROVIDER -->|SDK response + official callback| BFF
+    CORE <-->|init/OCR/liveness · Get Result| PROVIDER
+    PROVIDER -->|official callback| BFF
     CORE -.->|audit và telemetry| OBS
 
     style SCOPE stroke:#d9b84a,stroke-width:2px
@@ -428,18 +426,14 @@ flowchart LR
     end
 
     USER -->|bắt đầu hành trình| APP
-    APP -->|session/status/result<br/>upload session/manifest · HTTPS| BFF
-    BFF -->|authorized command/query| EKYC_SERVICE
+    APP <-->|session/result/upload control · HTTPS| BFF
     APP -->|khởi chạy SDK sau bootstrap| SDK
-    EKYC_SERVICE -->|bootstrap / mediaId + presigned request / result| BFF
-    BFF -->|authorized responses| APP
-    APP ==>|presigned MEDIA BYTES pass/fail| S3
     SDK -->|init/OCR/liveness · HTTPS| BFF
-    BFF -->|authenticated streamed request| EKYC_SERVICE
-    EKYC_SERVICE -->|server credential + streamed data| BACKEND
+    BFF <-->|authorized command / response| EKYC_SERVICE
+    APP ==>|presigned MEDIA BYTES pass/fail| S3
+    EKYC_SERVICE <==>|server credential · SDK stream · Get Result| BACKEND
     BACKEND -->|official callback · HTTPS| BFF
     BFF -->|callback ingress · body/headers không biến đổi| EKYC_SERVICE
-    EKYC_SERVICE -->|Get Result khi reconciliation · HTTPS| BACKEND
     EKYC_SERVICE -->|principal/consent check| IAM
     EKYC_SERVICE -->|validate/checksum/finalize media<br/>+ controlled reveal presign| S3
     EKYC_SERVICE -.->|audit/telemetry| OBS
@@ -496,15 +490,13 @@ flowchart LR
     S3[("VHM S3<br/>Intake / Media Vault")]:::datastore
 
     USER -->|consent · capture| APP
-    APP -->|session · SDK stream<br/>request presign · submit manifest · query result| BFF
-    BFF -->|authorized requests / bounded stream| EKYC_SERVICE
-    EKYC_SERVICE -->|bootstrap · presigned request<br/>SDK response · canonical result| BFF
-    BFF -->|authorized response| APP
+    APP <-->|session · SDK · upload control · result| BFF
+    BFF <-->|authorized request / response| EKYC_SERVICE
     APP ==>|presigned media upload<br/>pass hoặc fail| S3
     EKYC_SERVICE -->|validate/finalize media| S3
     EKYC_SERVICE -->|session/result/manifest| DB
-    EKYC_SERVICE ==>|init/OCR/liveness · Get Result| BACKEND
-    BACKEND -->|SDK response · official callback| BFF
+    EKYC_SERVICE <==>|init/OCR/liveness · Get Result| BACKEND
+    BACKEND -->|official callback| BFF
 
     classDef entity fill:#3a3320,stroke:#d9b84a,color:#fff;
     classDef process fill:#1f3a5f,stroke:#4a90d9,color:#fff;
@@ -527,9 +519,8 @@ sequenceDiagram
     participant MEDIA as Media Upload API / Finalizer
     participant S3 as VHM S3 Intake/Media Vault
     participant DB as PostgreSQL Media Manifest
-    participant CORE as Session Finalization Guard
 
-    Note over APP,CORE: SDK completion pass hoặc fail đều đi qua cùng media-persistence flow
+    Note over APP,DB: SDK completion pass hoặc fail đều đi qua cùng media-persistence flow
     APP->>BFF: Create upload session(types, sizes, checksums, runId)
     BFF->>MEDIA: Authorized verification/run context
     MEDIA->>DB: Allocate immutable mediaId/object slot
@@ -545,10 +536,10 @@ sequenceDiagram
     S3-->>MEDIA: Object metadata
     alt Object hợp lệ
         MEDIA->>DB: Seal manifest, encrypted ref and mark READY
-        MEDIA->>CORE: evaluateFinalization()
+        MEDIA->>MEDIA: evaluateFinalization()
     else Thiếu hoặc không hợp lệ
         MEDIA->>DB: Keep evidence pending or mark failed by policy
-        MEDIA-->>CORE: Do not expose terminal outcome
+        MEDIA->>MEDIA: Do not expose terminal outcome
     end
 ```
 
@@ -1110,34 +1101,26 @@ flowchart TB
 flowchart LR
     USER(["Người dùng"]):::entity
     BACKEND(["eKYC Provider Backend"]):::entity
-    APP(("VHM Application<br/>Mobile / Web")):::process
     SDK(("eKYC SDK")):::process
     BFF(("VHM BFF")):::process
     EKYC_SERVICE(("VHM eKYC Service")):::process
     INBOX[("Encrypted Callback Inbox")]:::sensitive
-    MANIFEST[("Media Manifest / Encrypted Ref")]:::sensitive
-    S3[("VHM S3 Intake / Media Vault")]:::sensitive
 
     USER -->|capture| SDK
-    APP -->|bootstrap / run context| SDK
-    SDK -->|init/OCR/liveness| BFF
-    BFF -->|authorized command / bounded stream| EKYC_SERVICE
-    EKYC_SERVICE ==>|server credential + stream| BACKEND
-    BACKEND -->|SDK response / official callback| BFF
+    SDK <-->|init/OCR/liveness · response| BFF
+    BFF <-->|bounded stream · response| EKYC_SERVICE
+    EKYC_SERVICE <==>|server credential · provider processing| BACKEND
+    BACKEND -->|official callback| BFF
     BFF -->|callback ingress| EKYC_SERVICE
     EKYC_SERVICE -->|minimal encrypted payload| INBOX
-
-    APP -->|request presign / submit manifest| BFF
-    EKYC_SERVICE -->|mediaId + presigned request| BFF
-    BFF -->|upload slot / submit response| APP
-    APP ==>|presigned media bytes<br/>pass hoặc fail| S3
-    EKYC_SERVICE -->|validate/finalize| S3
-    EKYC_SERVICE -->|manifest + encrypted ref| MANIFEST
 
     classDef entity fill:#3a3320,stroke:#d9b84a,color:#fff;
     classDef process fill:#1f3a5f,stroke:#4a90d9,color:#fff;
     classDef sensitive fill:#5a2d2d,stroke:#d96f6f,color:#fff;
 ```
+
+Chart này chỉ mô tả provider-processing data-plane. Durable media persistence
+được tách thành một luồng duy nhất tại mục 2.2.4.1 để tránh lặp và giao cắt mũi tên.
 
 
 ## 5.2. Data Flow quan trọng
