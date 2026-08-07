@@ -170,6 +170,7 @@ Nhờ đó, khi thêm một domain mới, domain chỉ tích hợp contract nộ
 - Quản lý phiên OCR (`verificationId`, trạng thái, timeout và số lần thử lại) và liên kết với mã tham chiếu hồ sơ NOXH.
 - Là điểm tích hợp duy nhất với FPT AI: giữ credential, forward request SDK, nhận callback và gọi Get Result khi cần đối soát.
 - Xác thực callback, chống xử lý trùng và bảo đảm callback được lưu nhận trước khi trả thành công cho provider.
+- Gửi callback chuẩn hóa, có xác thực và idempotency về Business Backend khi phiên hoàn tất.
 - Chuẩn hóa payload và error code của FPT AI thành contract nội bộ ổn định, không trả raw provider payload cho NOXH.
 - Quản lý retry, timeout, circuit breaker, quota/rate limit và cô lập sự cố provider khỏi Business Backend.
 - Áp dụng kiểm soát truy cập, mã hóa dữ liệu nhạy cảm, masking, audit và chính sách lưu/xóa dữ liệu OCR.
@@ -205,24 +206,32 @@ sequenceDiagram
     APP->>BFF: Luồng dữ liệu SDK + verificationId
     BFF->>OCR: Forward luồng OCR đã xác thực
     OCR->>FPT: OCR request + server credential
-    FPT-->>OCR: Response kỹ thuật cho SDK
-    OCR-->>BFF: Forward response kỹ thuật
-    BFF-->>APP: Response phục vụ UX
 
-    FPT-->>OCR: Callback kết quả chính thức
-    OCR->>OCR: Xác thực, chống trùng và chuẩn hóa
-    APP->>BFF: Lấy trạng thái / kết quả
-    BFF->>NOXH: Authorized result query
-    NOXH->>OCR: Get Canonical Result
-    OCR-->>NOXH: Trạng thái + dữ liệu chuẩn hóa
-    NOXH-->>BFF: Kết quả OCR theo contract NOXH
-    BFF-->>APP: Dữ liệu CCCD đã chuẩn hóa
+    alt FPT AI hoàn tất đồng bộ
+        FPT-->>OCR: COMPLETED + OCR result
+        OCR->>OCR: Chuẩn hóa và lưu Canonical Result
+        OCR-->>BFF: COMPLETED + response SDK
+        BFF-->>APP: Hiển thị kết quả OCR
+    else FPT AI xử lý bất đồng bộ
+        FPT-->>OCR: PROCESSING + providerRequestId
+        OCR-->>BFF: PROCESSING
+        BFF-->>APP: Đang xử lý
+        FPT-->>OCR: Callback kết quả
+        OCR->>OCR: Xác thực, chống trùng và chuẩn hóa
+    end
+
+    OCR-->>NOXH: Callback COMPLETED + Canonical Result
+    NOXH->>NOXH: Lưu trạng thái theo businessRef
+    APP->>BFF: GET trạng thái hồ sơ OCR
+    BFF->>NOXH: Authorized status query
+    NOXH-->>BFF: COMPLETED + dữ liệu chuẩn hóa
+    BFF-->>APP: Kết quả OCR
     APP-->>DL: Hiển thị để kiểm tra và xác nhận
 
-    alt Callback thất lạc hoặc quá SLA
-        OCR->>FPT: Get Result theo retry policy
+    opt Callback FPT AI thất lạc hoặc quá SLA
+        OCR->>FPT: Get Result theo recovery policy
         FPT-->>OCR: Kết quả phiên OCR
-        OCR->>OCR: Chuẩn hóa và hoàn tất phiên
+        OCR->>OCR: Chuẩn hóa và callback về domain
     end
 ```
 
@@ -278,7 +287,14 @@ Hiện tại: Phía TTOL đang Authen bằng jwt từ service TTOL .Net quản l
 
 ### Vấn đề 12: Cơ chế nhận kết quả OCR
 
-SDK có thể nhận response đồng bộ để phục vụ trải nghiệm người dùng, nhưng kết quả chính thức được OCR Proxy tiếp nhận và chuẩn hóa từ callback FPT AI. Khi callback thất lạc hoặc phiên quá SLA, OCR Proxy chủ động gọi Get Result để đối soát. Agent Backend chỉ lấy trạng thái/kết quả qua contract nội bộ và không tự xử lý retry với FPT AI.
+OCR Proxy hỗ trợ thống nhất hai execution path:
+
+- **Đồng bộ:** FPT AI trả kết quả terminal trong request; OCR Proxy chuẩn hóa, lưu và trả `COMPLETED` ngay.
+- **Bất đồng bộ:** FPT AI trả `PROCESSING`; OCR Proxy chờ callback, chuẩn hóa kết quả rồi callback về Business Backend.
+
+Business Backend cung cấp API trạng thái cho Application. Application có thể polling API của Business Backend mỗi 3–5 giây và dừng khi phiên đạt trạng thái terminal; Application và Business Backend không polling trực tiếp FPT AI.
+
+Nếu callback FPT AI quá SLA hoặc thất lạc, chỉ OCR Proxy được gọi Get Result theo bounded retry/recovery policy. Callback từ OCR Proxy về Business Backend phải được xác thực và idempotent; nếu callback này thất lạc, Business Backend có thể gọi `GET /ocr/sessions/{verificationId}` để đối soát.
 
 ### Vấn đề 13: Quản lý cấu hình ngày nghỉ lễ & Ngày làm việc bù
 
