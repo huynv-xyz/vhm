@@ -6,7 +6,7 @@
 
 ### 1.1. Phương án được chọn
 
-Baseline dùng **backend API + Kafka + worker** cho cả hai loại verification. Transactional Outbox bảo đảm job chỉ được publish sau khi dữ liệu PostgreSQL đã commit:
+Baseline dùng **backend API + outbox/queue/worker** cho cả hai loại verification:
 
 ```text
 OCR:
@@ -31,9 +31,9 @@ FPT SDK là thư viện chạy trên ứng dụng Mobile/Web để hướng dẫ
 | **Hướng tiếp cận** | **Luồng chính** | **Ưu điểm** | **Nhược điểm** | **Lựa chọn** |
 | --- | --- | --- | --- | --- |
 | Backend API tại từng domain | Mobile/Web gọi domain backend; mỗi domain tự quản lý media, session và gọi FPT API | Không cần thêm capability/service tập trung; domain chủ động tùy chỉnh luồng theo nghiệp vụ riêng | Lặp code tích hợp ở nhiều domain; phân tán credential, session, retry, quota và audit; kết quả/error contract dễ không đồng nhất; mỗi lần đổi provider phải sửa nhiều service | No |
-| Backend API qua `vhm-verification-service` | Mobile/Web upload vào S3; domain gọi Verification API; Kafka phân phối job; worker đọc media và gọi FPT API | Domain mới chỉ tích hợp contract create/status/result, không phải tự xây FPT session, worker, retry và error mapping; đổi API/model/credential của FPT tại một nơi mà không sửa từng domain; Kafka, rate limit và circuit breaker cô lập latency/quota của FPT khỏi nghiệp vụ; bảo mật dữ liệu, audit và Canonical Result nhất quán giữa các domain/kênh | Phải vận hành thêm service, database, Kafka, outbox publisher và worker; trở thành dependency tập trung nên phải HA và cô lập quota/backlog theo workload; VHM vẫn tự xây capture UX và dùng polling | **Yes — baseline OCR và eKYC** |
+| Backend API qua `vhm-verification-service` | Mobile/Web upload vào S3; domain gọi Verification API; Queue phân phối job để worker đọc media và gọi FPT API | Domain mới chỉ tích hợp contract create/status/result, không phải tự xây FPT session, worker, retry và error mapping; đổi API/model/credential của FPT tại một nơi mà không sửa từng domain; queue, worker pool, rate limit và circuit breaker cô lập latency/quota của FPT khỏi nghiệp vụ; bảo mật dữ liệu, audit và Canonical Result nhất quán giữa các domain/kênh | Phải vận hành service, database, queue, Outbox Publisher và worker pool; trở thành dependency tập trung nên phải HA và cô lập backlog/quota theo workload; VHM vẫn tự xây capture UX và dùng polling | **Yes — baseline OCR và eKYC** |
 | FPT SDK gọi trực tiếp FPT, không qua Proxy VHM | SDK trên Mobile/Web capture và gửi dữ liệu thẳng tới FPT; VHM nhận kết quả theo cơ chế tích hợp của FPT | Tích hợp eKYC phía VHM đơn giản hơn; ít hop và độ trễ truyền tải thấp; tận dụng capture UI, kiểm tra chất lượng thời gian thực, liveness và các capability SDK hỗ trợ | VHM không kiểm soát đường truyền media trước khi tới FPT; phụ thuộc SDK trên từng nền tảng và cơ chế nhận/đối soát kết quả; khó áp dụng contract upload/worker hiện tại; không phù hợp OCR tài liệu nghiệp vụ tổng quát | No |
-| FPT SDK qua Proxy Server của VHM | SDK trên Mobile/Web gọi endpoint Proxy; Proxy relay request/response giữa SDK và FPT | Vẫn tận dụng capture UX của SDK; VHM quan sát và kiểm soát luồng dữ liệu đi qua hạ tầng của mình; có thể chủ động lưu kết quả | Phải vận hành public streaming/multipart proxy có availability cao; thêm latency, bandwidth và điểm lỗi; proxy phụ thuộc chặt endpoint/header/protocol của SDK; các call tương tác không đi qua Kafka/worker; Verification API hiện là private nên cần ingress/proxy workload riêng | No |
+| FPT SDK qua Proxy Server của VHM | SDK trên Mobile/Web gọi endpoint Proxy; Proxy relay request/response giữa SDK và FPT | Vẫn tận dụng capture UX của SDK; VHM quan sát và kiểm soát luồng dữ liệu đi qua hạ tầng của mình; có thể chủ động lưu kết quả | Phải vận hành public streaming/multipart proxy có availability cao; thêm latency, bandwidth và điểm lỗi; proxy phụ thuộc chặt endpoint/header/protocol của SDK; các call tương tác không đi qua worker xử lý nền; Verification API hiện là private nên cần ingress/proxy workload riêng | No |
 
 Không chọn backend riêng tại từng domain vì phần tích hợp FPT là capability kỹ thuật lặp lại, không phải nghiệp vụ riêng của từng domain. Domain chỉ authorize business context và apply Canonical Result; `vhm-verification-service` quản lý provider contract, credential, session, retry/quota và chuẩn hóa kết quả.
 
@@ -52,13 +52,12 @@ OCR chỉ hỗ trợ số hóa/gợi ý dữ liệu. eKYC hỗ trợ kiểm tra 
 | Domain service, ví dụ `vhm-dossier-core` | Authorize `businessRef`, chủ thể, media path; query và apply kết quả |
 | `vhm-media-service` | Chỉ tham gia upload; trả `presignHeaders + presignedUrl + s3PathFile` |
 | Verification API | Private command/query API của `vhm-verification-service` |
-| Outbox Publisher | Đọc event đã commit trong PostgreSQL và publish job lên Kafka |
-| Kafka | Lưu và phân phối job cho consumer group OCR/eKYC; không lưu media hoặc Canonical Result |
+| Outbox Publisher + Job Queue | Publish job đã commit và phân phối cho worker pool tương ứng |
 | OCR Worker pool | Xử lý một logical document và gọi FPT OCR flow |
 | eKYC Worker pool | Xử lý document + liveness media và gọi full eKYC flow |
 | Provider Adapter | Inject server credential, map provider request/response/error |
 | Result Normalizer/Policy | Tạo Canonical Result và outcome ổn định |
-| Verification Database | Lưu aggregate, media refs, provider attempts, results và outbox |
+| Verification Database | Lưu aggregate, worker state/lease, media refs, provider attempts, results và outbox |
 
 Verification API, Outbox Publisher, hai worker handler/pool, Provider Adapter và Result Normalizer/Policy là module/workload trong cùng `vhm-verification-service`, không phải các public service riêng.
 
@@ -81,7 +80,7 @@ QUEUED → PROCESSING (OCR)
 
 | **Status** | **Ý nghĩa** |
 | --- | --- |
-| `QUEUED` | Aggregate và outbox đã commit, chờ publish Kafka hoặc worker claim |
+| `QUEUED` | Verification và outbox đã commit, chờ worker claim |
 | `PROCESSING` | Worker đang xử lý hoặc chờ retry step |
 | `WAITING_LIVENESS` | OCR giấy tờ đã đạt; chờ client capture/upload và submit liveness media |
 | `COMPLETED` | Đã có outcome cuối, kể cả provider error sau hết recovery budget |
@@ -97,53 +96,11 @@ QUEUED → PROCESSING (OCR)
 | `OCR` | `OCR_COMPLETED`, `NEED_REVIEW`, `NEED_RETRY`, `PROVIDER_ERROR` |
 | `EKYC` | `EKYC_VERIFIED`, `EKYC_REJECTED`, `NEED_REVIEW`, `NEED_RETRY`, `PROVIDER_ERROR` |
 
-### 2.3. Kafka và Transactional Outbox
+### 2.3. Worker xử lý nền
 
-PostgreSQL là nguồn trạng thái chuẩn; Kafka chỉ làm nhiệm vụ thông báo và phân phối job. Worker không tìm job bằng cách poll bảng `verifications`: worker consume message Kafka, lấy `verificationId`, sau đó đọc và claim aggregate trong PostgreSQL.
+Verification API ghi verification, media refs và outbox trong cùng transaction rồi trả `202`. Outbox Publisher đưa job đã commit vào Queue; Worker nhận `verificationId`, đọc aggregate và claim bằng status + lease/CAS trước khi xử lý.
 
-Kafka được sử dụng theo semantics queue thông qua topic và consumer group: mỗi record được một consumer trong cùng group xử lý; record vẫn được Kafka giữ theo retention để có thể replay khi cần.
-
-Chọn Kafka thay vì để Worker poll PostgreSQL nhằm tách backlog khỏi truy vấn API, phân phối burst cho nhiều Worker, scale OCR/eKYC độc lập và quan sát consumer lag rõ ràng. Đổi lại, hệ thống chấp nhận thêm Outbox Publisher, vận hành topic/consumer group và yêu cầu xử lý message trùng.
-
-| **Topic** | **Event** | **Consumer group** |
-| --- | --- | --- |
-| `vhm.verification.ocr.jobs.v1` | `OCR_JOB_CREATED` | `vhm-verification-ocr-workers-v1` |
-| `vhm.verification.ekyc.jobs.v1` | `EKYC_DOCUMENT_JOB_CREATED`, `EKYC_LIVENESS_JOB_CREATED` | `vhm-verification-ekyc-workers-v1` |
-
-Tách topic và consumer group giúp OCR/eKYC scale, giới hạn concurrency và theo dõi backlog độc lập. Kafka message dùng `verificationId` làm partition key để các job của cùng verification giữ đúng thứ tự.
-
-Message chỉ chứa routing/reference tối thiểu:
-
-```json
-{
-  "id": "7f600de9-5804-4410-8276-3db9774d445d",
-  "type": "OCR_JOB_CREATED",
-  "verificationId": "a62ebdd5-c0f7-4b75-9799-cd5750645450",
-  "schemaVersion": "1",
-  "occurredAt": "2026-08-10T11:30:00+07:00"
-}
-```
-
-Không đưa PII, media path, provider session, binary hoặc Canonical Result vào Kafka.
-
-Luồng publish:
-
-1. Verification API ghi verification, media refs và `outbox_events.status=NEW` trong cùng transaction PostgreSQL rồi trả `202`.
-2. Outbox Publisher claim các event đến hạn, publish vào topic tương ứng với producer idempotence và `acks=all`.
-3. Khi Kafka acknowledge, Publisher cập nhật outbox thành `PUBLISHED`; lỗi publish được retry với backoff.
-4. Nếu Publisher chết sau khi Kafka đã nhận nhưng trước khi cập nhật `PUBLISHED`, message có thể được publish lại. Vì vậy consumer vẫn phải idempotent.
-
-Luồng consume:
-
-1. Worker consumer nhận message, validate `type/schemaVersion` rồi đọc `verifications` theo `verificationId`.
-2. Worker claim bằng status + lease/CAS. Verification đã hoàn tất, đang được worker khác giữ lease hoặc event không còn phù hợp được xử lý như no-op.
-3. Worker commit Kafka offset chỉ sau khi checkpoint hoặc kết quả tương ứng đã commit vào PostgreSQL.
-4. Lỗi provider có thể retry được sẽ đưa verification về `QUEUED` và tạo outbox mới với `available_at` theo backoff; không giữ Kafka message trong lúc chờ.
-5. Message sai schema hoặc không thể xử lý vì lỗi message được chuyển sang DLQ tương ứng. Lỗi nghiệp vụ/provider không đưa vào DLQ.
-
-Consumer giới hạn số job in-flight theo partition và FPT quota. Khi một job xử lý lâu, partition tương ứng được pause trong lúc consumer tiếp tục poll/heartbeat; offset chỉ được commit theo đúng thứ tự sau khi DB checkpoint hoàn tất, tránh rebalance hoặc bỏ qua record chưa xử lý.
-
-DLQ sử dụng `vhm.verification.ocr.jobs.dlq.v1` và `vhm.verification.ekyc.jobs.dlq.v1`. Retention, số partition và replication factor được chốt theo SLA, lưu lượng, thời gian khôi phục sự cố và chuẩn Kafka của VHM; không hard-code trong application.
+OCR và eKYC có worker pool riêng. Worker chỉ xử lý row claim thành công và commit transaction claim trước khi đọc media hoặc gọi FPT. Lỗi retry-safe đưa verification về `QUEUED`, đặt lại `available_at` theo backoff, xóa lease và tạo outbox mới. Worker khác có thể phục hồi row `PROCESSING` khi lease đã hết hạn.
 
 ## 3. Luồng OCR
 
@@ -721,7 +678,7 @@ Chỉ dùng năm bảng cho cả OCR và eKYC:
 | `verification_media_refs` | OCR có `OCR_DOCUMENT`; eKYC thêm document trước và liveness media sau |
 | `provider_attempts` | Từng call `INIT_SESSION`, `OCR`, `LIVENESS` |
 | `verification_results` | OCR ghi final v1; eKYC checkpoint sau OCR rồi khóa final sau liveness |
-| `outbox_events` | Lưu job dispatch cần publish lên Kafka sau khi aggregate commit |
+| `outbox_events` | Lưu job dispatch cần publish lên Queue sau khi aggregate commit |
 
 ```mermaid
 erDiagram
@@ -901,7 +858,7 @@ Quy ước schema:
 - eKYC checkpoint document result với `is_final=false`, chuyển `WAITING_LIVENESS`; sau liveness tăng version và đặt `is_final=true`.
 - Result update dùng compare-and-set theo `version`; row đã `is_final=true` không được update. Retry tạo `verificationId` mới.
 - Media-role combination được validate ở application layer theo `type + documentType`; CHECK SQL chỉ bảo vệ enum cơ bản.
-- Outbox/Kafka message chỉ chứa ID/reference tối thiểu, không chứa PII, media path, binary hoặc Canonical Result.
+- Outbox/message chỉ chứa ID/reference tối thiểu, không chứa PII, media path, binary hoặc Canonical Result.
 
 ## 7. Tin cậy, timeout và vận hành worker
 
@@ -910,7 +867,7 @@ Quy ước schema:
 - Create OCR/eKYC insert verification, document media refs và outbox trong một transaction ngắn.
 - Submit liveness insert liveness media refs, chuyển `WAITING_LIVENESS → QUEUED`, ghi idempotency/fingerprint và outbox trong transaction riêng.
 - Cùng `Idempotency-Key` và request fingerprint trả resource cũ; cùng key nhưng fingerprint khác trả `409 IDEMPOTENCY_CONFLICT`.
-- Kafka consumer xử lý theo at-least-once; message chỉ chứa reference/routing tối thiểu và Worker phải idempotent.
+- Queue xử lý theo at-least-once; message chỉ chứa reference/routing tối thiểu và Worker phải idempotent.
 - Worker claim aggregate bằng lease/CAS; không gọi lại operation đã có provider attempt terminal thành công.
 - Object Storage và provider calls luôn nằm ngoài DB transaction.
 - Sau mỗi provider call thành công, persist attempt, checkpoint cần thiết và `currentStep` tiếp theo.
@@ -943,9 +900,9 @@ Timeout outbound của từng FPT call phải ngắn hơn worker lease còn lạ
 ### 7.4. Quota và backlog
 
 - OCR và eKYC dùng token bucket/concurrency limit riêng theo FPT quota.
-- Hai Kafka topic và consumer group riêng tách capacity OCR/eKYC; số partition đặt trần mức song song nhưng Worker vẫn phải tuân thủ FPT quota.
+- OCR và eKYC dùng queue/worker pool riêng để tách capacity; Worker vẫn phải tuân thủ FPT quota.
 - Circuit breaker dừng claim job mới của flow đang lỗi diện rộng; job còn `QUEUED` và `available_at` được dời theo backoff.
-- Alert tối thiểu: Kafka consumer lag/oldest record theo topic, outbox lag/publish failure, DLQ count, provider latency/error/429, stale lease và terminal outcome rate.
+- Alert tối thiểu: queue age/depth theo loại job, outbox lag/publish failure, provider latency/error/429, stale lease và terminal outcome rate.
 
 ## 8. Kế hoạch triển khai và kiểm thử
 
@@ -953,7 +910,7 @@ Timeout outbound của từng FPT call phải ngắn hơn worker lease còn lạ
 
 1. Chốt `s3PathFile` prefix, media roles, IAM read-only và input limit.
 2. Chốt FPT `documentType → API/model`, request/response/error, quota, session TTL và timeout.
-3. Xây schema, Verification API core, idempotency, Outbox Publisher, Kafka topic và consumer group.
+3. Xây schema, Verification API core, idempotency, Outbox Publisher và Job Queue routing.
 4. Xây OCR handler/provider flow và Canonical Result.
 5. Xây eKYC document job, trạng thái `WAITING_LIVENESS`, liveness submit/job và policy engine.
 6. Tích hợp polling/confirm/apply với domain.
@@ -966,11 +923,11 @@ Timeout outbound của từng FPT call phải ngắn hơn worker lease còn lạ
 | Unit | Type-specific media/outcome guard, lifecycle/step, idempotency, canonical mapping |
 | Provider contract | Init/OCR/liveness success, business error, malformed response, 429, 5xx, timeout |
 | Database | CHECK/unique/index, optimistic lock, result final guard, outbox publisher/worker lease recovery |
-| Kafka/Outbox | Publish ack nhưng chưa mark `PUBLISHED`, duplicate/redelivery, consumer restart/rebalance, offset sau DB checkpoint, poison message vào DLQ |
-| Integration | Presigned upload contract, S3 path authorization, Kafka dispatch và step resume |
+| Queue/Outbox | Publish thành công nhưng chưa mark `PUBLISHED`, duplicate/redelivery và worker restart |
+| Integration | Presigned upload contract, S3 path authorization, queue dispatch và step resume |
 | OCR end-to-end | Upload → create `202` → OCR result → confirm/apply |
 | eKYC end-to-end | Upload document → OCR → `WAITING_LIVENESS` → upload/submit liveness → result → confirm/apply |
-| Resilience | Slow/large media, crash giữa step, unknown-after-send, provider outage, Kafka backlog burst |
+| Resilience | Slow/large media, crash giữa step, unknown-after-send, provider outage, queue backlog burst |
 
 ### 8.3. Điểm cần chốt
 
