@@ -1,11 +1,13 @@
 # Vấn đề 6: Lựa chọn nền tảng tích hợp OCR tập trung
 
+## Phạm vi và phương án
+
 **User case:** Người dùng chụp hoặc upload giấy tờ trên Mobile/Web để hệ thống OCR, phân loại, gợi ý dữ liệu hoặc xác minh danh tính khi tạo hồ sơ NOXH.
 
 **Hai journey được thiết kế độc lập:**
 
-- **`OCR_ONLY`:** Trích xuất và chuẩn hóa dữ liệu giấy tờ. Kết quả OCR không khẳng định người thao tác là chủ thể trên giấy tờ và luôn cần người dùng kiểm tra trước khi apply vào hồ sơ.
-- **`FULL_EKYC`:** OCR giấy tờ định danh kết hợp liveness và face matching để xác minh người thao tác. Journey có thể bổ sung QR/NFC theo channel và policy đã được phê duyệt.
+- **`OCR`:** Trích xuất và chuẩn hóa dữ liệu giấy tờ. Kết quả OCR không khẳng định người thao tác là chủ thể trên giấy tờ và luôn cần người dùng kiểm tra trước khi apply vào hồ sơ.
+- **`EKYC`:** OCR giấy tờ định danh kết hợp liveness và face matching để xác minh người thao tác. Journey có thể bổ sung QR/NFC theo channel và policy đã được phê duyệt.
 
 **Loại tài liệu dự kiến:**
 
@@ -14,7 +16,7 @@
 - Bản sao có chứng thực giấy chứng nhận hộ gia đình nghèo/cận nghèo.
 - Các giấy tờ khác trong checklist hồ sơ NOXH khi có mẫu OCR tương ứng.
 
-`vhm-verification-service` là nền tảng verification dùng chung, điều phối cả `OCR_ONLY` và `FULL_EKYC`, cô lập contract/credential của provider và chuẩn hóa kết quả. Quyết định cập nhật hồ sơ hoặc chấp nhận kết quả vẫn thuộc `vhm-dossier-core`.
+`vhm-verification-service` là nền tảng verification dùng chung, điều phối cả `OCR` và `EKYC`, cô lập contract/credential của provider và chuẩn hóa kết quả. Quyết định cập nhật hồ sơ hoặc chấp nhận kết quả vẫn thuộc `vhm-dossier-core`.
 
 **Các use case:**
 
@@ -22,7 +24,7 @@
 2. **OCR giấy đăng ký kết hôn:** Người dùng upload đầy đủ các trang. Hệ thống trích xuất số giấy chứng nhận, thông tin hai bên, ngày đăng ký, nơi đăng ký và thông tin người ký/cơ quan cấp nếu mẫu tài liệu hỗ trợ.
 3. **OCR giấy chứng nhận hộ nghèo/cận nghèo:** Người dùng upload bản sao có chứng thực. Hệ thống trích xuất số văn bản/chứng thực, chủ hộ, địa chỉ, loại xác nhận, thời gian hiệu lực, cơ quan cấp và ngày cấp.
 4. **OCR giấy tờ khác:** NOXH truyền `documentType`; `vhm-verification-service` chỉ xử lý khi đã có model/template và schema kết quả tương ứng. Tài liệu chưa được hỗ trợ hoặc có confidence thấp được chuyển sang nhập liệu/kiểm tra thủ công.
-5. **FULL_EKYC:** Người dùng chụp giấy tờ định danh và thực hiện liveness. Hệ thống xử lý OCR, kiểm tra liveness, so khớp khuôn mặt và trả kết quả `VERIFIED/REJECTED/NEED_RETRY` theo policy; Mobile/Web không tự quyết định kết quả từ SDK response.
+5. **EKYC:** Người dùng chụp giấy tờ định danh và thực hiện liveness. Hệ thống xử lý OCR, kiểm tra liveness, so khớp khuôn mặt và trả kết quả `VERIFIED/REJECTED/NEED_RETRY` theo policy; Mobile/Web không tự quyết định kết quả từ SDK response.
 
 OCR chỉ hỗ trợ số hóa và kiểm tra dữ liệu theo khả năng của model. Việc xác nhận bản sao có giá trị pháp lý, giấy tờ còn hiệu lực hoặc hồ sơ đáp ứng điều kiện NOXH vẫn do nghiệp vụ và người duyệt quyết định.
 
@@ -37,7 +39,7 @@ OCR chỉ hỗ trợ số hóa và kiểm tra dữ liệu theo khả năng của
 
 **Nguyên tắc kiến trúc:**
 
-- Giữ chung một service nhưng tách handler và state transition của `OCR_ONLY`/`FULL_EKYC`; không tách thành hai service OCR và eKYC.
+- Giữ chung một service nhưng tách handler và state transition của `OCR`/`EKYC`; không tách thành hai service OCR và eKYC.
 - `vhm-verification-service` là private internal service. Mobile/Web chỉ đi qua `vhm-agent-api` và `vhm-dossier-core`; provider callback nếu có phải qua Public Callback Ingress/API Gateway.
 - Provider credential chỉ tồn tại tại Provider Adapter. Không truyền credential, provider session hoặc raw provider payload về Mobile/Web, BFF hoặc `vhm-dossier-core`.
 - `status` mô tả vòng đời kỹ thuật; `outcome` mô tả kết luận OCR/eKYC. Lỗi kỹ thuật không được ánh xạ thành `REJECTED`.
@@ -48,7 +50,7 @@ OCR chỉ hỗ trợ số hóa và kiểm tra dữ liệu theo khả năng của
 | **Module** | **Trách nhiệm implementation** |
 | --- | --- |
 | Verification API | Nhận internal command/query từ `vhm-dossier-core`; validate contract, idempotency key và authorized media reference; trả `verificationId/status/result` |
-| Journey Orchestrator | Chọn `OCR_ONLY` hoặc `FULL_EKYC`, kiểm tra milestone bắt buộc và điều khiển state transition |
+| Journey Orchestrator | Chọn `OCR` hoặc `EKYC`, kiểm tra milestone bắt buộc và điều khiển state transition |
 | OCR Worker | Đọc media đã finalize, xử lý ảnh định danh hoặc tách trang/batch cho tài liệu lớn, theo dõi progress và tổng hợp kết quả |
 | eKYC Worker | Điều phối provider session, OCR front/back, liveness, face matching và QR/NFC tùy policy |
 | Provider Adapter | Inject server credential; ánh xạ request/response/error; quản lý timeout, quota, circuit breaker và provider session |
@@ -58,7 +60,7 @@ OCR chỉ hỗ trợ số hóa và kiểm tra dữ liệu theo khả năng của
 | Reconciliation Worker | Khôi phục provider job/result treo bằng bounded polling hoặc Result API; không polling liên tục mọi session |
 | Security/Audit/Observability | Authorization defense-in-depth, masking, audit, metrics, trace và cảnh báo backlog/provider |
 
-**Khả năng FPT AI đã đối chiếu:**
+## Khả năng FPT AI đã đối chiếu
 
 - FPT hỗ trợ ba phương thức tích hợp Mobile SDK, Web SDK và backend API; API linh hoạt nhất nhưng phía khách hàng phải tự xây UI và luồng xử lý ([So sánh các phương thức tích hợp](https://docs-vision.fpt.ai/ekyc/III-integration/III-0-so-sanh/)).
 - FPT eKYC backend API yêu cầu khởi tạo session trước khi gọi `/ocr`; OCR hỗ trợ ba nhóm giấy tờ `idr`, `passport`, `dlr` và trả kết quả trong response của request ([Các API của luồng cập nhật thông tin](https://docs-vision.fpt.ai/ekyc/III-integration/III-2-APIs/a-APIs%20of%20eKYC%20Flows/APIs-in-update-information-flow/)). Tài liệu public chưa mô tả API `submit job/get job status` riêng cho OCR bất đồng bộ, do đó VHM tự quản lý async job và worker ở lớp `vhm-verification-service`.
@@ -66,7 +68,9 @@ OCR chỉ hỗ trợ số hóa và kiểm tra dữ liệu theo khả năng của
 - Web SDK có `ocrFiles` trong `on_result`, tức là sau khi đã có kết quả; tài liệu Mobile SDK public chưa xác nhận callback trả raw file ngay sau capture. Vì vậy flow upload Presigned URL không phụ thuộc capability chưa được xác nhận của FPT SDK ([Web SDK](https://docs-vision.fpt.ai/ekyc/III-integration/III-1-SDKs/web-sdk/)).
 - Giấy đăng ký kết hôn, giấy chứng nhận hộ nghèo/cận nghèo và PDF nhiều trang không thuộc ba loại giấy tờ của FPT eKYC `/ocr`; cần model/template của FPT AI Read hoặc Document OCR Provider khác và phải xác nhận riêng input limit, số trang, SLA, cơ chế synchronous/async trước khi triển khai.
 
-**Luồng 1 — Upload tài liệu:**
+## Kiến trúc tổng quan
+
+### Luồng upload attachment cho `OCR`
 
 ```mermaid
 flowchart LR
@@ -90,14 +94,14 @@ binary + checksum`"| MEDIA
     NOXH <-->|"8. HEAD/validate object"| MEDIA
 ```
 
-Upload là luồng độc lập với OCR. `vhm-dossier-core` chưa tạo `verificationId` và `vhm-verification-service` không tham gia cho đến khi attachment đã được finalize và người dùng yêu cầu OCR.
+Với `OCR`, upload là luồng độc lập và xảy ra trước khi tạo verification. `vhm-dossier-core` chưa tạo `verificationId` và `vhm-verification-service` không tham gia cho đến khi attachment đã được finalize và người dùng yêu cầu OCR.
 
-**Luồng 2 — Kiến trúc xử lý OCR bất đồng bộ:**
+### Thành phần xử lý verification bất đồng bộ
 
 ```mermaid
 flowchart LR
     CLIENT["`**Mobile/Web**
-Submit OCR · Poll result`"]
+Submit verification · Poll result`"]
     BFF["`**vhm-agent-api**
 Xác thực · routing`"]
     DOSSIER["`**vhm-dossier-core**
@@ -111,44 +115,45 @@ FPT eKYC · Document OCR`"]
     DB[("`**Verification Database**
 Job status · Canonical result`")]
 
-    CLIENT -->|"Submit OCR · GET status"| BFF
+    CLIENT -->|"Submit verification · GET status"| BFF
     BFF -->|"Authenticated request"| DOSSIER
-    DOSSIER -->|"Create job · Query status"| VERIFY
+    DOSSIER -->|"Create/submit · Query status"| VERIFY
 
     VERIFY -->|"Worker: GET media"| MEDIA
     VERIFY ==>|"Worker: OCR/eKYC request"| PROVIDER
     PROVIDER ==>|"Provider result"| VERIFY
     VERIFY <-->|"Persist/read job"| DB
 
-    VERIFY -.->|"202 QUEUED · Status · Result"| DOSSIER
+    VERIFY -.->|"201 WAITING_MEDIA · 202 QUEUED · Status · Result"| DOSSIER
     DOSSIER -.->|"Authorized response"| BFF
     BFF -.->|"Response"| CLIENT
 ```
 
-Đường liền thể hiện request/xử lý; đường nét đứt thể hiện response `202`, trạng thái và kết quả. Chart này chỉ mô tả thành phần và hướng dữ liệu; thứ tự xử lý chi tiết được thể hiện tại sequence diagram trong phần **Cách hoạt động**.
+Đường liền thể hiện request/xử lý; đường nét đứt thể hiện response `201/202`, trạng thái và kết quả. Chart này chỉ mô tả thành phần và hướng dữ liệu; thứ tự end-to-end được thể hiện ở hai sequence diagram `OCR` và `EKYC` bên dưới.
 
 Request tạo OCR chỉ chờ đến khi `vhm-verification-service` persist job và trả `verificationId + QUEUED`; việc đọc object và gọi provider diễn ra trong worker. Mobile/Web không giữ kết nối chờ provider mà tra cứu trạng thái/kết quả qua `vhm-agent-api` và `vhm-dossier-core`.
 
 Giải pháp này tách nghiệp vụ NOXH khỏi chi tiết tích hợp provider. Chi phí của một service và một network hop được chấp nhận để async job, credential, quota, provider result, audit và vận hành provider được quản lý tập trung tại `vhm-verification-service`; attachment upload vẫn thuộc `vhm-dossier-core`.
 
-**Phân định ownership:**
+### Phân định ownership
 
 | **Năng lực** | **`vhm-dossier-core`** | **`vhm-verification-service`** |
 | --- | --- | --- |
 | Nghiệp vụ | Kiểm tra quyền trên hồ sơ/dự án; gửi `businessRef`; quyết định sử dụng kết quả | Không xử lý rule nghiệp vụ NOXH |
-| Upload tài liệu | Sở hữu `mediaId`, object key, Presigned URL, attachment metadata, finalize và retention; binary nằm trong Private Object Storage | Không cấp Presigned URL và không sở hữu attachment; chỉ đọc object đã finalize khi có yêu cầu OCR được ủy quyền |
-| API tích hợp | Sau khi authorize media đã finalize, gọi API nội bộ `create/status/result` với `businessRef`, `documentType`, authorized `mediaRef` và `idempotencyKey` | Quản lý async job, provider API contract, model/template và provider credential |
-| Phiên xử lý | Không quản lý state machine OCR; authorize mọi request tạo job và tra cứu | Sinh `verificationId` khi nhận yêu cầu OCR; persist `QUEUED` trước khi trả `202`; quản lý queue/worker, provider session, attempt, timeout, idempotency, progress và trạng thái |
+| Upload tài liệu | Sở hữu `mediaId`, object key, Presigned URL, attachment metadata, finalize và retention; binary nằm trong Private Object Storage | Không cấp Presigned URL và không sở hữu attachment; chỉ đọc exact object đã finalize khi OCR được tạo hoặc eKYC media được submit hợp lệ |
+| API tích hợp | Tạo eKYC session sau authorization; chỉ create OCR/submit eKYC media sau khi media đã finalize; proxy `status/result` theo `businessRef` | Quản lý journey API, async job, provider contract, model/template và credential |
+| Phiên xử lý | Không quản lý state machine verification; authorize mọi request tạo/submit/retry và tra cứu | Với OCR, sinh `verificationId` và persist `QUEUED`; với eKYC, tạo `WAITING_MEDIA` rồi chuyển `QUEUED` sau media submission; quản lý queue/worker, provider session, attempt, timeout, idempotency, progress và trạng thái |
 | Kết quả | Proxy API tra cứu trạng thái/kết quả sau khi kiểm tra quyền; chỉ apply kết quả đã được người dùng xác nhận | Nhận synchronous result trong worker hoặc theo dõi provider async nếu provider hỗ trợ; chuẩn hóa field, confidence, warning và error code thành Canonical Result |
-| Dữ liệu | Database lưu attachment metadata/reference, checksum, object version và retention; không lưu binary hoặc raw provider payload | Database chỉ lưu verification session, Canonical Result và provider metadata tối thiểu; không lưu binary hoặc sở hữu attachment reference lâu dài |
+| Dữ liệu | Database lưu attachment metadata/reference, checksum, object version và retention; không lưu binary hoặc raw provider payload | Database lưu verification session, Canonical Result, provider metadata tối thiểu và opaque/encrypted media reference trong retention của verification; không lưu binary/plaintext S3 path và không sở hữu retention attachment nghiệp vụ |
 | Resilience | Không retry trực tiếp với provider | Durable queue, retry có giới hạn, reconciliation, circuit breaker, rate limit, quota và xử lý từng trang/batch với tài liệu lớn |
 | Audit/Monitoring | Chỉ audit việc áp dụng kết quả vào nghiệp vụ | Audit toàn bộ vòng đời OCR và vận hành provider |
 
 Nhờ đó, `vhm-dossier-core` không phải triển khai provider adapter, queue/worker, provider session, database verification, retry, security và monitoring cho provider.
 
-**Trách nhiệm của `vhm-verification-service`:**
+### Trách nhiệm của `vhm-verification-service`
 
-- Khi nhận yêu cầu OCR cho media đã finalize, sinh `verificationId`, liên kết với `businessRef`, persist trạng thái `QUEUED`, enqueue job rồi trả kết quả tạo job; không tạo verification session trong luồng upload.
+- Với `OCR`, chỉ sinh `verificationId` sau khi nhận yêu cầu OCR cho media đã finalize, persist `QUEUED`, enqueue job rồi trả `202`; không tạo verification session trong luồng upload attachment.
+- Với `EKYC`, sinh `verificationId` trước bước capture để trả capture policy và bind attempt; chỉ enqueue sau khi `vhm-dossier-core` đã finalize và submit đủ authorized media reference.
 - Chỉ nhận `mediaId/mediaRef` đã được `vhm-dossier-core` authorize và finalize; không cấp Presigned URL, không nhận object path từ Mobile/Web và không quản lý attachment nghiệp vụ.
 - Đọc object từ Private Object Storage bằng quyền read-only giới hạn theo exact object; kiểm tra lại binding, MIME/magic bytes và kích thước trước khi gửi provider.
 - Nhận `documentType`, chọn model/template OCR tương ứng và chuẩn hóa kết quả theo schema của từng loại tài liệu.
@@ -158,18 +163,19 @@ Nhờ đó, `vhm-dossier-core` không phải triển khai provider adapter, queu
 - Chuẩn hóa payload và error code của FPT AI thành contract nội bộ ổn định, không trả raw provider payload cho NOXH.
 - Quản lý retry, timeout, circuit breaker, quota/rate limit và cô lập sự cố provider khỏi `vhm-dossier-core`.
 - Áp dụng kiểm soát truy cập, mã hóa dữ liệu nhạy cảm, masking, audit và chính sách lưu/xóa verification session, Canonical Result và provider payload tối thiểu.
-- Cung cấp API để NOXH tạo async job, tra cứu trạng thái/progress và lấy Canonical Result.
+- Cung cấp API để NOXH tạo/submit journey, tra cứu trạng thái/progress và lấy Canonical Result.
 
-**Trách nhiệm tối thiểu của `vhm-dossier-core`:**
+### Trách nhiệm tối thiểu của `vhm-dossier-core`
 
 - Kiểm tra người dùng có quyền thao tác hồ sơ/dự án.
 - Sinh `mediaId` và exact object key, cấp Presigned PUT URL sau authorization, lưu attachment metadata và finalize object sau khi HEAD/validate checksum/version thành công.
 - Quản lý orphan cleanup, retention và quyền truy cập attachment theo hồ sơ/dự án.
-- Chỉ sau khi media đã `FINALIZED`, gửi `businessRef=dossierId`, `documentType`, authorized `mediaRef` và `idempotencyKey` để tạo verification job; không truyền object path do client cung cấp.
+- Với `OCR`, chỉ sau khi media đã `FINALIZED`, gửi `businessRef=dossierId`, `documentType`, authorized `mediaRef` và `idempotencyKey` để tạo verification job; không truyền object path do client cung cấp.
+- Với `EKYC`, authorize bước tạo session, cấp upload slot bind `verificationId/attempt`, finalize đủ media bắt buộc rồi submit authorized media manifest vào verification service.
 - Kiểm tra quyền trên mỗi request tra cứu, gọi API `status/result` của `vhm-verification-service` và bind Canonical Result với đúng hồ sơ/media trước khi trả Mobile/Web.
 - Cho người dùng xác nhận dữ liệu trước khi cập nhật khách hàng hoặc hồ sơ NOXH.
 
-## Luồng chi tiết `OCR_ONLY`
+## Luồng chi tiết `OCR`
 
 ```mermaid
 sequenceDiagram
@@ -244,7 +250,7 @@ sequenceDiagram
     NOXH->>NOXH: Bind và cập nhật hồ sơ
 ```
 
-## Luồng chi tiết `FULL_EKYC`
+## Luồng chi tiết `EKYC`
 
 ```mermaid
 sequenceDiagram
@@ -257,10 +263,10 @@ sequenceDiagram
     participant MEDIA as Private Object Storage
     participant PROVIDER as FPT eKYC Backend
 
-    CLIENT->>BFF: Start FULL_EKYC<br/>dossierId + subjectRef + consentRef + channel
+    CLIENT->>BFF: Start EKYC<br/>dossierId + subjectRef + consentRef + channel
     BFF->>NOXH: Xác thực và routing
     NOXH->>NOXH: Authorize hồ sơ/subject/purpose
-    NOXH->>VERIFY: Create FULL_EKYC session<br/>businessRef + subjectRef + consentRef + channel
+    NOXH->>VERIFY: Create EKYC session<br/>businessRef + subjectRef + consentRef + channel
     VERIFY->>VERIFY: Sinh verificationId + attempt=1<br/>status=WAITING_MEDIA
     VERIFY-->>NOXH: verificationId + capture policy
     NOXH-->>BFF: eKYC bootstrap không chứa provider credential
@@ -281,7 +287,7 @@ sequenceDiagram
     NOXH->>VERIFY: Submit authorized mediaRefs
     VERIFY->>VERIFY: Validate required media<br/>status=QUEUED
     VERIFY->>QUEUE: Enqueue verificationId
-    VERIFY-->>NOXH: 202 + QUEUED + statusUrl
+    VERIFY-->>NOXH: 202 + QUEUED + resourceUri
     NOXH-->>BFF: 202 + statusUrl
     BFF-->>CLIENT: 202 + statusUrl
 
@@ -314,20 +320,23 @@ sequenceDiagram
     end
 ```
 
-`FULL_EKYC` theo kiến trúc trên yêu cầu capture component cung cấp được raw document/selfie/liveness artifact để client upload vào VHM Object Storage trước khi server-side worker gọi provider. Nếu phiên bản FPT SDK chỉ tự gửi media tới FPT và không expose artifact trước khi xử lý, phải chốt một ADR khác cho SDK proxy data-plane; không được tự động cho SDK gọi thẳng FPT hoặc mở public `vhm-verification-service`.
+`EKYC` theo kiến trúc trên yêu cầu capture component cung cấp được raw document/selfie/liveness artifact để client upload vào VHM Object Storage trước khi server-side worker gọi provider. Nếu phiên bản FPT SDK chỉ tự gửi media tới FPT và không expose artifact trước khi xử lý, phải chốt một ADR khác cho SDK proxy data-plane; không được tự động cho SDK gọi thẳng FPT hoặc mở public `vhm-verification-service`.
 
-**Luồng capture/upload tài liệu:**
+## Quy tắc media và provider
+
+### Capture/upload tài liệu
 
 - Mobile/Web chụp hoặc chọn file bằng capture/upload component của ứng dụng. Cả ảnh chụp và file có sẵn đều dùng chung cơ chế Presigned URL đã chọn tại Vấn đề 3.
+- Với `OCR`, attachment được upload/finalize trước, chưa có `verificationId`; người dùng submit OCR sau đó mới tạo verification job. Với `EKYC`, session `WAITING_MEDIA` được tạo trước để lấy `verificationId/attempt/capturePolicy`; upload slot vẫn do `vhm-dossier-core` cấp và được bind với session này.
 - Mobile/Web gọi `vhm-agent-api` để xin upload URL. `vhm-agent-api` chỉ xác thực/routing; `vhm-dossier-core` authorize hồ sơ, sinh `mediaId`/exact object key và trả Presigned URL. `vhm-verification-service` không tham gia luồng cấp URL.
-- Presigned URL phải có TTL ngắn và bind exact object key, method, content type, content length, checksum và `mediaId`. Upload chưa có `verificationId`; client không có quyền list/read object hoặc tự chọn object key.
+- Presigned URL phải có TTL ngắn và bind exact object key, method, content type, content length, checksum và `mediaId`; với `EKYC` còn bind `verificationId/attempt`. Client không có quyền list/read object hoặc tự chọn object key.
 - Sau upload, Mobile/Web submit `mediaId`, checksum và object version qua `vhm-agent-api`. `vhm-dossier-core` kiểm tra lại quyền, HEAD/validate object rồi chuyển attachment sang `FINALIZED`. Việc finalize không tự động OCR; chỉ request OCR riêng của người dùng mới tạo verification job.
 - Mobile/Web không gọi thẳng provider hoặc `vhm-verification-service`, không nhận provider API key và không gửi binary qua `vhm-agent-api`.
 - Nếu sử dụng FPT SDK làm capture component, phải xác nhận phiên bản SDK cung cấp raw file/Blob trước khi SDK tự gọi FPT. Khi capability này chưa được xác nhận, sử dụng camera/file picker của ứng dụng cho flow Presigned URL.
 - Provider `api-key`, `session-id`, `device-type` và `document-type` chỉ được `vhm-verification-service` inject ở outbound request. Mobile/Web không nhìn thấy provider credential.
 - Binary upload nằm trong Private Object Storage do `vhm-dossier-core` quản lý. Dossier database chỉ lưu protected object reference, checksum, object version, media metadata và thời hạn xóa; upload chưa finalize được orphan-cleanup theo TTL, object đã finalize được purge theo retention policy.
 
-**Xử lý OCR theo loại tài liệu:**
+### Xử lý OCR theo loại tài liệu
 
 - **Ảnh định danh:** FPT eKYC `/ocr` hỗ trợ `idr`, `passport` và `dlr`. Worker khởi tạo provider session sau khi nhận job, lấy ảnh đã finalize từ Object Storage và gọi provider synchronous; client vẫn sử dụng flow async `202 + polling` của VHM.
 - **PDF/tài liệu nhiều trang:** Không gửi trực tiếp vào FPT eKYC `/ocr`. Worker stream và tách trang/batch, sau đó chọn FPT AI Read hoặc Document OCR Provider/model đã được xác nhận hỗ trợ loại tài liệu. Retry và progress được quản lý theo từng trang/batch; kết quả có thể là `PARTIAL`.
@@ -345,12 +354,13 @@ sequenceDiagram
 | Submit media eKYC | `POST /dossiers/{dossierId}/verifications/{id}/media` | `POST /internal/v1/verifications/{id}/media-submissions` | `202`, validate manifest rồi chuyển `QUEUED` |
 | Lấy trạng thái | `GET /dossiers/{dossierId}/verifications/{id}` | `GET /internal/v1/verifications/{id}` | Status, progress, outcome, next action |
 | Lấy kết quả | `GET /dossiers/{dossierId}/verifications/{id}/result` | `GET /internal/v1/verifications/{id}/result` | Canonical Result đã lọc/mask |
+| Xác nhận/apply OCR | `POST /dossiers/{dossierId}/verifications/{id}/apply` | `GET /internal/v1/verifications/{id}/result`; không có command apply ở verification service | `vhm-dossier-core` đối chiếu expected `resultVersion` rồi cập nhật nghiệp vụ trong local transaction |
 | Hủy | `POST /dossiers/{dossierId}/verifications/{id}/cancel` | `POST /internal/v1/verifications/{id}/cancel` | Hủy ngay khi chưa chạy hoặc best-effort khi đang xử lý |
 | Thử lại | `POST /dossiers/{dossierId}/verifications/{id}/retries` | `POST /internal/v1/verifications/{id}/retries` | Tạo attempt mới, không reset hoặc ghi đè attempt cũ |
 
 `vhm-verification-service` trả `resourceUri` nội bộ. `vhm-dossier-core` ánh xạ URI này thành `statusUrl` thuộc dossier và authorize lại mỗi lần Mobile/Web poll; không chuyển nguyên internal URI cho client.
 
-Request tạo `OCR_ONLY` sau khi attachment đã `FINALIZED`:
+Request tạo `OCR` sau khi attachment đã `FINALIZED`:
 
 ```http
 POST /internal/v1/verifications/ocr
@@ -370,6 +380,13 @@ Content-Type: application/json
       "authorizedMediaRef": "opaque-signed-media-ref",
       "checksumSha256": "...",
       "objectVersion": "..."
+    },
+    {
+      "mediaId": "media-back-01",
+      "role": "DOCUMENT_BACK",
+      "authorizedMediaRef": "opaque-signed-media-ref",
+      "checksumSha256": "...",
+      "objectVersion": "..."
     }
   ]
 }
@@ -381,13 +398,13 @@ Retry-After: 3
 
 {
   "verificationId": "ver-123",
-  "journey": "OCR_ONLY",
+  "journey": "OCR",
   "status": "QUEUED",
   "resourceUri": "/internal/v1/verifications/ver-123"
 }
 ```
 
-Request bắt đầu và submit `FULL_EKYC` được tách làm hai bước:
+Request bắt đầu và submit `EKYC` được tách làm hai bước:
 
 ```http
 POST /internal/v1/verifications/ekyc
@@ -425,7 +442,7 @@ Status response dùng chung cho hai journey:
 ```json
 {
   "verificationId": "ver-123",
-  "journey": "OCR_ONLY",
+  "journey": "OCR",
   "status": "PROCESSING",
   "outcome": null,
   "progress": {
@@ -460,8 +477,8 @@ Error body chỉ dùng canonical `code`, `message`, `retryable`, `correlationId`
 
 ```mermaid
 stateDiagram-v2
-    [*] --> WAITING_MEDIA: Create FULL_EKYC
-    [*] --> QUEUED: Create OCR_ONLY
+    [*] --> WAITING_MEDIA: Create EKYC
+    [*] --> QUEUED: Create OCR
     WAITING_MEDIA --> QUEUED: Submit đủ finalized media
     WAITING_MEDIA --> CANCELLED: User hủy
     WAITING_MEDIA --> EXPIRED: Hết capture TTL
@@ -478,12 +495,12 @@ stateDiagram-v2
 
 | **Journey** | **Outcome khi `COMPLETED`** | **Ý nghĩa** |
 | --- | --- | --- |
-| `OCR_ONLY` | `OCR_COMPLETED` | Đọc đủ tài liệu; vẫn cần người dùng xác nhận dữ liệu |
-| `OCR_ONLY` | `PARTIAL` | Chỉ một phần trang/field xử lý thành công |
-| `OCR_ONLY` | `NEED_REVIEW` | Confidence/warning vượt ngưỡng cần kiểm tra thủ công |
+| `OCR` | `OCR_COMPLETED` | Đọc đủ tài liệu; vẫn cần người dùng xác nhận dữ liệu |
+| `OCR` | `PARTIAL` | Chỉ một phần trang/field xử lý thành công |
+| `OCR` | `NEED_REVIEW` | Confidence/warning vượt ngưỡng cần kiểm tra thủ công |
 | Cả hai | `NEED_RETRY` | Media hoặc thao tác người dùng có thể thực hiện lại |
-| `FULL_EKYC` | `VERIFIED` | Document, liveness và face match đạt policy |
-| `FULL_EKYC` | `REJECTED` | Check nghiệp vụ xác minh không đạt policy; không dùng cho lỗi transport/provider |
+| `EKYC` | `VERIFIED` | Document, liveness và face match đạt policy |
+| `EKYC` | `REJECTED` | Check nghiệp vụ xác minh không đạt policy; không dùng cho lỗi transport/provider |
 | Cả hai | `PROVIDER_ERROR` | Hết retry/reconciliation budget hoặc provider không trả kết quả hợp lệ |
 
 Worker có trạng thái riêng `PENDING/RUNNING/RETRY_WAIT/SUCCEEDED/DEAD`. `RETRY_WAIT` và `DEAD` là chi tiết vận hành của job, không được trả trực tiếp thành lifecycle/outcome cho Mobile/Web.
@@ -495,9 +512,10 @@ Canonical Result có `schemaVersion`, không phụ thuộc tên field hoặc err
 ```json
 {
   "verificationId": "ver-123",
-  "journey": "FULL_EKYC",
+  "journey": "EKYC",
   "status": "COMPLETED",
   "outcome": "VERIFIED",
+  "resultVersion": 1,
   "schemaVersion": "1.0",
   "document": {
     "type": "IDR",
@@ -534,17 +552,28 @@ PostgreSQL là system of record cho verification lifecycle. Binary media vẫn n
 | `verification_history` | Lịch sử state/outcome append-only | Không update/delete trong business flow |
 | `outbox_events` | Bảo đảm DB commit và enqueue/event không lệch nhau | Publisher at-least-once; consumer dedupe theo `event_id` |
 
+```mermaid
+erDiagram
+    VERIFICATION_SESSION ||--o{ VERIFICATION_MEDIA_REF : binds
+    VERIFICATION_SESSION ||--o{ VERIFICATION_JOB : schedules
+    VERIFICATION_JOB ||--o{ PROVIDER_ATTEMPT : invokes
+    VERIFICATION_SESSION ||--o{ VERIFICATION_CHECK : contains
+    VERIFICATION_SESSION ||--o| VERIFICATION_RESULT : produces
+    VERIFICATION_SESSION ||--o{ VERIFICATION_HISTORY : records
+    VERIFICATION_SESSION ||--o{ OUTBOX_EVENT : publishes
+```
+
 DDL baseline rút gọn:
 
 ```sql
 CREATE TABLE verification_sessions (
     verification_id         UUID PRIMARY KEY,
-    journey                 VARCHAR(20) NOT NULL CHECK (journey IN ('OCR_ONLY', 'FULL_EKYC')),
+    journey                 VARCHAR(20) NOT NULL CHECK (journey IN ('OCR', 'EKYC')),
     business_type           VARCHAR(30) NOT NULL,
     business_ref            VARCHAR(100) NOT NULL,
     subject_ref_ciphertext  BYTEA,
     consent_ref             VARCHAR(150),
-    channel                 VARCHAR(20) NOT NULL,
+    channel                 VARCHAR(20) NOT NULL CHECK (channel IN ('MOBILE', 'WEB')),
     document_type           VARCHAR(40),
     status                  VARCHAR(30) NOT NULL CHECK (status IN
                                 ('WAITING_MEDIA', 'QUEUED', 'PROCESSING',
@@ -570,6 +599,25 @@ CREATE TABLE verification_sessions (
     CONSTRAINT ck_status_outcome CHECK (
         (status = 'COMPLETED' AND outcome IS NOT NULL) OR
         (status <> 'COMPLETED' AND outcome IS NULL)
+    ),
+    CONSTRAINT ck_journey_status CHECK (
+        journey = 'EKYC' OR status <> 'WAITING_MEDIA'
+    ),
+    CONSTRAINT ck_ekyc_consent CHECK (
+        journey <> 'EKYC' OR consent_ref IS NOT NULL
+    ),
+    CONSTRAINT ck_progress CHECK (
+        processed_units >= 0 AND failed_units >= 0 AND
+        failed_units <= processed_units AND
+        (total_units IS NULL OR
+            (total_units >= 0 AND processed_units <= total_units AND failed_units <= total_units))
+    ),
+    CONSTRAINT ck_journey_outcome CHECK (
+        outcome IS NULL OR
+        (journey = 'OCR' AND outcome IN
+            ('OCR_COMPLETED', 'PARTIAL', 'NEED_REVIEW', 'NEED_RETRY', 'PROVIDER_ERROR')) OR
+        (journey = 'EKYC' AND outcome IN
+            ('VERIFIED', 'REJECTED', 'NEED_RETRY', 'PROVIDER_ERROR'))
     )
 );
 
@@ -626,7 +674,8 @@ CREATE TABLE provider_attempts (
     attempt_no               INTEGER NOT NULL,
     provider_session_ciphertext BYTEA,
     provider_request_ref     VARCHAR(150),
-    status                   VARCHAR(20) NOT NULL,
+    status                   VARCHAR(20) NOT NULL CHECK (status IN
+                                ('STARTED', 'SUCCEEDED', 'FAILED', 'UNKNOWN')),
     error_class              VARCHAR(30),
     error_code               VARCHAR(80),
     started_at               TIMESTAMPTZ NOT NULL,
@@ -679,7 +728,8 @@ CREATE TABLE outbox_events (
     aggregate_id             UUID NOT NULL,
     event_type               VARCHAR(80) NOT NULL,
     payload                  JSONB NOT NULL,
-    status                   VARCHAR(20) NOT NULL DEFAULT 'NEW',
+    status                   VARCHAR(20) NOT NULL DEFAULT 'NEW' CHECK (status IN
+                                ('NEW', 'PUBLISHING', 'PUBLISHED', 'FAILED')),
     available_at             TIMESTAMPTZ NOT NULL DEFAULT now(),
     published_at             TIMESTAMPTZ,
     attempt_count            INTEGER NOT NULL DEFAULT 0,
@@ -693,17 +743,30 @@ Không dùng `provider_session_id`, `businessRef`, media URL hoặc PII làm met
 
 ## Transaction, idempotency và worker
 
-- **Create OCR/eKYC:** trong một transaction ngắn, insert `verification_sessions`, media manifest nếu có, `verification_jobs` và `outbox_events`. Cùng `Idempotency-Key` + fingerprint trả resource cũ; cùng key khác fingerprint trả `409 IDEMPOTENCY_CONFLICT`.
+- **Create OCR:** trong một transaction ngắn, insert `verification_sessions`, media manifest, `verification_jobs` và `outbox_events`. **Start eKYC** chỉ insert session `WAITING_MEDIA`; job/outbox xử lý chỉ được tạo khi submit đủ media. Cùng `Idempotency-Key` + fingerprint trả resource cũ; cùng key khác fingerprint trả `409 IDEMPOTENCY_CONFLICT`.
 - **Submit media:** HEAD/validate object được thực hiện ngoài transaction. Sau đó lock/CAS `verification_sessions.row_version`, upsert manifest idempotent, kiểm tra đủ logical part, chuyển `WAITING_MEDIA → QUEUED` và ghi outbox trong cùng transaction.
 - **Claim job:** queue dùng at-least-once. Worker dedupe theo `job_id`, claim bằng lease/CAS; message trùng không gọi provider lại nếu operation đã có terminal `provider_attempts`.
 - **Provider call:** S3/KMS/FPT call luôn nằm ngoài DB transaction. Timeout connect/read, bulkhead, circuit breaker, quota và concurrency được cấu hình riêng theo operation/provider.
 - **Persist result:** normalize payload trước; trong transaction ngắn upsert checks/result, cập nhật progress, chuyển `status=COMPLETED`, gán `outcome`, append history và outbox `VerificationCompleted`.
-- **Retry:** chỉ retry lỗi network trước khi gửi body hoặc lỗi provider được xác nhận retry-safe. Nếu timeout sau khi body có thể đã tới FPT, reconcile bằng provider session/result API trước; không POST lại mù gây tính phí/kết quả trùng.
+- **Worker retry:** chỉ retry lỗi network trước khi gửi body hoặc lỗi provider được xác nhận retry-safe. Nếu timeout sau khi body có thể đã tới FPT, reconcile bằng provider session/result API trước; không POST lại mù gây tính phí/kết quả trùng.
+- **Journey retry API:** luôn tạo `verificationId/attempt` mới và liên kết `retry_of`. OCR chỉ được reuse immutable finalized media khi outcome là `PROVIDER_ERROR`; `NEED_RETRY` do chất lượng phải upload media mới. eKYC luôn capture/upload media mới để chống replay.
 - **Tài liệu lớn:** tách `OCR_PAGE` job, giới hạn số trang chạy song song, retry từng trang; aggregator hoàn tất khi mọi unit terminal và cho outcome `PARTIAL` nếu policy cho phép.
 - **Dead job:** khi hết recovery budget, worker persist `COMPLETED + PROVIDER_ERROR` và `nextAction=RETRY`; DLQ chỉ phục vụ vận hành, không để client polling vô hạn.
 - **Cancel:** `WAITING_MEDIA/QUEUED` chuyển `CANCELLED` ngay. Khi `PROCESSING`, chuyển `CANCEL_REQUESTED`; worker không phát sinh call mới, kết thúc call đang chạy rồi bỏ result và chuyển `CANCELLED`.
 
 ## Cấu trúc implementation
+
+| **Hạng mục** | **Baseline đề xuất** |
+| --- | --- |
+| Runtime | Java 25, Spring Boot 4.0.4, Maven |
+| Internal API | Spring MVC + OpenAPI 3; OAuth2 Resource Server; mTLS ở service mesh/ingress nội bộ |
+| Provider client | Spring WebClient streaming + Resilience4j; không buffer toàn bộ PDF/video vào heap |
+| Persistence | PostgreSQL, Flyway; Spring Data JPA cho aggregate và JDBC cho claim/lock/outbox hot path |
+| Messaging | Kafka + transactional outbox; partition key là `verificationId` |
+| Security | Secret Manager/KMS, application-layer envelope encryption và rotation theo key version |
+| Observability | Micrometer + OpenTelemetry trace; structured log đã mask |
+
+Kafka baseline dùng `vhm.verification.jobs.v1`, `vhm.verification.events.v1` và `vhm.verification.jobs.dlq.v1`. Outbox Publisher gửi at-least-once; consumer dedupe bằng `eventId/jobId`. Retry có delay được persist ở `verification_jobs.available_at` và Retry Scheduler chỉ republish job đến hạn, không giữ message/thread để chờ.
 
 ```text
 vhm-verification-service
@@ -721,7 +784,7 @@ vhm-verification-service
 
 API và Worker là hai deployment độc lập nhưng dùng chung codebase/domain contract. API scale theo request rate; Worker scale theo queue lag nhưng luôn bị chặn bởi provider quota. Outbox Publisher và Reconciliation có thể chạy trong Worker deployment với leader election hoặc consumer partitioning.
 
-**Baseline bảo mật và vận hành:**
+### Baseline bảo mật và vận hành
 
 | **Nhóm** | **Implementation bắt buộc** |
 | --- | --- |
@@ -733,15 +796,24 @@ API và Worker là hai deployment độc lập nhưng dùng chung codebase/domai
 | Metrics | API latency/error, queue depth/oldest age, processing duration, retry/DLQ, provider latency/error/quota, outcome count và stuck session; không dùng high-cardinality/PII label |
 | Availability | API tối thiểu 2 replicas; Worker graceful shutdown/lease recovery; PostgreSQL Multi-AZ/PITR; queue durable; runbook provider outage/backlog recovery |
 
-**Thứ tự triển khai đề xuất:**
+### Thứ tự triển khai đề xuất
 
 1. Xây API/status model, PostgreSQL migration, idempotency, outbox, queue, worker skeleton, security/audit và mock Provider Adapter.
-2. Triển khai `OCR_ONLY` cho CCCD/GPLX/Hộ chiếu qua FPT `/session/init` → `/ocr`, Canonical Result và polling end-to-end.
+2. Triển khai `OCR` cho CCCD/GPLX/Hộ chiếu qua FPT `/session/init` → `/ocr`, Canonical Result và polling end-to-end.
 3. Bổ sung Document OCR cho PDF/tài liệu nhiều trang sau khi chốt provider, input limit, SLA và sync/async contract.
-4. Triển khai `FULL_EKYC` `/session/init` → `/ocr` → `/face/liveness`; chỉ bật QR/NFC theo channel/policy đã kiểm thử. FPT public API hiện mô tả NFC `check_chip` cho Android/iOS, không mặc định bật cho Web.
+4. Triển khai `EKYC` `/session/init` → `/ocr` → `/face/liveness`; chỉ bật QR/NFC theo channel/policy đã kiểm thử. FPT public API hiện mô tả NFC `check_chip` cho Android/iOS, không mặc định bật cho Web.
 5. Load/chaos/security test; chốt retry budget, provider quota, retention, masking và alert threshold trước production.
+
+### Kiểm thử tối thiểu trước khi release
+
+| **Lớp test** | **Phạm vi bắt buộc** |
+| --- | --- |
+| Unit/domain | Mọi state transition, journey-outcome guard, decision mapping, masking, retry classification và idempotency fingerprint |
+| Contract | Request/response/error fixture cho FPT session, OCR, liveness, QR/NFC; tolerant optional field nhưng fail với critical field sai schema |
+| Integration | PostgreSQL constraint/locking, outbox-to-queue, duplicate/out-of-order message, lease recovery, KMS và exact-object media access |
+| End-to-end | OCR ảnh định danh, OCR nhiều trang partial, eKYC verified/rejected/need-retry, cancel, expire, poll và confirm/apply |
+| Security/resilience | Media-ref tamper, object version/checksum mismatch, unauthorized result query, log leakage, provider timeout/429/5xx, backlog và DLQ recovery |
 
 Các điểm còn phải xác nhận với FPT trước khi code production: SDK có expose raw artifact trước khi gửi provider hay không; liveness mode/media requirement theo Mobile/Web; QR/NFC capability theo channel; giới hạn và SLA của AI Read/Document OCR; provider idempotency, timeout-unknown handling, result retention và quota. Callback chỉ bổ sung khi có contract xác thực/dedupe rõ ràng và đi qua Callback Ingress, không mở public service private.
 
 `vhm-verification-service` chịu trách nhiệm capability OCR/eKYC và dữ liệu verification. Quyết định sử dụng kết quả, cập nhật khách hàng và phê duyệt hồ sơ NOXH vẫn thuộc `vhm-dossier-core`.
-
