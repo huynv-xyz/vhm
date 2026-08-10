@@ -174,32 +174,43 @@ Upload là luồng độc lập với OCR. `vhm-dossier-core` chưa tạo `verif
 
 ```mermaid
 flowchart LR
-    AGENT["`**Mobile/Web**
-Yêu cầu OCR · Nhận kết quả`"]
+    CLIENT["`**Mobile/Web**
+Submit OCR · Poll result`"]
     BFF["`**vhm-agent-api**
 Xác thực · routing`"]
-    NOXH["`**vhm-dossier-core**
+    DOSSIER["`**vhm-dossier-core**
 Authorize · Apply result`"]
-    VERIFY["`**vhm-verification-service**
+
+    subgraph VERIFY["`**vhm-verification-service**
 OCR · eKYC · Provider Adapter`"]
+        direction TB
+        API["`**Verification API**
+Create · Status · Result`"]
+        QUEUE[("`**Job Queue**
+Async jobs`")]
+        WORKER["`**OCR Worker**
+Process · Normalize`"]
+        DB[("`**Verification Database**
+Job status · Canonical result`")]
+
+        API <-->|"Persist/read job"| DB
+        API -->|"Enqueue"| QUEUE
+        QUEUE -->|"Consume job"| WORKER
+        WORKER -->|"Persist progress/result"| DB
+    end
+
     MEDIA[("`**Private Object Storage**
 Finalized attachments`")]
     PROVIDER["`**OCR/eKYC Provider**
 FPT eKYC · Document OCR`"]
-    DB[("`**Verification Database**
-Job Status · Canonical Result`")]
 
-    AGENT <-->|"`1. Submit OCR
-6. Poll status/result`"| BFF
-    BFF <-->|"`2. Authorized request
-6. Authorized query/result`"| NOXH
-    NOXH <-->|"`3. Create job → 202 QUEUED
-6. Status/Canonical Result`"| VERIFY
-    VERIFY -->|"4. Worker GET finalized object"| MEDIA
-    VERIFY ==>|"`5. Init session + OCR
-server credential`"| PROVIDER
-    PROVIDER ==>|"5. Provider result"| VERIFY
-    VERIFY -->|"Persist job status/result"| DB
+    CLIENT <-->|"Submit OCR (202) · Poll status/result"| BFF
+    BFF <-->|"Authenticated request/response"| DOSSIER
+    DOSSIER <-->|"Create job (202) · Status/result"| API
+
+    WORKER -->|"GET finalized object"| MEDIA
+    WORKER ==>|"Init session · OCR request"| PROVIDER
+    PROVIDER ==>|"Provider result"| WORKER
 ```
 
 Request tạo OCR chỉ chờ đến khi `vhm-verification-service` persist job và trả `verificationId + QUEUED`; việc đọc object và gọi provider diễn ra trong worker. Mobile/Web không giữ kết nối chờ provider mà tra cứu trạng thái/kết quả qua `vhm-agent-api` và `vhm-dossier-core`.
