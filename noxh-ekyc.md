@@ -31,7 +31,7 @@ FPT SDK là thư viện chạy trên ứng dụng Mobile/Web để hướng dẫ
 | **Hướng tiếp cận** | **Luồng chính** | **Ưu điểm** | **Nhược điểm** | **Lựa chọn** |
 | --- | --- | --- | --- | --- |
 | Backend API tại từng domain | Mobile/Web gọi domain backend; mỗi domain tự quản lý media, session và gọi FPT API | Không cần thêm capability/service tập trung; domain chủ động tùy chỉnh luồng theo nghiệp vụ riêng | Lặp code tích hợp ở nhiều domain; phân tán credential, session, retry, quota và audit; kết quả/error contract dễ không đồng nhất; mỗi lần đổi provider phải sửa nhiều service | No |
-| Backend API qua `vhm-verification-service` | Mobile/Web upload vào S3; domain gọi Verification API; worker đọc media và gọi FPT API | Một contract cho nhiều domain và kênh; credential và provider contract chỉ nằm trong verification service; VHM chủ động media, retry, quota, audit và Canonical Result; phù hợp cả OCR tài liệu đã upload | VHM phải tự xây giao diện capture, hướng dẫn chất lượng ảnh và điều phối eKYC; không tận dụng AI model trong SDK hoặc NFC của Mobile SDK; cần queue, worker và polling | **Yes — baseline OCR và eKYC** |
+| Backend API qua `vhm-verification-service` | Mobile/Web upload vào S3; domain gọi Verification API; worker đọc media và gọi FPT API | Domain mới chỉ tích hợp contract create/status/result, không phải tự xây FPT session, worker, retry và error mapping; đổi API/model/credential của FPT tại một nơi mà không sửa từng domain; queue, rate limit và circuit breaker cô lập latency/quota của FPT khỏi nghiệp vụ; bảo mật dữ liệu, audit và Canonical Result nhất quán giữa các domain/kênh | Phải vận hành thêm service, database, queue và worker; trở thành dependency tập trung nên phải HA và cô lập quota/backlog theo workload; VHM vẫn tự xây capture UX và dùng polling | **Yes — baseline OCR và eKYC** |
 | FPT SDK gọi trực tiếp FPT, không qua Proxy VHM | SDK trên Mobile/Web capture và gửi dữ liệu thẳng tới FPT; VHM nhận kết quả theo cơ chế tích hợp của FPT | Tích hợp eKYC phía VHM đơn giản hơn; ít hop và độ trễ truyền tải thấp; tận dụng capture UI, kiểm tra chất lượng thời gian thực, liveness và các capability SDK hỗ trợ | VHM không kiểm soát đường truyền media trước khi tới FPT; phụ thuộc SDK trên từng nền tảng và cơ chế nhận/đối soát kết quả; khó áp dụng contract upload/worker hiện tại; không phù hợp OCR tài liệu nghiệp vụ tổng quát | No |
 | FPT SDK qua Proxy Server của VHM | SDK trên Mobile/Web gọi endpoint Proxy; Proxy relay request/response giữa SDK và FPT | Vẫn tận dụng capture UX của SDK; VHM quan sát và kiểm soát luồng dữ liệu đi qua hạ tầng của mình; có thể chủ động lưu kết quả | Phải vận hành public streaming/multipart proxy có availability cao; thêm latency, bandwidth và điểm lỗi; proxy phụ thuộc chặt endpoint/header/protocol của SDK; các call tương tác không đi qua queue/worker; Verification API hiện là private nên cần ingress/proxy workload riêng | No |
 
@@ -52,7 +52,7 @@ OCR chỉ hỗ trợ số hóa/gợi ý dữ liệu. eKYC hỗ trợ kiểm tra 
 | Domain service, ví dụ `vhm-dossier-core` | Authorize `businessRef`, chủ thể, media path; query và apply kết quả |
 | `vhm-media-service` | Chỉ tham gia upload; trả `presignHeaders + presignedUrl + s3PathFile` |
 | Verification API | Private command/query API của `vhm-verification-service` |
-| Outbox Publisher + Job Bus | Publish job đã commit và route theo `verificationType` |
+| Outbox Publisher + Job Bus | Publish job đã commit và route theo `type` |
 | OCR Worker pool | Xử lý một logical document và gọi FPT OCR flow |
 | eKYC Worker pool | Xử lý document + liveness media và gọi full eKYC flow |
 | Provider Adapter | Inject server credential, map provider request/response/error |
@@ -89,7 +89,7 @@ QUEUED → PROCESSING (OCR)
 
 `currentStep` được chuẩn hóa thành: `VALIDATE_MEDIA`, `INIT_SESSION`, `OCR`, `LIVENESS`, `NORMALIZE`, `DONE`. Khi eKYC ở `WAITING_LIVENESS`, worker đã giải phóng lease và `currentStep=LIVENESS`.
 
-`outcome` chỉ có khi `status=COMPLETED` và được kiểm tra theo `verificationType`:
+`outcome` chỉ có khi `status=COMPLETED` và được kiểm tra theo `type`:
 
 | **Type** | **Outcome** |
 | --- | --- |
@@ -494,8 +494,6 @@ API theo use case vẫn tách để contract rõ, nhưng đều map vào verific
 | Lấy eKYC result | `GET /v1/ekyc-verifications/{verificationId}/result` | eKYC Canonical Result |
 | Retry eKYC | `POST /v1/ekyc-verifications/{verificationId}/retries` | `202`, verification mới |
 
-Toàn bộ API của `vhm-verification-service` là private nên không thêm prefix `/internal`. Route không chứa `/dossiers`; domain caller truyền `businessRef`, lưu association với `verificationId` và authorize lại mỗi request từ Mobile/Web.
-
 ### 5.2. Tạo OCR
 
 ```http
@@ -508,7 +506,7 @@ Content-Type: application/json
   "businessRef": { "type": "DOSSIER", "id": "dos-01" },
   "subjectRef": "customer-opaque-ref",
   "channel": "MOBILE",
-  "sourcePlatform": "ANDROID",
+  "platform": "ANDROID",
   "documentType": "MARRIAGE_CERTIFICATE",
   "s3PathFile": "registrations/dos-01/marriage-certificate.png"
 }
@@ -529,11 +527,11 @@ Content-Type: application/json
   "subjectRef": "customer-opaque-ref",
   "consentRef": "consent-20260810-01",
   "channel": "MOBILE",
-  "sourcePlatform": "ANDROID",
+  "platform": "ANDROID",
   "documentType": "IDR",
   "media": [
-    { "role": "DOCUMENT_FRONT", "s3PathFile": "registrations/dos-01/front.png", "order": 1 },
-    { "role": "DOCUMENT_BACK", "s3PathFile": "registrations/dos-01/back.png", "order": 1 }
+    { "role": "DOCUMENT_FRONT", "s3PathFile": "registrations/dos-01/front.png", "position": 1 },
+    { "role": "DOCUMENT_BACK", "s3PathFile": "registrations/dos-01/back.png", "position": 1 }
   ]
 }
 ```
@@ -573,7 +571,7 @@ Content-Type: application/json
     {
       "role": "LIVENESS_VIDEO",
       "s3PathFile": "registrations/dos-01/liveness.mp4",
-      "order": 1
+      "position": 1
     }
   ]
 }
@@ -612,7 +610,7 @@ Retry-After: 3
 }
 ```
 
-`nextAction` và progress được tính từ `verificationType + status + currentStep + outcome`, không persist.
+`nextAction` và progress được tính từ `type + status + currentStep + outcome`, không persist.
 
 ### 5.6. Canonical Result
 
@@ -705,15 +703,15 @@ erDiagram
 
 ```sql
 CREATE TABLE verifications (
-    verification_id         UUID PRIMARY KEY,
-    verification_type       VARCHAR(20) NOT NULL CHECK (verification_type IN
+    id                      UUID PRIMARY KEY,
+    type                    VARCHAR(20) NOT NULL CHECK (type IN
                                 ('OCR', 'EKYC')),
     business_type           VARCHAR(30) NOT NULL,
     business_ref            VARCHAR(100) NOT NULL,
     subject_ref_ciphertext  BYTEA,
     consent_ref             VARCHAR(150),
     channel                 VARCHAR(20) NOT NULL CHECK (channel IN ('MOBILE', 'WEB')),
-    source_platform         VARCHAR(20) NOT NULL CHECK (source_platform IN
+    platform                VARCHAR(20) NOT NULL CHECK (platform IN
                                 ('ANDROID', 'IOS', 'WEB')),
     document_type           VARCHAR(50) NOT NULL,
 
@@ -731,12 +729,12 @@ CREATE TABLE verifications (
     lease_until             TIMESTAMPTZ,
     last_error_code         VARCHAR(80),
 
-    liveness_capture_ref    UUID UNIQUE,
-    liveness_expires_at     TIMESTAMPTZ,
+    capture_ref             UUID UNIQUE,
+    capture_expires_at      TIMESTAMPTZ,
     liveness_idempotency_key VARCHAR(100),
     liveness_request_fingerprint CHAR(64),
 
-    retry_of                UUID REFERENCES verifications(verification_id),
+    retry_of                UUID REFERENCES verifications(id),
     idempotency_key         VARCHAR(100) NOT NULL,
     request_fingerprint     CHAR(64) NOT NULL,
     terminal_reason_code    VARCHAR(80),
@@ -746,19 +744,19 @@ CREATE TABLE verifications (
     completed_at            TIMESTAMPTZ,
 
     CONSTRAINT uq_verification_idempotency
-        UNIQUE (verification_type, business_type, idempotency_key),
+        UNIQUE (type, business_type, idempotency_key),
     CONSTRAINT ck_verification_channel_platform CHECK (
-        (channel = 'WEB' AND source_platform = 'WEB') OR
-        (channel = 'MOBILE' AND source_platform IN ('ANDROID', 'IOS'))
+        (channel = 'WEB' AND platform = 'WEB') OR
+        (channel = 'MOBILE' AND platform IN ('ANDROID', 'IOS'))
     ),
     CONSTRAINT ck_ekyc_required_fields CHECK (
-        verification_type <> 'EKYC' OR
+        type <> 'EKYC' OR
         (subject_ref_ciphertext IS NOT NULL AND consent_ref IS NOT NULL)
     ),
     CONSTRAINT ck_waiting_liveness CHECK (
         status <> 'WAITING_LIVENESS' OR
-        (verification_type = 'EKYC' AND current_step = 'LIVENESS' AND
-         liveness_capture_ref IS NOT NULL AND liveness_expires_at IS NOT NULL)
+        (type = 'EKYC' AND current_step = 'LIVENESS' AND
+         capture_ref IS NOT NULL AND capture_expires_at IS NOT NULL)
     ),
     CONSTRAINT ck_liveness_idempotency_pair CHECK (
         (liveness_idempotency_key IS NULL AND liveness_request_fingerprint IS NULL) OR
@@ -766,9 +764,9 @@ CREATE TABLE verifications (
     ),
     CONSTRAINT ck_verification_status_outcome CHECK (
         (status <> 'COMPLETED' AND outcome IS NULL) OR
-        (status = 'COMPLETED' AND verification_type = 'OCR' AND outcome IN
+        (status = 'COMPLETED' AND type = 'OCR' AND outcome IN
             ('OCR_COMPLETED', 'NEED_REVIEW', 'NEED_RETRY', 'PROVIDER_ERROR')) OR
-        (status = 'COMPLETED' AND verification_type = 'EKYC' AND outcome IN
+        (status = 'COMPLETED' AND type = 'EKYC' AND outcome IN
             ('EKYC_VERIFIED', 'EKYC_REJECTED', 'NEED_REVIEW',
              'NEED_RETRY', 'PROVIDER_ERROR'))
     ),
@@ -781,37 +779,37 @@ CREATE TABLE verifications (
 CREATE INDEX ix_verification_business
     ON verifications (business_type, business_ref, created_at DESC);
 CREATE INDEX ix_verification_dispatch
-    ON verifications (verification_type, status, available_at)
+    ON verifications (type, status, available_at)
     WHERE status IN ('QUEUED', 'PROCESSING');
 CREATE INDEX ix_verification_lease_recovery
     ON verifications (lease_until)
     WHERE status = 'PROCESSING';
 
 CREATE TABLE verification_media_refs (
-    media_ref_id             UUID PRIMARY KEY,
-    verification_id         UUID NOT NULL REFERENCES verifications(verification_id),
+    id                      UUID PRIMARY KEY,
+    verification_id         UUID NOT NULL REFERENCES verifications(id),
     role                     VARCHAR(30) NOT NULL CHECK (role IN
                                 ('OCR_DOCUMENT', 'DOCUMENT_FRONT', 'DOCUMENT_BACK',
                                  'LIVENESS_SELFIE', 'LIVENESS_VIDEO')),
-    media_order              INTEGER NOT NULL DEFAULT 1 CHECK (media_order > 0),
+    position                INTEGER NOT NULL DEFAULT 1 CHECK (position > 0),
     s3_path_file             TEXT NOT NULL,
     created_at               TIMESTAMPTZ NOT NULL DEFAULT now(),
-    CONSTRAINT uq_verification_media_role_order
-        UNIQUE (verification_id, role, media_order)
+    CONSTRAINT uq_verification_media_role_position
+        UNIQUE (verification_id, role, position)
 );
 
 CREATE INDEX ix_verification_media
     ON verification_media_refs (verification_id);
 
 CREATE TABLE provider_attempts (
-    provider_attempt_id      UUID PRIMARY KEY,
-    verification_id         UUID NOT NULL REFERENCES verifications(verification_id),
+    id                      UUID PRIMARY KEY,
+    verification_id         UUID NOT NULL REFERENCES verifications(id),
     provider                 VARCHAR(30) NOT NULL,
     operation                VARCHAR(30) NOT NULL CHECK (operation IN
                                 ('INIT_SESSION', 'OCR', 'LIVENESS')),
     attempt_no               INTEGER NOT NULL CHECK (attempt_no > 0),
-    provider_session_ciphertext BYTEA,
-    provider_session_expires_at TIMESTAMPTZ,
+    session_id_ciphertext    BYTEA,
+    session_expires_at       TIMESTAMPTZ,
     status                   VARCHAR(20) NOT NULL CHECK (status IN
                                 ('STARTED', 'SUCCEEDED', 'FAILED', 'UNKNOWN')),
     delivery_state           VARCHAR(20) NOT NULL CHECK (delivery_state IN
@@ -828,8 +826,8 @@ CREATE INDEX ix_provider_attempt_verification
     ON provider_attempts (verification_id, operation, attempt_no DESC);
 
 CREATE TABLE verification_results (
-    verification_id         UUID PRIMARY KEY REFERENCES verifications(verification_id),
-    result_version           INTEGER NOT NULL CHECK (result_version > 0),
+    verification_id         UUID PRIMARY KEY REFERENCES verifications(id),
+    version                 INTEGER NOT NULL CHECK (version > 0),
     schema_version           VARCHAR(20) NOT NULL,
     canonical_payload_ciphertext BYTEA NOT NULL,
     payload_key_version      VARCHAR(40) NOT NULL,
@@ -839,9 +837,9 @@ CREATE TABLE verification_results (
 );
 
 CREATE TABLE outbox_events (
-    event_id                 UUID PRIMARY KEY,
-    aggregate_id             UUID NOT NULL REFERENCES verifications(verification_id),
-    event_type               VARCHAR(80) NOT NULL,
+    id                      UUID PRIMARY KEY,
+    aggregate_id             UUID NOT NULL REFERENCES verifications(id),
+    type                    VARCHAR(80) NOT NULL,
     payload                  JSONB NOT NULL,
     status                   VARCHAR(20) NOT NULL DEFAULT 'NEW' CHECK (status IN
                                 ('NEW', 'PUBLISHING', 'PUBLISHED', 'FAILED')),
@@ -867,10 +865,10 @@ CREATE INDEX ix_outbox_lease_recovery
 
 Quy ước schema:
 
-- OCR insert một `verification_results` với `result_version=1`, `is_final=true` khi hoàn tất.
+- OCR insert một `verification_results` với `version=1`, `is_final=true` khi hoàn tất.
 - eKYC checkpoint document result với `is_final=false`, chuyển `WAITING_LIVENESS`; sau liveness tăng version và đặt `is_final=true`.
-- Result update dùng compare-and-set theo `result_version`; row đã `is_final=true` không được update. Retry tạo `verificationId` mới.
-- Media-role combination được validate ở application layer theo `verificationType + documentType`; CHECK SQL chỉ bảo vệ enum cơ bản.
+- Result update dùng compare-and-set theo `version`; row đã `is_final=true` không được update. Retry tạo `verificationId` mới.
+- Media-role combination được validate ở application layer theo `type + documentType`; CHECK SQL chỉ bảo vệ enum cơ bản.
 - Outbox/message chỉ chứa ID/reference tối thiểu, không chứa PII, media path, binary hoặc Canonical Result.
 
 ## 7. Tin cậy, timeout và vận hành worker
@@ -880,7 +878,7 @@ Quy ước schema:
 - Create OCR/eKYC insert verification, document media refs và outbox trong một transaction ngắn.
 - Submit liveness insert liveness media refs, chuyển `WAITING_LIVENESS → QUEUED`, ghi idempotency/fingerprint và outbox trong transaction riêng.
 - Cùng `Idempotency-Key` và request fingerprint trả resource cũ; cùng key nhưng fingerprint khác trả `409 IDEMPOTENCY_CONFLICT`.
-- Queue dùng at-least-once; message chỉ chứa `verificationId` và `verificationType`.
+- Queue dùng at-least-once; message chỉ chứa `verificationId` và `type`.
 - Worker claim aggregate bằng lease/CAS; không gọi lại operation đã có provider attempt terminal thành công.
 - Object Storage và provider calls luôn nằm ngoài DB transaction.
 - Sau mỗi provider call thành công, persist attempt, checkpoint cần thiết và `currentStep` tiếp theo.
@@ -889,11 +887,11 @@ Quy ước schema:
 
 ### 7.2. Retry và resume theo step
 
-- Retry budget lấy từ cấu hình theo `verificationType + provider + operation`, không lưu `max_attempts` trên aggregate.
+- Retry budget lấy từ cấu hình theo `type + provider + operation`, không lưu `maxAttempts` trên aggregate.
 - Lỗi retry-safe: trở lại `QUEUED`, tăng `attempt_count`, đặt `available_at` theo backoff và xóa worker lease.
 - OCR resume từ `INIT_SESSION/OCR/NORMALIZE` dựa trên attempt đã commit.
 - eKYC document job kết thúc ở `WAITING_LIVENESS`, xóa worker lease và không giữ worker trong thời gian chờ client.
-- Liveness submit chỉ được chấp nhận khi `captureRef` khớp, chưa hết `liveness_expires_at` và provider session còn hiệu lực.
+- Liveness submit chỉ được chấp nhận khi `captureRef` khớp, chưa hết `capture_expires_at` và provider session còn hiệu lực.
 - Liveness job dùng OCR checkpoint và session cũ; không gọi lại OCR.
 - Hết recovery budget: `COMPLETED + PROVIDER_ERROR`; client không poll vô hạn.
 
@@ -908,7 +906,7 @@ Quy ước schema:
 
 Timeout outbound của từng FPT call phải ngắn hơn worker lease còn lại. Worker renew lease giữa các step nếu tổng journey dài hơn lease ban đầu; hard timeout phải hủy outbound request trước khi mất lease.
 
-`liveness_expires_at` được tính bằng thời điểm nhỏ hơn giữa capture TTL của VHM và provider session expiry trừ safety margin. Hết TTL trước submit thì chuyển `EXPIRED`; client phải tạo verification mới.
+`capture_expires_at` được tính bằng thời điểm nhỏ hơn giữa capture TTL của VHM và provider session expiry trừ safety margin. Hết TTL trước submit thì chuyển `EXPIRED`; client phải tạo verification mới.
 
 ### 7.4. Quota và backlog
 
