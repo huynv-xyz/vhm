@@ -139,30 +139,47 @@ OCR chỉ hỗ trợ số hóa và kiểm tra dữ liệu theo khả năng của
 ```mermaid
 flowchart LR
     subgraph CLIENT["Kênh người dùng"]
-        AGENT["Vinhomes Agent"]
-        SDK["OCR Capture / Upload Client<br/>Chụp hoặc upload tài liệu"]
-        AGENT --> SDK
+        USER["Đại lý"]
+        MOBILE["Vinhomes Agent Mobile<br/>iOS / Android"]
+        WEB["Vinhomes Agent Web<br/>Desktop / Mobile browser"]
+        MOBILE_SDK["FPT AI eKYC Mobile SDK<br/>Camera capture"]
+        WEB_SDK["FPT AI eKYC Web SDK<br/>Web camera"]
+        UPLOAD["Upload Component<br/>Mobile/Web chọn file"]
+        USER --> MOBILE
+        USER --> WEB
+        MOBILE --> MOBILE_SDK
+        WEB --> WEB_SDK
+        MOBILE --> UPLOAD
+        WEB --> UPLOAD
     end
 
-    subgraph VHM["Hạ tầng VHM"]
+    subgraph APPLICATION["Tầng Application - Hạ tầng VHM"]
         BFF["Agent BFF<br/>Xác thực và routing"]
         NOXH["NOXH Backend<br/>Authorize · businessRef · Apply result"]
         PROXY["VHM OCR Service<br/>SDK/Provider · Session · Result<br/>Normalize · Resilience · Security · Audit"]
         DB[("OCR Database<br/>Session và kết quả chuẩn hóa")]
         MEDIA[("Private Object Storage<br/>Tài liệu theo retention policy")]
 
-        BFF --> NOXH
-        BFF ==>|"Luồng SDK OCR"| PROXY
-        NOXH -->|"create / status / result"| PROXY
+        BFF -->|"Control-plane<br/>create / status / result"| NOXH
+        BFF ==>|"Data-plane<br/>bounded stream, không lưu body"| PROXY
+        NOXH -->|"create / status / result<br/>businessRef + documentType"| PROXY
         PROXY --> DB
-        PROXY --> MEDIA
+        PROXY -.->|"Lưu tài liệu nếu retention policy yêu cầu"| MEDIA
     end
 
     subgraph FPT["Hạ tầng FPT AI"]
         PROVIDER["FPT AI Backend"]
     end
 
-    PROXY ==>|"Init/OCR/Result API<br/>api-key phía server"| PROVIDER
+    MOBILE -->|"Control-plane<br/>HTTPS + access token"| BFF
+    WEB -->|"Control-plane<br/>HTTPS + access token"| BFF
+    MOBILE_SDK ==>|"SDK data-plane<br/>verificationId + documentType + sideType"| BFF
+    WEB_SDK ==>|"Web SDK data-plane<br/>verificationId + documentType + sideType"| BFF
+    UPLOAD -->|"1. Xin upload slot / 3. submit mediaId<br/>không gửi binary qua BFF"| BFF
+    UPLOAD ==>|"2. Presigned PUT<br/>binary + checksum"| MEDIA
+    PROXY -->|"4. HEAD/đọc object đã validate để OCR"| MEDIA
+    PROXY ==>|"Init/OCR/Result API<br/>api-key chỉ inject phía server"| PROVIDER
+    PROVIDER ==>|"Direct Proxy Result"| PROXY
     PROVIDER -.->|"Provider Callback — bổ sung"| PROXY
 
 ```
@@ -208,14 +225,22 @@ Nhờ đó, NOXH Backend không phải triển khai SDK/provider adapter, callba
 sequenceDiagram
     autonumber
     actor DL as Đại lý
-    participant APP as Vinhomes Agent / SDK
+    participant MOBILE as Vinhomes Agent Mobile
+    participant WEB as Vinhomes Agent Web
+    participant SDK as eKYC SDK / Upload Component
     participant BFF as Agent BFF
     participant NOXH as NOXH Backend
     participant OCR as VHM OCR Service
+    participant MEDIA as Private Object Storage
     participant FPT as FPT AI Backend
 
-    DL->>APP: Chọn loại và chụp/upload tài liệu
-    APP->>BFF: Yêu cầu tạo phiên OCR
+    alt Kênh Mobile
+        DL->>MOBILE: Chọn hồ sơ và loại tài liệu
+        MOBILE->>BFF: Yêu cầu tạo phiên OCR
+    else Kênh Web
+        DL->>WEB: Chọn hồ sơ và loại tài liệu
+        WEB->>BFF: Yêu cầu tạo phiên OCR
+    end
     BFF->>NOXH: Kiểm tra quyền hồ sơ và dự án
     NOXH->>OCR: Create session (businessRef, documentType)
     OCR->>OCR: Sinh verificationId = FPT client_uuid
@@ -224,24 +249,71 @@ sequenceDiagram
     OCR->>OCR: Lưu mapping verificationId ↔ session-id
     OCR-->>NOXH: verificationId + SDK bootstrap
     NOXH-->>BFF: Thông tin khởi tạo phiên
-    BFF-->>APP: verificationId + SDK bootstrap
+    alt Kênh Mobile
+        BFF-->>MOBILE: verificationId + Mobile SDK bootstrap
+        MOBILE->>SDK: Khởi chạy Mobile SDK
+    else Kênh Web
+        BFF-->>WEB: verificationId + Web SDK/upload bootstrap
+        WEB->>SDK: Khởi chạy Web SDK / Upload Component
+    end
 
-    DL->>APP: Cung cấp các trang/mặt tài liệu bắt buộc
-    APP->>BFF: Dữ liệu tài liệu + verificationId
-    BFF->>OCR: Forward luồng OCR đã xác thực
-    OCR->>FPT: OCR request + model/template<br/>api-key + session-id + device-type
+    alt Chụp tài liệu bằng camera
+        DL->>SDK: Chụp đủ mặt/trang bắt buộc
+        SDK->>SDK: Kiểm tra chất lượng sơ bộ
+        SDK->>BFF: SDK OCR multipart<br/>verificationId + documentType + sideType
+        BFF->>BFF: Xác thực caller/session + giới hạn body
+        BFF->>OCR: Bounded stream, không buffer/log/spool body
+        OCR->>OCR: Bind verificationId/session/document/side
+        OCR->>FPT: POST /ocr multipart<br/>api-key + session-id + device-type + document-type
+    else Upload file có sẵn
+        DL->>SDK: Chọn file được hỗ trợ
+        SDK->>SDK: Kiểm tra định dạng/dung lượng và tính checksum
+        SDK->>BFF: Request upload slot<br/>verificationId + file metadata + checksum
+        BFF->>NOXH: Kiểm tra quyền hồ sơ/dự án và upload scope
+        NOXH->>OCR: Create media slot idempotent
+        OCR->>OCR: Cấp mediaId + exact object key + expiry
+        OCR-->>NOXH: Presigned PUT URL + required headers
+        NOXH-->>BFF: Upload slot
+        BFF-->>SDK: Presigned PUT URL + mediaId
+        SDK->>MEDIA: PUT binary trực tiếp<br/>content-length + content-type + checksum
+        MEDIA-->>SDK: ETag + object version
+        SDK->>BFF: Submit mediaId + checksum + object version
+        BFF->>NOXH: Authorized media submit
+        NOXH->>OCR: Finalize media manifest
+        OCR->>MEDIA: HEAD object và đọc metadata
+        MEDIA-->>OCR: size + content-type + checksum + version
+        OCR->>OCR: Validate binding/MIME/magic bytes/size/checksum
+        OCR->>MEDIA: GET object đã validate bằng private credential
+        MEDIA-->>OCR: Object stream
+        OCR->>FPT: POST /ocr multipart từ object stream<br/>api-key + session-id + device-type + document-type
+    end
+
     FPT-->>OCR: OCR result
     OCR->>OCR: Lưu và chuẩn hóa Canonical Result
     OCR-->>BFF: Forward SDK-compatible response
-    BFF-->>APP: Hiển thị kết quả OCR
+    BFF-->>SDK: SDK-compatible response
+    alt Kênh Mobile
+        SDK-->>MOBILE: Trả trạng thái/kết quả OCR
+    else Kênh Web
+        SDK-->>WEB: Trả trạng thái/kết quả OCR
+    end
 
     OCR-->>NOXH: NOXH Callback + Canonical Result
     NOXH->>NOXH: Lưu trạng thái theo businessRef
-    APP->>BFF: GET trạng thái hồ sơ OCR
+    alt Kênh Mobile
+        MOBILE->>BFF: GET trạng thái hồ sơ OCR
+    else Kênh Web
+        WEB->>BFF: GET trạng thái hồ sơ OCR
+    end
     BFF->>NOXH: Authorized status query
     NOXH-->>BFF: COMPLETED + dữ liệu chuẩn hóa
-    BFF-->>APP: Kết quả OCR
-    APP-->>DL: Hiển thị để kiểm tra và xác nhận
+    alt Kênh Mobile
+        BFF-->>MOBILE: Kết quả OCR
+        MOBILE-->>DL: Hiển thị để kiểm tra và xác nhận
+    else Kênh Web
+        BFF-->>WEB: Kết quả OCR
+        WEB-->>DL: Hiển thị để kiểm tra và xác nhận
+    end
 
     opt FPT AI gửi Provider Callback
         FPT-->>OCR: Provider Callback theo client_uuid
@@ -254,6 +326,21 @@ sequenceDiagram
         OCR->>OCR: Dedupe, chuẩn hóa và cập nhật kết quả
     end
 ```
+
+**Luồng capture/upload tài liệu:**
+
+- Vinhomes Agent Mobile/Web luôn tạo phiên OCR trước khi chụp hoặc upload. Mỗi phiên chỉ thuộc một channel; mọi request media phải mang context ngắn hạn bind với `verificationId`, caller, channel, `businessRef`, `documentType`, attempt và môi trường.
+- **Camera capture:** Mobile SDK hoặc Web SDK thu nhận ảnh rồi gọi endpoint đã override về Agent BFF; BFF xác thực và bounded-stream request sang VHM OCR Service theo luồng Proxy của FPT AI.
+- **File upload:** Tái sử dụng quyết định tại Vấn đề 3. Mobile/Web xin upload slot qua Agent BFF, sau đó PUT binary trực tiếp vào Private Object Storage bằng presigned URL; binary file upload không đi qua Agent BFF/NOXH Backend.
+- Presigned URL phải có TTL ngắn và bind exact object key, method, content type, content length, checksum, `mediaId`, `verificationId` và attempt. Client không có quyền list/read object hoặc tự chọn object key.
+- Sau upload, Mobile/Web chỉ submit `mediaId`, checksum và object version qua Agent BFF. NOXH Backend kiểm tra lại quyền trên hồ sơ/dự án; VHM OCR Service mới finalize media, HEAD/validate object rồi đọc bằng private credential để stream sang FPT AI.
+- Chỉ cho phép loại file, dung lượng, số trang/mặt và độ phân giải đã cấu hình theo từng `documentType`; PDF hoặc tài liệu nhiều trang chỉ được bật khi model/template và FPT AI contract tương ứng đã được xác nhận.
+- Mobile SDK, Web SDK và Upload Component không được gọi thẳng FPT AI Backend hoặc nhận provider API key.
+- Với camera/SDK data-plane, Agent BFF chỉ xác thực và stream body theo backpressure; không full-body buffer, không ghi file tạm, không log body/base64 và không retry sau khi đã bắt đầu gửi body.
+- VHM OCR Service kiểm tra binding phiên, object ownership, MIME/magic bytes, checksum, thứ tự mặt/trang và trạng thái attempt trước khi forward. Với CCCD gửi từng mặt, mặt trước phải được xử lý trước mặt sau theo contract `side-type` của FPT AI.
+- Provider `api-key`, `session-id`, `device-type` và `document-type` chỉ được VHM OCR Service inject ở outbound request. Mobile/Web không nhìn thấy provider credential.
+- Binary upload nằm trong Private Object Storage; database chỉ lưu encrypted reference, checksum, media metadata và thời hạn xóa. Upload chưa finalize phải được orphan-cleanup theo TTL; object đã finalize phải được purge theo retention policy.
+- Không retry tự động request OCR sau khi VHM OCR Service đã bắt đầu stream media sang FPT AI. Retry nghiệp vụ tạo attempt/run mới hoặc tái sử dụng object đã validate chỉ khi provider contract xác nhận idempotency, để tránh tính phí và kết quả trùng.
 
 **Cơ chế trả kết quả:**
 
