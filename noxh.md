@@ -25,24 +25,7 @@ Mỗi yêu cầu OCR xử lý **một logical document**, được tham chiếu 
 
 OCR chỉ hỗ trợ số hóa và gợi ý dữ liệu. Kết quả OCR không xác minh người thao tác là chủ thể của giấy tờ và không tự quyết định hồ sơ đủ điều kiện NOXH. Người dùng phải xác nhận trước khi `vhm-dossier-core` cập nhật dữ liệu nghiệp vụ.
 
-## 2. Căn cứ và quyết định tích hợp
-
-### 2.1. Contract FPT đã xác nhận
-
-Theo tài liệu backend API của FPT:
-
-1. Backend khởi tạo phiên bằng `POST /session/init`; `client_uuid` do VHM sinh và `only-engine=1` được dùng cho luồng chỉ OCR.
-2. FPT trả `session-id` ngay trong response khởi tạo phiên.
-3. Backend gửi file đến `POST /ocr` kèm `api-key`, `session-id`, `device-type` và `document-type`.
-4. `/ocr` trả `errorCode`, `errorMessage` và `data` ngay trong response. Contract công bố không trả `providerJobId` hoặc URL tra cứu trạng thái cho request OCR này.
-
-Nguồn: [Các API của luồng cập nhật thông tin](https://docs-vision.fpt.ai/ekyc/III-integration/III-2-APIs/a-APIs%20of%20eKYC%20Flows/APIs-in-update-information-flow/).
-
-FPT cũng công bố API `POST /callback/get_result` để lấy dữ liệu theo `client_uuid`. Tuy nhiên, trước khi dùng API này để recovery cho timeout OCR-only, cần FPT xác nhận dữ liệu của phiên `only-engine=1`, thời điểm kết quả sẵn sàng, retention, quota và error semantics. Nó không được coi là status API mặc định của `/ocr`. Nguồn: [Lấy dữ liệu từ hệ thống](https://docs-vision.fpt.ai/ekyc/III-integration/III-2-APIs/a-APIs%20of%20eKYC%20Flows/APIs-result/).
-
-Endpoint `/ocr` trong tài liệu trên chỉ công bố `idr`, `passport` và `dlr`. Giấy đăng ký kết hôn, giấy chứng nhận hộ nghèo/cận nghèo và tài liệu nghiệp vụ khác chỉ được enable sau khi FPT xác nhận API/model, định dạng file, giới hạn dung lượng và schema response phù hợp.
-
-### 2.2. Quyết định kiến trúc
+## 2. Quyết định kiến trúc
 
 | **Hướng tiếp cận** | **Ưu điểm** | **Nhược điểm** | **Lựa chọn** |
 | --- | --- | --- | --- |
@@ -92,8 +75,22 @@ Authorize · Apply result`"]
 Upload · FINALIZED · Read grant`"]
     STORAGE[("`**Private Object Storage**
 OCR document`")]
-    VERIFY["`**vhm-verification-service**
-OCR API · Worker · Provider Adapter`"]
+    subgraph VERIFY["`**vhm-verification-service (private)**
+OCR · Provider Adapter`"]
+        direction LR
+        API["`**Verification API**
+Create · Status · Result`"]
+        OUTBOX["`**Outbox Publisher**
+Publish OCR job`"]
+        WORKER["`**OCR Worker**
+Internal workload`"]
+        ADAPTER["`**Provider Adapter**
+FPT contract · credential`"]
+
+        WORKER --> ADAPTER
+    end
+    QUEUE[("`**OCR Job Queue**
+Async job`")]
     FPT["`**FPT AI Backend**
 Session API · OCR API`"]
     DB[("`**Verification Database**
@@ -105,11 +102,17 @@ Job · Provider attempt · Result`")]
     MEDIA_API <-->|"Object operations"| STORAGE
 
     BFF <-->|"Create/query/apply OCR"| DOSSIER
-    DOSSIER <-->|"Private OCR command/query"| VERIFY
-    VERIFY <-->|"Validate metadata · Read grant"| MEDIA_API
-    VERIFY -->|"GET exact finalized version"| STORAGE
-    VERIFY <-->|"Synchronous provider API"| FPT
-    VERIFY <-->|"Persist/read"| DB
+    DOSSIER <-->|"Private OCR command/query"| API
+
+    API <-->|"Persist/read status · result"| DB
+    OUTBOX <-->|"Claim committed outbox"| DB
+    OUTBOX -->|"Publish"| QUEUE
+    QUEUE -->|"Worker consume"| WORKER
+
+    WORKER <-->|"Validate metadata · Read grant"| MEDIA_API
+    WORKER -->|"GET exact finalized version"| STORAGE
+    ADAPTER <-->|"Synchronous provider API"| FPT
+    WORKER -->|"Persist attempt · result"| DB
 ```
 
 Hai đường dữ liệu được tách rõ:
@@ -117,7 +120,7 @@ Hai đường dữ liệu được tách rõ:
 - Upload binary: `Mobile/Web → Presigned PUT → Object Storage`.
 - OCR: `vhm-verification-service → Object Storage → FPT AI Backend`.
 
-Mobile/Web không gửi binary qua `vhm-dossier-core` hoặc `vhm-verification-service` khi upload và không gọi trực tiếp FPT.
+Mobile/Web không gửi binary qua `vhm-dossier-core` hoặc `vhm-verification-service` khi upload và không gọi trực tiếp FPT. Khi tạo OCR, Verification API persist `QUEUED` cùng outbox; Outbox Publisher đưa job vào `OCR Job Queue`, sau đó OCR Worker mới đọc media và gọi FPT. Các module nằm trong khung `vhm-verification-service` thuộc cùng một service/codebase; queue là hạ tầng messaging của workload này.
 
 ### 3.3. Lifecycle và outcome
 
@@ -481,7 +484,7 @@ CREATE TABLE provider_attempts (
     verification_id         UUID NOT NULL REFERENCES ocr_verifications(verification_id),
     job_id                   UUID NOT NULL REFERENCES ocr_jobs(job_id),
     provider                 VARCHAR(30) NOT NULL,
-    operation                VARCHAR(30) NOT NULL CHECK (operation IN ('INIT_SESSION', 'OCR', 'GET_RESULT')),
+    operation                VARCHAR(30) NOT NULL CHECK (operation IN ('INIT_SESSION', 'OCR')),
     attempt_no               INTEGER NOT NULL CHECK (attempt_no > 0),
     provider_session_ciphertext BYTEA,
     status                   VARCHAR(20) NOT NULL CHECK (status IN
@@ -561,11 +564,7 @@ Timeout có thể xảy ra tại kết nối, gateway hoặc trong lúc FPT xử
 | Timeout sau khi body có thể đã gửi | Ghi `status=UNKNOWN`, `delivery_state=UNKNOWN`; không POST `/ocr` lại mù |
 | FPT trả business OCR error | Map sang `NEED_RETRY` hoặc `NEED_REVIEW`; không coi là timeout |
 
-Normal flow không polling FPT vì `/ocr` trả kết quả synchronous. Với timeout sau khi gửi body:
-
-1. Nếu FPT xác nhận `/callback/get_result` hỗ trợ phiên OCR-only theo `client_uuid=verificationId`, worker có thể enqueue một recovery job giới hạn để lấy kết quả.
-2. Nếu contract này chưa được xác nhận hoặc recovery hết budget, kết thúc `COMPLETED + PROVIDER_ERROR`, `nextAction=RETRY`.
-3. Retry từ người dùng tạo `verificationId` mới; không reset hoặc ghi đè attempt cũ.
+Normal flow không polling FPT vì `/ocr` trả kết quả synchronous. Nếu timeout sau khi body có thể đã được gửi, worker không gọi lại `/ocr` một cách mù quáng; verification kết thúc `COMPLETED + PROVIDER_ERROR`, `nextAction=RETRY`. Retry từ người dùng tạo `verificationId` mới, không reset hoặc ghi đè attempt cũ.
 
 Timeout outbound tới FPT phải ngắn hơn lease của worker. Giá trị cụ thể cần được chốt theo SLA và p95/p99 thực tế của từng endpoint; tài liệu này không giả định một con số timeout là SLA chính thức của FPT.
 
@@ -600,7 +599,6 @@ Timeout outbound tới FPT phải ngắn hơn lease của worker. Giá trị c�
 
 - API/model FPT cho giấy đăng ký kết hôn, giấy chứng nhận hộ nghèo/cận nghèo và tài liệu ngoài `idr/passport/dlr`.
 - File type/size/page limit, request multipart contract và SLA/quota của từng model.
-- Khả năng dùng `/callback/get_result` để recovery phiên `only-engine=1`; nếu không có xác nhận thì không implement polling FPT.
 - Threshold confidence/warning theo từng `documentType`.
 - Retention của Canonical Result, provider session metadata và audit history.
 
