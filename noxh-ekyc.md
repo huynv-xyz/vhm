@@ -268,6 +268,7 @@ sequenceDiagram
     VERIFY->>DB: currentStep=LIVENESS<br/>LIVENESS attempt STARTED
     VERIFY->>FPT: POST /face/liveness<br/>session-id + selfies hoặc video
     FPT-->>VERIFY: Synchronous liveness + face-match result
+    VERIFY->>DB: LIVENESS attempt SUCCEEDED<br/>currentStep=NORMALIZE
     VERIFY->>VERIFY: Map errors/checks + apply policy
     VERIFY->>DB: Transaction: final result + attempts<br/>COMPLETED + outcome + outbox
 
@@ -293,7 +294,7 @@ Quy ước Provider Adapter cho baseline API-only:
 
 - `/session/init` khởi tạo full eKYC session; không gửi cờ `only-engine=1` của luồng OCR-only.
 - `/ocr` gửi document files theo `documentType` và cùng `session-id`.
-- `/face/liveness` gửi `auto=false`, `device-type` được map từ `sourcePlatform`, cùng một trong hai input `selfies` hoặc `video` theo policy đã chốt.
+- `/face/liveness` gửi `auto=False`, `device-type` được map từ `sourcePlatform`, cùng một trong hai input `selfies` hoặc `video` theo policy đã chốt.
 
 ## 6. API contract của `vhm-verification-service`
 
@@ -423,7 +424,7 @@ Provider error trong worker được map vào attempt/outcome để client nhậ
 | `ekyc_verifications` | Aggregate root; business binding, lifecycle, step, idempotency và worker lease/retry |
 | `ekyc_media_refs` | Danh sách relative `s3PathFile` theo role/order của một eKYC |
 | `ekyc_provider_attempts` | Ghi từng lần init/OCR/liveness và trạng thái timeout không xác định |
-| `ekyc_results` | Canonical Result hiện hành, immutable sau khi verification hoàn tất |
+| `ekyc_results` | Canonical Result được build theo từng step và immutable sau khi verification hoàn tất |
 | `outbox_events` | Dùng chung với OCR để bảo đảm DB commit và enqueue/event không lệch nhau |
 
 OCR có một logical document nên `s3PathFile` nằm ngay trong `ocr_verifications`. eKYC cần nhiều physical media với role khác nhau, vì vậy tách `ekyc_media_refs` là cần thiết; không phải tách thêm service hay database.
@@ -529,16 +530,19 @@ CREATE TABLE ekyc_provider_attempts (
 
 CREATE TABLE ekyc_results (
     verification_id         UUID PRIMARY KEY REFERENCES ekyc_verifications(verification_id),
+    result_version           INTEGER NOT NULL CHECK (result_version > 0),
     schema_version           VARCHAR(20) NOT NULL,
     canonical_payload_ciphertext BYTEA NOT NULL,
     payload_key_version      VARCHAR(40) NOT NULL,
-    created_at               TIMESTAMPTZ NOT NULL DEFAULT now()
+    is_final                 BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at               TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at               TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 ```
 
 `outbox_events` dùng lại bảng đã định nghĩa trong tài liệu OCR. Outbox/message chỉ chứa `verificationId`, không chứa path, PII, binary hoặc Canonical Result.
 
-Retry budget lấy từ cấu hình theo provider/operation. `nextAction` và `progress` được tính từ `status + currentStep + outcome`, không persist. Mỗi verification có một final result immutable; retry tạo `verificationId` mới.
+`ekyc_results` cần `result_version/is_final` vì worker phải checkpoint document result trước khi gọi liveness và có thể resume sau crash. Khi `is_final=true`, result không được cập nhật nữa; retry tạo `verificationId` mới. Retry budget lấy từ cấu hình theo provider/operation. `nextAction` và `progress` được tính từ `status + currentStep + outcome`, không persist.
 
 ## 8. Xử lý tin cậy và timeout
 
@@ -551,7 +555,7 @@ Retry budget lấy từ cấu hình theo provider/operation. `nextAction` và `p
 - Sau mỗi provider call thành công, persist attempt và `currentStep` kế tiếp trước khi tiếp tục.
 - Worker được phép resume từ step cuối đã commit. Ví dụ OCR đã `SUCCEEDED` và session còn hợp lệ thì retry liveness không gọi lại OCR.
 - Worker không gọi lại một operation đã có attempt terminal thành công.
-- Final result, lifecycle `COMPLETED` và outbox terminal event được commit cùng transaction.
+- Final result (`is_final=true`), `currentStep=DONE`, lifecycle `COMPLETED` và outbox terminal event được commit cùng transaction.
 
 ### 8.2. Timeout FPT synchronous API
 
