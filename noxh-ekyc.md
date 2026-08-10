@@ -13,8 +13,10 @@ Upload document → create OCR → 202 QUEUED
 → Canonical Result → Mobile/Web poll → confirm/apply
 
 eKYC:
-Upload document + selfie/video → create eKYC → 202 QUEUED
-→ eKYC Worker → FPT session/init → OCR → face/liveness
+Upload document → create eKYC → 202 QUEUED
+→ eKYC Worker → FPT session/init → OCR → WAITING_LIVENESS
+→ capture/upload selfie hoặc video → submit liveness → 202 QUEUED
+→ eKYC Worker → FPT face/liveness
 → Canonical Result → Mobile/Web poll → confirm/apply
 ```
 
@@ -52,22 +54,29 @@ Hai worker pool tái sử dụng code nền, schema và job contract nhưng có 
 
 ### 2.2. Lifecycle verification
 
-`status` mô tả vòng đời kỹ thuật:
+`status` mô tả vòng đời kỹ thuật. OCR có một job, còn eKYC có hai job trong cùng `verificationId`:
 
 ```text
+OCR:
 QUEUED → PROCESSING → COMPLETED
-   └───────────────→ CANCELLED/EXPIRED
+
+eKYC:
+QUEUED → PROCESSING (OCR)
+       → WAITING_LIVENESS
+       → QUEUED → PROCESSING (LIVENESS)
+       → COMPLETED
 ```
 
 | **Status** | **Ý nghĩa** |
 | --- | --- |
 | `QUEUED` | Aggregate và outbox đã commit, chờ worker claim |
 | `PROCESSING` | Worker đang xử lý hoặc chờ retry step |
+| `WAITING_LIVENESS` | OCR giấy tờ đã đạt; chờ client capture/upload và submit liveness media |
 | `COMPLETED` | Đã có outcome cuối, kể cả provider error sau hết recovery budget |
 | `CANCELLED` | Bị hủy trước khi hoàn tất |
 | `EXPIRED` | Quá processing deadline |
 
-`currentStep` được chuẩn hóa thành: `VALIDATE_MEDIA`, `INIT_SESSION`, `OCR`, `LIVENESS`, `NORMALIZE`, `DONE`. OCR bỏ qua `LIVENESS`; eKYC phải đi qua bước này trong baseline.
+`currentStep` được chuẩn hóa thành: `VALIDATE_MEDIA`, `INIT_SESSION`, `OCR`, `LIVENESS`, `NORMALIZE`, `DONE`. Khi eKYC ở `WAITING_LIVENESS`, worker đã giải phóng lease và `currentStep=LIVENESS`.
 
 `outcome` chỉ có khi `status=COMPLETED` và được kiểm tra theo `verificationType`:
 
@@ -244,41 +253,36 @@ sequenceDiagram
 
 ### 4.1. Media manifest và provider flow
 
-Media eKYC được upload theo [mục Upload media của luồng OCR](#31-upload-media). Mobile/Web lặp lại flow đó cho từng document/selfie/video file, sau đó đưa các `s3PathFile` vào manifest dưới đây.
+Media eKYC được upload theo [mục Upload media của luồng OCR](#31-upload-media), nhưng chia thành hai thời điểm trong cùng `verificationId`:
 
-Một eKYC verification chứa nhiều physical media với role/order rõ ràng:
-
-| **Role** | **Số lượng** | **Nội dung** |
+| **Giai đoạn** | **Media role** | **Thời điểm upload** |
 | --- | --- | --- |
-| `DOCUMENT_FRONT` | 1 | Mặt trước giấy tờ hoặc trang ảnh chính hộ chiếu |
-| `DOCUMENT_BACK` | 0..1 | Mặt sau nếu `documentType` yêu cầu |
-| `LIVENESS_SELFIE` | 1..n | Selfie cho liveness/face match |
-| `LIVENESS_VIDEO` | 0..1 | Video liveness; không dùng đồng thời selfie nếu contract không cho phép |
+| OCR giấy tờ | `DOCUMENT_FRONT`, `DOCUMENT_BACK` nếu cần | Trước `POST /v1/ekyc-verifications` |
+| Liveness | `LIVENESS_SELFIE` hoặc `LIVENESS_VIDEO` | Sau khi status là `WAITING_LIVENESS` |
 
-Worker HEAD toàn bộ manifest trước khi init session và chỉ GET media khi thực hiện từng provider step. Không giữ toàn bộ video/document trong heap; nếu multipart client cần replay/content length, chỉ spool vào vùng tạm mã hóa có quota và xóa sau attempt.
+Giai đoạn OCR chỉ persist document media. Khi OCR đạt yêu cầu, worker checkpoint document result, giữ FPT session, sinh `captureRef` có TTL rồi chuyển `WAITING_LIVENESS`. Client mới capture/upload selfie hoặc video và submit media bằng API liveness của cùng verification.
 
-FPT eKYC flow của worker:
+Hai provider job:
 
 ```text
+EKYC_DOCUMENT_JOB:
 POST /session/init
-  client_uuid = verificationId
-  không dùng only-engine=1
+→ POST /ocr
+→ WAITING_LIVENESS
 
-POST /ocr
-  session-id + device-type + document-type + document files
-
+EKYC_LIVENESS_JOB:
 POST /face/liveness
-  session-id + device-type + auto=False + selfies hoặc video
+→ Canonical Result
 ```
 
-`sourcePlatform` map FPT `device-type`: `ANDROID → android`, `IOS → ios`, `WEB → web-sdk`.
+`livenessExpiresAt` không được vượt quá FPT session expiry trừ safety margin. Nếu hết hạn trước khi client submit, verification chuyển `EXPIRED` và không enqueue liveness job.
 
 ### 4.2. Kiến trúc tổng quan
 
 ```mermaid
 flowchart TB
     CLIENT["`**Mobile/Web**
-Upload media · Submit eKYC · Poll`"]
+Upload document · Capture liveness · Poll`"]
     BFF["`**vhm-agent-api**
 Xác thực · routing`"]
     DOMAIN["`**vhm-dossier-core**
@@ -292,9 +296,9 @@ Document · Selfie/Video`")]
 eKYC · Provider Adapter`"]
         direction LR
         API["`**Verification API**
-Create · Status · Result`"]
+Create · Submit Liveness · Status · Result`"]
         OUTBOX["`**Outbox Publisher**
-EKYC_JOB_CREATED`"]
+Document/Liveness jobs`"]
         WORKER["`**eKYC Worker pool**
 Internal workload`"]
         ADAPTER["`**Provider Adapter**
@@ -316,7 +320,7 @@ Verification · Media · Attempt · Result`")]
     BFF <-->|"Request upload URL"| MEDIA_API
     CLIENT ==>|"Presigned PUT"| STORAGE
     MEDIA_API -->|"Sign bucket/prefix"| STORAGE
-    BFF <-->|"Create/query/apply eKYC"| DOMAIN
+    BFF <-->|"Create/submit/query/apply eKYC"| DOMAIN
     DOMAIN <-->|"Private eKYC command/query"| API
     API <-->|"Persist/read"| DB
     OUTBOX <-->|"Claim outbox"| DB
@@ -330,30 +334,34 @@ Verification · Media · Attempt · Result`")]
 ### 4.3. Luồng xử lý trong `vhm-verification-service`
 
 ```mermaid
-flowchart LR
-    API["`**Verification API**
-Validate eKYC command/manifest`"]
-    ACCEPT["`**Database transaction**
-EKYC · QUEUED · Media refs · Outbox`"]
-    BUS[("`**Verification Job Bus**
-EKYC_JOB_CREATED`")]
-    WORKER["`**eKYC Worker pool**
-PROCESSING`"]
-    READ["`**Storage Reader**
-HEAD/GET media by role`"]
-    INIT["`**FPT Session API**
-POST /session/init`"]
-    OCR["`**FPT OCR API**
-POST /ocr`"]
-    LIVE["`**FPT Face/Liveness API**
-POST /face/liveness`"]
+flowchart TB
+    CREATE["`**Create eKYC**
+Document media only`"]
+    DOC_JOB[("`**EKYC_DOCUMENT_JOB**`")]
+    OCR_WORKER["`**eKYC Worker**
+Validate document · Init session · OCR`"]
+    DOC_CHECK{"`**Document đạt policy?**`"}
+    WAIT["`**WAITING_LIVENESS**
+Partial result · captureRef · expiresAt`"]
+    DOC_END["`**COMPLETED**
+NEED_RETRY · NEED_REVIEW`"]
+    CAPTURE["`**Mobile/Web**
+Capture · Upload selfie/video`"]
+    SUBMIT["`**Submit liveness media**
+Validate captureRef · TTL`"]
+    LIVE_JOB[("`**EKYC_LIVENESS_JOB**`")]
+    LIVE_WORKER["`**eKYC Worker**
+Reuse session · Face/Liveness`"]
     POLICY["`**Result Normalizer/Policy**
 Document · Liveness · Face match`"]
-    DONE["`**Verification Database**
-COMPLETED · outcome · final result`"]
+    DONE["`**COMPLETED**
+Outcome · Final result`"]
 
-    API --> ACCEPT -->|"Publish"| BUS --> WORKER
-    WORKER --> READ --> INIT --> OCR --> LIVE --> POLICY --> DONE
+    CREATE -->|"202"| DOC_JOB --> OCR_WORKER --> DOC_CHECK
+    DOC_CHECK -->|"Có"| WAIT
+    DOC_CHECK -->|"Không"| DOC_END
+    WAIT --> CAPTURE --> SUBMIT -->|"202"| LIVE_JOB
+    LIVE_JOB --> LIVE_WORKER --> POLICY --> DONE
 ```
 
 ### 4.4. Sequence end-to-end
@@ -364,28 +372,29 @@ sequenceDiagram
     participant CLIENT as Mobile/Web
     participant BFF as vhm-agent-api
     participant DOMAIN as vhm-dossier-core
+    participant MEDIA_API as vhm-media-service
     participant VERIFY as vhm-verification-service
     participant DB as Verification Database
     participant BUS as Verification Job Bus
     participant STORAGE as Private Object Storage
     participant FPT as FPT AI Backend
 
-    CLIENT->>BFF: Submit eKYC<br/>dossierId + documentType + media manifest
+    CLIENT->>BFF: Submit eKYC document<br/>dossierId + documentType + front/back paths
     BFF->>DOMAIN: Authenticated request
     DOMAIN->>DOMAIN: Authorize dossier + subject<br/>validate every path prefix
-    DOMAIN->>VERIFY: POST eKYC<br/>businessRef + subjectRef + media
-    VERIFY->>VERIFY: Validate required roles + relative paths
+    DOMAIN->>VERIFY: POST eKYC<br/>businessRef + subjectRef + document media
+    VERIFY->>VERIFY: Validate document roles + relative paths
     VERIFY->>DB: Transaction: EKYC + QUEUED<br/>media refs + worker state + outbox
     DB-->>VERIFY: Commit
     VERIFY-->>DOMAIN: 202 + verificationId + resourceUri
     DOMAIN-->>BFF: 202 + verificationId + statusUrl
     BFF-->>CLIENT: 202 + verificationId + statusUrl
 
-    DB-->>BUS: Publish EKYC_JOB_CREATED
-    BUS-->>VERIFY: eKYC Worker claim verificationId
+    DB-->>BUS: Publish EKYC_DOCUMENT_JOB_CREATED
+    BUS-->>VERIFY: Worker claim document job
     VERIFY->>DB: Claim lease + PROCESSING<br/>step=VALIDATE_MEDIA
 
-    loop Với từng media reference
+    loop Với document media
         VERIFY->>STORAGE: HEAD exact object
         STORAGE-->>VERIFY: Metadata
         VERIFY->>VERIFY: Validate path + MIME/magic bytes + size
@@ -401,32 +410,60 @@ sequenceDiagram
     STORAGE-->>VERIFY: Document stream
     VERIFY->>FPT: POST /ocr<br/>session-id + document-type + files
     FPT-->>VERIFY: Synchronous OCR result
-    VERIFY->>DB: OCR SUCCEEDED<br/>checkpoint normalized document result
+    VERIFY->>DB: Transaction: OCR SUCCEEDED + partial result<br/>WAITING_LIVENESS + captureRef + expiresAt<br/>clear worker lease + outbox
 
-    VERIFY->>DB: step=LIVENESS<br/>LIVENESS attempt STARTED
-    VERIFY->>STORAGE: GET selfie/video
+    CLIENT->>BFF: GET statusUrl
+    BFF->>DOMAIN: Authorized query
+    DOMAIN->>VERIFY: GET verificationId
+    VERIFY-->>DOMAIN: WAITING_LIVENESS<br/>captureRef + expiresAt
+    DOMAIN-->>BFF: Authorized response
+    BFF-->>CLIENT: nextAction=CAPTURE_LIVENESS
+
+    CLIENT->>CLIENT: Capture fresh selfie/video
+    CLIENT->>BFF: Request Presigned PUT<br/>verificationId + captureRef + media metadata
+    BFF->>MEDIA_API: Request upload URL
+    MEDIA_API-->>BFF: presignHeaders + presignedUrl + s3PathFile
+    BFF-->>CLIENT: Upload information
+    CLIENT->>STORAGE: Presigned PUT selfie/video
+    STORAGE-->>CLIENT: Upload response
+
+    CLIENT->>BFF: Submit liveness media<br/>verificationId + captureRef + s3PathFile
+    BFF->>DOMAIN: Authenticated request
+    DOMAIN->>DOMAIN: Authorize verification + media path
+    DOMAIN->>VERIFY: POST liveness media
+    VERIFY->>VERIFY: Validate WAITING_LIVENESS<br/>captureRef + expiry + media role
+    VERIFY->>DB: Transaction: insert liveness media<br/>QUEUED + step=LIVENESS + outbox
+    DB-->>VERIFY: Commit
+    VERIFY-->>DOMAIN: 202
+    DOMAIN-->>BFF: 202
+    BFF-->>CLIENT: 202 + statusUrl
+
+    DB-->>BUS: Publish EKYC_LIVENESS_JOB_CREATED
+    BUS-->>VERIFY: Worker claim liveness job
+    VERIFY->>DB: Claim lease + PROCESSING<br/>step=LIVENESS
+    VERIFY->>VERIFY: Validate provider session expiry
+    VERIFY->>STORAGE: HEAD/GET selfie hoặc video
     STORAGE-->>VERIFY: Liveness media stream
+    VERIFY->>DB: LIVENESS attempt STARTED
     VERIFY->>FPT: POST /face/liveness<br/>session-id + selfies hoặc video
     FPT-->>VERIFY: Synchronous liveness + face-match
     VERIFY->>DB: LIVENESS SUCCEEDED<br/>step=NORMALIZE
     VERIFY->>VERIFY: Map checks + apply policy
     VERIFY->>DB: Transaction: final result<br/>DONE + COMPLETED + outcome + outbox
 
-    loop Khi status chưa kết thúc
-        CLIENT->>BFF: GET statusUrl
-        BFF->>DOMAIN: Authorized query
-        DOMAIN->>VERIFY: GET verificationId
-        VERIFY->>DB: Read state/result
-        DB-->>VERIFY: Current state
-        VERIFY-->>DOMAIN: Status + step + outcome/result
-        DOMAIN-->>BFF: Authorized projection
-        BFF-->>CLIENT: Status + nextAction/result
-    end
+    CLIENT->>BFF: GET statusUrl
+    BFF->>DOMAIN: Authorized final query
+    DOMAIN->>VERIFY: GET verificationId
+    VERIFY-->>DOMAIN: COMPLETED + outcome/result
+    DOMAIN-->>BFF: Authorized projection
+    BFF-->>CLIENT: Result + nextAction
 
     CLIENT->>BFF: Confirm verificationId
     BFF->>DOMAIN: Apply confirmed eKYC result
     DOMAIN->>DOMAIN: Update domain in local transaction
 ```
+
+Sequence trên mô tả happy path. Nếu OCR giấy tờ không đạt policy, document job kết thúc `COMPLETED + NEED_RETRY/NEED_REVIEW` và không sinh `captureRef`.
 
 ## 5. API contract
 
@@ -441,6 +478,7 @@ API theo use case vẫn tách để contract rõ, nhưng đều map vào verific
 | Lấy OCR result | `GET /v1/ocr-verifications/{verificationId}/result` | OCR Canonical Result |
 | Retry OCR | `POST /v1/ocr-verifications/{verificationId}/retries` | `202`, verification mới |
 | Tạo eKYC | `POST /v1/ekyc-verifications` | `202 + verificationId + resourceUri` |
+| Submit liveness media | `POST /v1/ekyc-verifications/{verificationId}/liveness-media` | `202`, enqueue liveness job |
 | Lấy eKYC | `GET /v1/ekyc-verifications/{verificationId}` | Status/step/outcome/next action |
 | Lấy eKYC result | `GET /v1/ekyc-verifications/{verificationId}/result` | eKYC Canonical Result |
 | Retry eKYC | `POST /v1/ekyc-verifications/{verificationId}/retries` | `202`, verification mới |
@@ -484,13 +522,57 @@ Content-Type: application/json
   "documentType": "IDR",
   "media": [
     { "role": "DOCUMENT_FRONT", "s3PathFile": "registrations/dos-01/front.png", "order": 1 },
-    { "role": "DOCUMENT_BACK", "s3PathFile": "registrations/dos-01/back.png", "order": 1 },
-    { "role": "LIVENESS_VIDEO", "s3PathFile": "registrations/dos-01/live.mp4", "order": 1 }
+    { "role": "DOCUMENT_BACK", "s3PathFile": "registrations/dos-01/back.png", "order": 1 }
   ]
 }
 ```
 
-### 5.4. Create/status response
+Create eKYC chỉ nhận document media. Selfie/video chưa được capture hoặc truyền tại bước này.
+
+### 5.4. Submit liveness media
+
+Sau khi OCR giấy tờ thành công, status response trả action để client capture liveness:
+
+```json
+{
+  "verificationId": "ver-456",
+  "type": "EKYC",
+  "status": "WAITING_LIVENESS",
+  "currentStep": "LIVENESS",
+  "outcome": null,
+  "nextAction": "CAPTURE_LIVENESS",
+  "livenessCapture": {
+    "captureRef": "f5fdaf2f-3433-46f7-b5df-42cc29640286",
+    "expiresAt": "2026-08-10T12:00:00+07:00"
+  }
+}
+```
+
+Client upload selfie/video theo mục 3.1 rồi submit relative path:
+
+```http
+POST /v1/ekyc-verifications/ver-456/liveness-media
+Authorization: Bearer <service-token>
+Idempotency-Key: 14de46ec-2e99-4ca7-946b-ac39554619ee
+Content-Type: application/json
+
+{
+  "captureRef": "f5fdaf2f-3433-46f7-b5df-42cc29640286",
+  "media": [
+    {
+      "role": "LIVENESS_VIDEO",
+      "s3PathFile": "registrations/dos-01/liveness.mp4",
+      "order": 1
+    }
+  ]
+}
+```
+
+Verification API chỉ enqueue khi status là `WAITING_LIVENESS`, `captureRef` còn hiệu lực và media role đúng policy. Transaction insert media refs, chuyển `QUEUED + currentStep=LIVENESS` và ghi outbox `EKYC_LIVENESS_JOB_CREATED`.
+
+Cùng `Idempotency-Key` và fingerprint trả trạng thái hiện tại của verification, kể cả job đã chuyển sang `QUEUED/PROCESSING`. Cùng key nhưng payload khác hoặc `captureRef` đã được dùng bởi request khác trả `409`.
+
+### 5.5. Create/status response
 
 Cả hai create API chỉ trả `202` sau khi verification, media refs, worker state và outbox commit:
 
@@ -521,7 +603,7 @@ Retry-After: 3
 
 `nextAction` và progress được tính từ `verificationType + status + currentStep + outcome`, không persist.
 
-### 5.5. Canonical Result
+### 5.6. Canonical Result
 
 OCR result:
 
@@ -571,7 +653,7 @@ eKYC result:
 
 Chỉ trả field nằm trong allowlist của `documentType`. Không trả raw provider payload, provider session, API key, storage path hoặc media.
 
-### 5.6. HTTP và error contract
+### 5.7. HTTP và error contract
 
 | **HTTP** | **Sử dụng** |
 | --- | --- |
@@ -594,8 +676,8 @@ Chỉ dùng năm bảng cho cả OCR và eKYC:
 
 | **Bảng** | **Mục đích** |
 | --- | --- |
-| `verifications` | Aggregate chung: type, business binding, lifecycle, idempotency và worker lease/retry |
-| `verification_media_refs` | OCR có một `OCR_DOCUMENT`; eKYC có document/liveness roles |
+| `verifications` | Aggregate chung: type, lifecycle, worker lease và liveness capture binding/TTL |
+| `verification_media_refs` | OCR có `OCR_DOCUMENT`; eKYC thêm document trước và liveness media sau |
 | `provider_attempts` | Từng call `INIT_SESSION`, `OCR`, `LIVENESS` |
 | `verification_results` | OCR ghi final v1; eKYC checkpoint sau OCR rồi khóa final sau liveness |
 | `outbox_events` | Bảo đảm aggregate commit và enqueue/terminal event không lệch nhau |
@@ -625,7 +707,7 @@ CREATE TABLE verifications (
     document_type           VARCHAR(50) NOT NULL,
 
     status                  VARCHAR(30) NOT NULL CHECK (status IN
-                                ('QUEUED', 'PROCESSING', 'COMPLETED',
+                                ('QUEUED', 'PROCESSING', 'WAITING_LIVENESS', 'COMPLETED',
                                  'CANCELLED', 'EXPIRED')),
     current_step            VARCHAR(30) NOT NULL CHECK (current_step IN
                                 ('VALIDATE_MEDIA', 'INIT_SESSION', 'OCR',
@@ -637,6 +719,11 @@ CREATE TABLE verifications (
     lease_owner             VARCHAR(100),
     lease_until             TIMESTAMPTZ,
     last_error_code         VARCHAR(80),
+
+    liveness_capture_ref    UUID UNIQUE,
+    liveness_expires_at     TIMESTAMPTZ,
+    liveness_idempotency_key VARCHAR(100),
+    liveness_request_fingerprint CHAR(64),
 
     retry_of                UUID REFERENCES verifications(verification_id),
     idempotency_key         VARCHAR(100) NOT NULL,
@@ -656,6 +743,15 @@ CREATE TABLE verifications (
     CONSTRAINT ck_ekyc_required_fields CHECK (
         verification_type <> 'EKYC' OR
         (subject_ref_ciphertext IS NOT NULL AND consent_ref IS NOT NULL)
+    ),
+    CONSTRAINT ck_waiting_liveness CHECK (
+        status <> 'WAITING_LIVENESS' OR
+        (verification_type = 'EKYC' AND current_step = 'LIVENESS' AND
+         liveness_capture_ref IS NOT NULL AND liveness_expires_at IS NOT NULL)
+    ),
+    CONSTRAINT ck_liveness_idempotency_pair CHECK (
+        (liveness_idempotency_key IS NULL AND liveness_request_fingerprint IS NULL) OR
+        (liveness_idempotency_key IS NOT NULL AND liveness_request_fingerprint IS NOT NULL)
     ),
     CONSTRAINT ck_verification_status_outcome CHECK (
         (status <> 'COMPLETED' AND outcome IS NULL) OR
@@ -704,6 +800,7 @@ CREATE TABLE provider_attempts (
                                 ('INIT_SESSION', 'OCR', 'LIVENESS')),
     attempt_no               INTEGER NOT NULL CHECK (attempt_no > 0),
     provider_session_ciphertext BYTEA,
+    provider_session_expires_at TIMESTAMPTZ,
     status                   VARCHAR(20) NOT NULL CHECK (status IN
                                 ('STARTED', 'SUCCEEDED', 'FAILED', 'UNKNOWN')),
     delivery_state           VARCHAR(20) NOT NULL CHECK (delivery_state IN
@@ -760,7 +857,7 @@ CREATE INDEX ix_outbox_lease_recovery
 Quy ước schema:
 
 - OCR insert một `verification_results` với `result_version=1`, `is_final=true` khi hoàn tất.
-- eKYC checkpoint document result với `is_final=false`, sau liveness tăng version và đặt `is_final=true`.
+- eKYC checkpoint document result với `is_final=false`, chuyển `WAITING_LIVENESS`; sau liveness tăng version và đặt `is_final=true`.
 - Result update dùng compare-and-set theo `result_version`; row đã `is_final=true` không được update. Retry tạo `verificationId` mới.
 - Media-role combination được validate ở application layer theo `verificationType + documentType`; CHECK SQL chỉ bảo vệ enum cơ bản.
 - Outbox/message chỉ chứa ID/reference tối thiểu, không chứa PII, media path, binary hoặc Canonical Result.
@@ -769,7 +866,8 @@ Quy ước schema:
 
 ### 7.1. Transaction và idempotency
 
-- Insert `verifications`, toàn bộ `verification_media_refs` và `outbox_events` trong một transaction ngắn.
+- Create OCR/eKYC insert verification, document media refs và outbox trong một transaction ngắn.
+- Submit liveness insert liveness media refs, chuyển `WAITING_LIVENESS → QUEUED`, ghi idempotency/fingerprint và outbox trong transaction riêng.
 - Cùng `Idempotency-Key` và request fingerprint trả resource cũ; cùng key nhưng fingerprint khác trả `409 IDEMPOTENCY_CONFLICT`.
 - Queue dùng at-least-once; message chỉ chứa `verificationId` và `verificationType`.
 - Worker claim aggregate bằng lease/CAS; không gọi lại operation đã có provider attempt terminal thành công.
@@ -783,7 +881,9 @@ Quy ước schema:
 - Retry budget lấy từ cấu hình theo `verificationType + provider + operation`, không lưu `max_attempts` trên aggregate.
 - Lỗi retry-safe: trở lại `QUEUED`, tăng `attempt_count`, đặt `available_at` theo backoff và xóa worker lease.
 - OCR resume từ `INIT_SESSION/OCR/NORMALIZE` dựa trên attempt đã commit.
-- eKYC OCR đã thành công và provider session còn hiệu lực thì resume liveness, không gọi lại OCR.
+- eKYC document job kết thúc ở `WAITING_LIVENESS`, xóa worker lease và không giữ worker trong thời gian chờ client.
+- Liveness submit chỉ được chấp nhận khi `captureRef` khớp, chưa hết `liveness_expires_at` và provider session còn hiệu lực.
+- Liveness job dùng OCR checkpoint và session cũ; không gọi lại OCR.
 - Hết recovery budget: `COMPLETED + PROVIDER_ERROR`; client không poll vô hạn.
 
 ### 7.3. Timeout FPT synchronous API
@@ -796,6 +896,8 @@ Quy ước schema:
 | FPT trả lỗi input/chất lượng | Map `NEED_RETRY/NEED_REVIEW` hoặc eKYC rejection theo policy |
 
 Timeout outbound của từng FPT call phải ngắn hơn worker lease còn lại. Worker renew lease giữa các step nếu tổng journey dài hơn lease ban đầu; hard timeout phải hủy outbound request trước khi mất lease.
+
+`liveness_expires_at` được tính bằng thời điểm nhỏ hơn giữa capture TTL của VHM và provider session expiry trừ safety margin. Hết TTL trước submit thì chuyển `EXPIRED`; client phải tạo verification mới.
 
 ### 7.4. Quota và backlog
 
@@ -812,7 +914,7 @@ Timeout outbound của từng FPT call phải ngắn hơn worker lease còn lạ
 2. Chốt FPT `documentType → API/model`, request/response/error, quota, session TTL và timeout.
 3. Xây schema, Verification API core, idempotency, outbox và Job Bus routing.
 4. Xây OCR handler/provider flow và Canonical Result.
-5. Xây eKYC handler/provider flow, step checkpoint và policy engine.
+5. Xây eKYC document job, trạng thái `WAITING_LIVENESS`, liveness submit/job và policy engine.
 6. Tích hợp polling/confirm/apply với domain.
 7. Load/resilience test và chốt concurrency/alert trước production.
 
@@ -825,7 +927,7 @@ Timeout outbound của từng FPT call phải ngắn hơn worker lease còn lạ
 | Database | CHECK/unique/index, optimistic lock, result final guard, outbox/worker lease recovery |
 | Integration | Presigned upload contract, S3 path authorization, queue duplicate và step resume |
 | OCR end-to-end | Upload → create `202` → OCR result → confirm/apply |
-| eKYC end-to-end | Upload manifest → create `202` → OCR/liveness → result → confirm/apply |
+| eKYC end-to-end | Upload document → OCR → `WAITING_LIVENESS` → upload/submit liveness → result → confirm/apply |
 | Resilience | Slow/large media, crash giữa step, unknown-after-send, provider outage, backlog burst |
 
 ### 8.3. Điểm cần chốt
