@@ -284,21 +284,22 @@ Hai call FPT có vai trò khác nhau:
 
 VHM không trả `session-id` xuống Mobile/Web và không dùng nó làm `verificationId`.
 
-## 6. API contract của VHM
+## 6. API contract của `vhm-verification-service`
 
 ### 6.1. Danh sách API
 
-| **Use case** | **Application API** | **Private target** | **Response** |
-| --- | --- | --- | --- |
-| Tạo upload slot | `POST /dossiers/{dossierId}/media/upload-slots` | `vhm-media-service` | `201 + mediaId + upload information` |
-| Finalize media | `POST /dossiers/{dossierId}/media/{mediaId}/finalize` | `vhm-media-service` | `200 + mediaVersion + FINALIZED` |
-| Tạo OCR | `POST /dossiers/{dossierId}/ocr-verifications` | `POST /internal/v1/ocr-verifications` | `202 + verificationId + statusUrl` |
-| Lấy trạng thái | `GET /dossiers/{dossierId}/ocr-verifications/{id}` | `GET /internal/v1/ocr-verifications/{id}` | Status, outcome, next action |
-| Lấy kết quả | `GET /dossiers/{dossierId}/ocr-verifications/{id}/result` | `GET /internal/v1/ocr-verifications/{id}/result` | Canonical Result |
-| Thử lại | `POST /dossiers/{dossierId}/ocr-verifications/{id}/retries` | `POST /internal/v1/ocr-verifications/{id}/retries` | Tạo verification mới |
-| Xác nhận/apply | `POST /dossiers/{dossierId}/ocr-verifications/{id}/apply` | Domain đọc result rồi apply local | Dữ liệu hồ sơ đã cập nhật |
+| **Use case** | **Private API** | **Response** |
+| --- | --- | --- |
+| Tạo OCR | `POST /internal/v1/ocr-verifications` | `202 + verificationId + resourceUri` |
+| Lấy trạng thái | `GET /internal/v1/ocr-verifications/{verificationId}` | Status, outcome, next action |
+| Lấy kết quả | `GET /internal/v1/ocr-verifications/{verificationId}/result` | Canonical Result |
+| Thử lại | `POST /internal/v1/ocr-verifications/{verificationId}/retries` | `202`, tạo verification mới |
 
-Private API chỉ mở cho service caller được cấp scope. `vhm-verification-service` trả `resourceUri` nội bộ; `vhm-dossier-core` ánh xạ thành `statusUrl` thuộc dossier và authorize lại trên mỗi query.
+Các API trên chỉ mở cho service caller được cấp scope và không chứa khái niệm `dossierId` trong URL. Domain caller truyền định danh nghiệp vụ bằng `businessRef.type + businessRef.id` trong command và tự lưu association với `verificationId`.
+
+Các route `/dossiers/...` nếu có thuộc Application API của `vhm-agent-api`/`vhm-dossier-core`, không phải contract của service dùng chung. Tương tự, upload/finalize thuộc API hiện có của `vhm-media-service`, còn confirm/apply kết quả thuộc API và transaction của từng domain; ba nhóm API này không được định nghĩa lại trong mục này.
+
+`vhm-verification-service` trả `resourceUri` nội bộ. Domain caller ánh xạ URI này thành URL thuộc application của mình và authorize lại trên mỗi request từ Mobile/Web; internal URI không được chuyển nguyên cho client.
 
 ### 6.2. Tạo OCR
 
