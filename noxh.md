@@ -37,19 +37,19 @@ OCR chỉ hỗ trợ số hóa và kiểm tra dữ liệu theo khả năng của
 | **Hướng tiếp cận** | **Ưu điểm** | **Nhược điểm** | **Lựa chọn (Yes/No)** |
 | --- | --- | --- | --- |
 | **`vhm-dossier-core` tích hợp trực tiếp FPT AI** | Ít thành phần; thời gian triển khai ban đầu ngắn | `vhm-dossier-core` phải xử lý credential, provider session, queue/worker, retry và mã lỗi riêng của FPT AI; thay đổi provider tác động trực tiếp nghiệp vụ NOXH; tăng rủi ro dữ liệu định danh trong service hồ sơ | **No** |
-| **`vhm-verification-service`** | `vhm-dossier-core` chỉ authorize nghiệp vụ và sử dụng kết quả; `vhm-media-service` có sẵn quản lý upload; verification service tập trung vào async job, provider integration, credential, session, retry, quota, audit và chuẩn hóa; thay provider không tác động domain | Thêm một service và network hop trên luồng xử lý; verification service phải đáp ứng HA/SLA vì là dependency dùng chung | **Yes** |
+| **`vhm-verification-service`** | `vhm-dossier-core` chỉ authorize nghiệp vụ và sử dụng kết quả; luồng upload tái sử dụng `vhm-media-service` có sẵn; verification service tập trung vào async job, provider integration, credential, session, retry, quota, audit và chuẩn hóa; thay provider không tác động domain | Thêm một service và network hop trên luồng xử lý; verification service phải đáp ứng HA/SLA vì là dependency dùng chung | **Yes** |
 
-**Phương án chọn:** Sử dụng **`vhm-verification-service`** làm capability tập trung cho cả OCR và eKYC. `vhm-dossier-core` kiểm tra quyền nghiệp vụ trước mọi upload/create/submit/query/apply; **`vhm-media-service` được coi là capability có sẵn** để quản lý upload/finalize/retention; `vhm-verification-service` chỉ quản lý journey, xử lý bất đồng bộ và tích hợp provider. Vì vậy domain không phải tự triển khai S3 signing, còn verification service không phải gánh media lifecycle.
+**Phương án chọn:** Sử dụng **`vhm-verification-service`** làm capability tập trung cho cả OCR và eKYC. `vhm-dossier-core` kiểm tra quyền nghiệp vụ trước mọi upload/create/submit/query/apply; **`vhm-media-service` được coi là dependency có sẵn** cho luồng media; `vhm-verification-service` chỉ quản lý journey, xử lý bất đồng bộ và tích hợp provider. Contract và implementation nội bộ của media service không thuộc phạm vi TDD này.
 
 **Nguyên tắc kiến trúc:**
 
 - Giữ chung một service nhưng tách handler và state transition của `OCR`/`EKYC`; không tách thành hai service OCR và eKYC.
 - `vhm-verification-service` là private internal service. Mobile/Web chỉ đi qua `vhm-agent-api` và `vhm-dossier-core`.
-- `vhm-media-service` sở hữu `mediaId`, exact object/version, Presigned URL, finalize, retention và read grant. Chi tiết implementation nội bộ của service này nằm ngoài Vấn đề 6.
-- `vhm-verification-service` chỉ nhận `mediaId` đã được domain authorize; không cấp Presigned URL, không nhận object path và không giữ quyền đọc toàn bucket.
+- `vhm-media-service` là dependency có sẵn. TDD chỉ sử dụng các đầu ra cần thiết: `mediaId`, trạng thái `FINALIZED`, immutable media metadata và short-lived read grant.
+- `vhm-verification-service` chỉ nhận `mediaId` đã được domain authorize; không cấp Presigned URL và không nhận URL/object path từ client hoặc domain.
 - Provider credential chỉ tồn tại tại Provider Adapter. Không truyền credential, provider session hoặc raw provider payload về Mobile/Web, BFF hoặc `vhm-dossier-core`.
 - `status` mô tả vòng đời kỹ thuật; `outcome` mô tả kết luận OCR/eKYC. Lỗi kỹ thuật không được ánh xạ thành `REJECTED`.
-- Mọi upload-slot/finalize/create/retry/submit phải idempotent; job chỉ được trả thành công sau khi đã persist và bảo đảm enqueue bằng transactional outbox hoặc cơ chế tương đương.
+- Mọi command create/submit/retry/cancel của verification phải idempotent; command tạo job chỉ được trả thành công sau khi đã persist và bảo đảm enqueue bằng transactional outbox hoặc cơ chế tương đương.
 
 **Căn cứ chọn phương thức tích hợp:** FPT cung cấp Mobile SDK, Web SDK và backend API như các phương thức tích hợp thay thế nhau. Thiết kế này chọn backend API: Mobile/Web chỉ capture và upload media vào VHM; `vhm-verification-service` dùng server credential để gọi FPT. Cách này giúp VHM chủ động data flow, worker và bảo mật credential ([So sánh các phương thức tích hợp](https://docs-vision.fpt.ai/ekyc/III-integration/III-0-so-sanh/)). FPT trả kết quả theo từng request; trạng thái bất đồng bộ và polling của Mobile/Web do VHM quản lý.
 
@@ -60,7 +60,7 @@ OCR chỉ hỗ trợ số hóa và kiểm tra dữ liệu theo khả năng của
 | **Module** | **Trách nhiệm implementation** |
 | --- | --- |
 | Verification API | Nhận internal command/query từ domain; validate service caller, business binding và idempotency key; trả `verificationId/status/result` |
-| Media Service Adapter | Gọi `vhm-media-service` để kiểm tra binding/trạng thái `FINALIZED`, lấy immutable media metadata và short-lived read grant cho exact version; không ký S3 URL |
+| Media Service Adapter | Gọi contract có sẵn để kiểm tra binding/trạng thái `FINALIZED`, lấy immutable media metadata và short-lived read grant; không chứa logic upload/storage |
 | Journey Orchestrator | Chọn `OCR` hoặc `EKYC`, kiểm tra milestone bắt buộc và điều khiển state transition |
 | OCR Worker workload | Internal worker không mở API; đọc media đã finalize, xử lý ảnh định danh hoặc tách trang/batch cho tài liệu lớn, theo dõi progress và tổng hợp kết quả |
 | EKYC Worker workload | Internal worker không mở API; điều phối provider session, OCR front/back, liveness và face matching |
@@ -81,7 +81,7 @@ Xác thực · routing`"]
     DOSSIER["`**vhm-dossier-core**
 Authorize · Apply result`"]
     MEDIA_SERVICE["`**vhm-media-service**
-Upload · Finalize · Read grant`"]
+Existing Media API`"]
     VERIFY["`**vhm-verification-service**
 OCR · eKYC · Provider Adapter`"]
     MEDIA[("`**Private Object Storage**
@@ -97,8 +97,8 @@ Job status · Canonical result`")]
     DOSSIER -->|"Authorized create/submit/query"| VERIFY
 
     CLIENT ==>|"Presigned PUT"| MEDIA
-    MEDIA_SERVICE <-->|"Sign · HEAD · Lifecycle"| MEDIA
-    VERIFY -->|"Validate media · Request read grant"| MEDIA_SERVICE
+    MEDIA_SERVICE <-->|"Media operations"| MEDIA
+    VERIFY <-->|"Validate media · Read grant"| MEDIA_SERVICE
     VERIFY -->|"GET exact finalized version"| MEDIA
     VERIFY ==>|"Worker: OCR/eKYC request"| PROVIDER
     PROVIDER ==>|"Provider result"| VERIFY
@@ -114,18 +114,20 @@ Job status · Canonical result`")]
 
 Request tạo OCR chỉ chờ đến khi `vhm-verification-service` persist job và trả `verificationId + QUEUED`; việc đọc object và gọi provider diễn ra trong worker. Mobile/Web không giữ kết nối chờ provider mà tra cứu trạng thái/kết quả qua `vhm-agent-api` và `vhm-dossier-core`.
 
-Giải pháp này sử dụng hai capability dùng chung có ranh giới độc lập: `vhm-media-service` quản lý vòng đời file; `vhm-verification-service` quản lý vòng đời OCR/eKYC và provider. `vhm-dossier-core` chỉ giữ authorization nghiệp vụ, association giữa hồ sơ với `mediaId/verificationId` và quyết định apply kết quả.
+Giải pháp này tái sử dụng Media API hiện có và giữ `vhm-verification-service` tập trung vào vòng đời OCR/eKYC cùng provider. `vhm-dossier-core` giữ authorization nghiệp vụ, association giữa hồ sơ với `mediaId/verificationId` và quyết định apply kết quả.
 
 ### 3.3. Phân định trách nhiệm
 
-| **Năng lực** | **`vhm-dossier-core`** | **`vhm-media-service`** | **`vhm-verification-service`** |
-| --- | --- | --- | --- |
-| Nghiệp vụ và authorization | Authorize actor, hồ sơ, `businessRef`, purpose và association của `mediaId`; quyết định sử dụng kết quả | Kiểm tra service caller và binding kỹ thuật do domain truyền; không xử lý rule NOXH | Kiểm tra service caller và binding `businessRef/mediaId/verificationId/attempt`; không xử lý rule NOXH |
-| Media | Gọi upload/finalize sau authorization; lưu association nghiệp vụ khi cần | Sở hữu `mediaId`, exact object/version, Presigned URL, HEAD/scan/finalize, orphan cleanup, retention và read grant | Chỉ lưu immutable media reference của journey; không ký URL, finalize hoặc quản lý attachment |
-| Journey | Với OCR, chỉ create sau khi media `FINALIZED`; với EKYC, authorize start và submit đủ media | Không tạo `verificationId` hoặc khởi chạy OCR/eKYC | Quản lý `verificationId`, state machine, idempotency, queue/worker, attempt và progress |
-| Provider | Không gọi provider | Không gọi provider | Quản lý credential/session, model/template, timeout, retry, circuit breaker, quota và chuẩn hóa error |
-| Kết quả | Authorize `status/result`; đối chiếu `resultVersion` và apply dữ liệu đã xác nhận | Không lưu Canonical Result | Lưu và trả status, progress, outcome và Canonical Result có version; không trả raw provider payload |
-| Dữ liệu và vận hành | Lưu `mediaId`, `verificationId/resultVersion` cần cho nghiệp vụ và audit apply | Lưu media metadata/storage lifecycle theo policy của platform | Lưu session/job/check/result cùng snapshot media metadata tối thiểu; masking, audit và monitoring |
+| **Năng lực** | **`vhm-dossier-core`** | **`vhm-verification-service`** |
+| --- | --- | --- |
+| Nghiệp vụ và authorization | Authorize actor, hồ sơ, `businessRef`, purpose và association của `mediaId`; quyết định sử dụng kết quả | Kiểm tra service caller và binding `businessRef/mediaId/verificationId/attempt`; không xử lý rule NOXH |
+| Media integration | Gọi Media API sau authorization; lưu association nghiệp vụ khi cần | Chỉ consume media `FINALIZED` qua Media Service Adapter và lưu immutable snapshot; không triển khai upload/storage |
+| Journey | Với OCR, chỉ create sau khi media `FINALIZED`; với EKYC, authorize start và submit đủ media | Quản lý `verificationId`, state machine, idempotency, queue/worker, attempt và progress |
+| Provider | Không gọi provider | Quản lý credential/session, model/template, timeout, retry, circuit breaker, quota và chuẩn hóa error |
+| Kết quả | Authorize `status/result`; đối chiếu `resultVersion` và apply dữ liệu đã xác nhận | Lưu và trả status, progress, outcome và Canonical Result có version; không trả raw provider payload |
+| Dữ liệu và vận hành | Lưu `mediaId`, `verificationId/resultVersion` cần cho nghiệp vụ và audit apply | Lưu session/job/check/result cùng snapshot media metadata tối thiểu; masking, audit và monitoring |
+
+`vhm-media-service` không nằm trong bảng ownership vì là platform dependency đã tồn tại; TDD này không định nghĩa lại nghiệp vụ, database hoặc cơ chế lưu trữ của service đó.
 
 ### 3.4. Lifecycle và outcome dùng chung
 
@@ -161,9 +163,7 @@ stateDiagram-v2
 
 ## 4. Upload media
 
-Upload được mô tả duy nhất tại mục này và dùng chung cho cả hai journey. `vhm-dossier-core` authorize nghiệp vụ; `vhm-media-service` có sẵn sở hữu vòng đời media và cấp Presigned URL. `vhm-verification-service` không tham gia luồng upload/finalize. Binary không đi qua BFF hoặc backend service.
-
-Media lifecycle `PENDING_UPLOAD → FINALIZED/REJECTED/EXPIRED → PURGED` thuộc `vhm-media-service`; đây không phải `status` của journey verification tại Mục 3.4.
+Upload tái sử dụng flow có sẵn của `vhm-media-service` và chỉ được tóm tắt tại đây để nối với hai journey. `vhm-dossier-core` authorize nghiệp vụ; `vhm-verification-service` không tham gia upload/finalize. Binary không đi qua BFF hoặc backend service.
 
 ```mermaid
 sequenceDiagram
@@ -178,7 +178,6 @@ sequenceDiagram
     BFF->>DOSSIER: Authenticated request + businessRef
     DOSSIER->>DOSSIER: Authorize actor + hồ sơ + purpose
     DOSSIER->>MEDIA_API: Create upload slot<br/>authorized businessRef + purpose + file metadata
-    MEDIA_API->>MEDIA_API: Sinh mediaId + exact object key<br/>status=PENDING_UPLOAD
     MEDIA_API-->>DOSSIER: mediaId + Presigned PUT URL<br/>required headers + expiresAt
     DOSSIER-->>BFF: Authorized upload response
     BFF-->>CLIENT: mediaId + Presigned PUT URL
@@ -190,9 +189,6 @@ sequenceDiagram
     BFF->>DOSSIER: Authenticated finalize request
     DOSSIER->>DOSSIER: Authorize businessRef + mediaId
     DOSSIER->>MEDIA_API: Finalize authorized mediaId
-    MEDIA_API->>MEDIA: HEAD exact object/version<br/>range-read/scan khi policy yêu cầu
-    MEDIA-->>MEDIA_API: Object metadata/content sample
-    MEDIA_API->>MEDIA_API: Validate size/checksum/MIME/magic bytes<br/>status=FINALIZED
     MEDIA_API-->>DOSSIER: mediaId + mediaVersion + FINALIZED
     DOSSIER-->>BFF: Finalize response
     BFF-->>CLIENT: mediaId + FINALIZED
@@ -200,11 +196,9 @@ sequenceDiagram
 
 - Mobile/Web luôn gọi qua `vhm-agent-api` và `vhm-dossier-core`; không gọi private API của `vhm-media-service` hoặc `vhm-verification-service`. Sau authorization, domain gọi media service để lấy `mediaId` và Presigned PUT URL rồi chuyển response về client.
 - Với `OCR`, media service tạo `mediaId` bind với `businessRef/purpose/documentType` nhưng chưa có `verificationId`; chỉ khi media `FINALIZED` và domain yêu cầu OCR thì verification service mới sinh `verificationId`. Với `EKYC`, upload slot được bind với `verificationId/attempt/mediaRole` đã tạo ở trạng thái `WAITING_MEDIA`.
-- Presigned URL có TTL ngắn và bind exact object key, method, content type, content length, checksum và `mediaId`; client không được list/read object hoặc tự chọn object key.
-- Object Storage bật versioning. Khi finalize, service đóng băng `objectVersion`; worker luôn đọc đúng version này nên một PUT muộn không thể thay đổi media đã được đưa vào verification.
-- Sau PUT, Mobile/Web chỉ submit `mediaId`; `vhm-media-service` tự lấy exact object/version để kiểm tra trước khi chuyển media sang `FINALIZED`. Finalize không tự động khởi chạy OCR/EKYC.
+- Sau PUT, Mobile/Web finalize `mediaId` qua domain và chỉ tiếp tục OCR/EKYC khi Media API trả `FINALIZED + mediaVersion`. Finalize không tự động khởi chạy journey.
 - Mobile/Web dùng camera/file capture component của ứng dụng để tạo raw document/selfie/liveness artifact rồi PUT trực tiếp vào Private Object Storage; không gọi FPT trực tiếp.
-- `vhm-media-service` quản lý orphan cleanup, retention và purge. `vhm-dossier-core` chỉ lưu association nghiệp vụ cần thiết; `vhm-verification-service` chỉ lưu snapshot metadata bất biến của media đã dùng trong journey. Cả hai không lưu bucket/key hoặc Presigned URL.
+- TDD này không mô tả validation, retention, cleanup, database hoặc storage implementation bên trong `vhm-media-service`.
 
 ## 5. OCR
 
@@ -226,7 +220,7 @@ Yêu cầu OCR cho media FINALIZED`"]
     AUTHORIZE["`**vhm-dossier-core**
 Authorize hồ sơ · businessRef · mediaId`"]
     MEDIA["`**vhm-media-service**
-Validate FINALIZED · Read grant`"]
+FINALIZED metadata · Read grant`"]
     subgraph VERIFY["`**vhm-verification-service (private)**`"]
         ACCEPT["`**Tiếp nhận yêu cầu**
 Create job · QUEUED · 202`"]
@@ -348,7 +342,7 @@ COMPLETED + outcome`"]
     CAPTURE["`**Mobile/Web**
 Capture · Presigned PUT theo Mục 4`"]
     MEDIA_SERVICE["`**vhm-media-service**
-Finalize · Bind attempt · mediaRole`"]
+Upload/finalize theo Mục 4`"]
     QUERY["`**vhm-dossier-core**
 Authorize status/result`"]
     CLIENT["`**Mobile/Web**
@@ -589,12 +583,12 @@ Canonical Result có `schemaVersion`, không phụ thuộc tên field hoặc err
 
 ### 8.1. Database schema
 
-PostgreSQL là system of record cho verification lifecycle và metadata của verification media. Binary nằm trong Private Object Storage do `vhm-verification-service` quản lý bằng exact object key; object key được mã hóa trong database và không lộ qua API nghiệp vụ.
+PostgreSQL của `vhm-verification-service` là system of record cho verification lifecycle. Binary và media lifecycle thuộc `vhm-media-service`; verification database chỉ lưu immutable snapshot/reference cần để chứng minh journey đã xử lý đúng `mediaId + mediaVersion`, không lưu bucket/key hoặc read-grant URL.
 
 | **Bảng** | **Mục đích** | **Ràng buộc chính** |
 | --- | --- | --- |
 | `verification_sessions` | Aggregate root của một attempt OCR/eKYC | Unique idempotency; status/outcome guard; optimistic `row_version` |
-| `verification_media` | Upload slot và media OCR/eKYC | Bind business/purpose/attempt; exact object key mã hóa; chỉ media `FINALIZED` mới được đưa vào journey |
+| `verification_media_refs` | Snapshot manifest đã được media service xác nhận | Unique logical part trong attempt; lưu `mediaId/mediaVersion/checksum` nhưng không lưu storage path/URL |
 | `verification_jobs` | Theo dõi orchestration/page job và retry | Unique job unit; lease/retry có giới hạn |
 | `provider_attempts` | Một lần gọi operation của provider | Dedupe operation/attempt; provider session ref được mã hóa |
 | `verification_checks` | Document/quality/liveness/face check đã chuẩn hóa | Không lưu raw provider payload |
@@ -604,7 +598,7 @@ PostgreSQL là system of record cho verification lifecycle và metadata của ve
 
 ```mermaid
 erDiagram
-    VERIFICATION_SESSION o|--o{ VERIFICATION_MEDIA : binds
+    VERIFICATION_SESSION ||--o{ VERIFICATION_MEDIA_REF : binds
     VERIFICATION_SESSION ||--o{ VERIFICATION_JOB : schedules
     VERIFICATION_JOB ||--o{ PROVIDER_ATTEMPT : invokes
     VERIFICATION_SESSION ||--o{ VERIFICATION_CHECK : contains
@@ -677,50 +671,23 @@ CREATE INDEX ix_verification_active_status
     ON verification_sessions (status, updated_at)
     WHERE status IN ('WAITING_MEDIA', 'QUEUED', 'PROCESSING', 'CANCEL_REQUESTED');
 
-CREATE TABLE verification_media (
-    media_id                 UUID PRIMARY KEY,
-    verification_id         UUID REFERENCES verification_sessions(verification_id),
-    business_type           VARCHAR(30) NOT NULL,
-    business_ref            VARCHAR(100) NOT NULL,
-    purpose                 VARCHAR(20) NOT NULL CHECK (purpose IN ('OCR', 'EKYC')),
-    document_type           VARCHAR(40) NOT NULL,
-    attempt_no              INTEGER CHECK (attempt_no > 0),
-    media_role              VARCHAR(40) NOT NULL,
-    logical_part            VARCHAR(40) NOT NULL DEFAULT 'DEFAULT',
-    object_key_ciphertext   BYTEA NOT NULL,
-    object_version          VARCHAR(200),
-    upload_status           VARCHAR(20) NOT NULL CHECK (upload_status IN
-                                ('PENDING_UPLOAD', 'FINALIZED', 'REJECTED', 'EXPIRED', 'PURGED')),
-    expected_checksum_sha256 CHAR(64) NOT NULL,
-    actual_checksum_sha256  CHAR(64),
-    content_type            VARCHAR(100) NOT NULL,
-    expected_size_bytes     BIGINT NOT NULL CHECK (expected_size_bytes > 0),
-    actual_size_bytes       BIGINT CHECK (actual_size_bytes > 0),
-    retention_policy_key    VARCHAR(40) NOT NULL,
-    idempotency_key         VARCHAR(100) NOT NULL,
-    request_fingerprint     CHAR(64) NOT NULL,
-    expires_at              TIMESTAMPTZ NOT NULL,
-    finalized_at            TIMESTAMPTZ,
-    purged_at               TIMESTAMPTZ,
-    row_version             BIGINT NOT NULL DEFAULT 0,
-    created_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
-    CONSTRAINT ck_ekyc_media_binding CHECK (
-        purpose <> 'EKYC' OR (verification_id IS NOT NULL AND attempt_no IS NOT NULL)
-    ),
-    CONSTRAINT uq_media_idempotency
-        UNIQUE (business_type, business_ref, idempotency_key),
-    CONSTRAINT ck_finalized_media CHECK (
-        upload_status NOT IN ('FINALIZED', 'PURGED') OR
-        (object_version IS NOT NULL AND actual_checksum_sha256 IS NOT NULL AND finalized_at IS NOT NULL)
-    )
+CREATE TABLE verification_media_refs (
+    media_ref_id             UUID PRIMARY KEY,
+    verification_id         UUID NOT NULL REFERENCES verification_sessions(verification_id),
+    attempt_no               INTEGER NOT NULL CHECK (attempt_no > 0),
+    media_id                 UUID NOT NULL,
+    media_version            VARCHAR(200) NOT NULL,
+    media_role               VARCHAR(40) NOT NULL,
+    logical_part             VARCHAR(40) NOT NULL DEFAULT 'DEFAULT',
+    checksum_sha256          CHAR(64) NOT NULL,
+    content_type             VARCHAR(100) NOT NULL,
+    size_bytes               BIGINT NOT NULL CHECK (size_bytes > 0),
+    finalized_at             TIMESTAMPTZ NOT NULL,
+    created_at               TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT uq_verification_media UNIQUE (verification_id, media_id),
+    CONSTRAINT uq_verification_media_part
+        UNIQUE (verification_id, attempt_no, media_role, logical_part)
 );
-
-CREATE INDEX ix_media_business_status
-    ON verification_media (business_type, business_ref, upload_status, created_at DESC);
-CREATE UNIQUE INDEX uq_verification_media_part
-    ON verification_media (verification_id, attempt_no, media_role, logical_part)
-    WHERE verification_id IS NOT NULL AND upload_status <> 'PURGED';
 
 CREATE TABLE verification_jobs (
     job_id                   UUID PRIMARY KEY,
@@ -819,12 +786,11 @@ Không dùng `provider_session_id`, `businessRef`, media URL hoặc PII làm met
 
 ### 8.2. Transaction, idempotency và worker
 
-- **Create upload slot:** trong transaction ngắn, insert `verification_media` ở `PENDING_UPLOAD` với exact object key/checksum/size đã bind và idempotency record; Presigned URL chỉ được sinh sau khi commit. Cùng key + fingerprint trả cùng `mediaId`; cùng key khác fingerprint trả `409 IDEMPOTENCY_CONFLICT`.
-- **Finalize media:** HEAD/range-read/scan Object Storage thực hiện ngoài transaction. Sau đó CAS media từ `PENDING_UPLOAD → FINALIZED` và persist exact version, checksum, MIME/magic bytes, kích thước; finalize lặp lại trả cùng trạng thái nếu metadata không đổi.
-- **Create OCR:** lock các media row, kiểm tra cùng `businessRef`, `purpose=OCR` và `FINALIZED`; sau đó insert `verification_sessions`, bind media, insert `verification_jobs` và `outbox_events` trong một transaction ngắn. **Start EKYC** chỉ insert session `WAITING_MEDIA`; upload slot đã bind session/attempt và job/outbox chỉ được tạo khi submit đủ media `FINALIZED`.
-- **Submit media EKYC:** lock/CAS `verification_sessions.row_version`, kiểm tra đủ logical part và media binding, chuyển `WAITING_MEDIA → QUEUED`, tạo job và ghi outbox trong cùng transaction.
+- **Create OCR:** kiểm tra media `FINALIZED` và lấy immutable metadata qua Media Service Adapter ngoài DB transaction. Sau đó insert `verification_sessions`, `verification_media_refs`, `verification_jobs` và `outbox_events` trong một transaction ngắn. Cùng `Idempotency-Key` + fingerprint trả resource cũ; cùng key khác fingerprint trả `409 IDEMPOTENCY_CONFLICT`.
+- **Start EKYC:** chỉ insert session `WAITING_MEDIA`; chưa tạo job/outbox. Upload/finalize thực hiện qua flow có sẵn của Media API.
+- **Submit media EKYC:** kiểm tra manifest/binding qua Media Service Adapter ngoài transaction. Sau đó lock/CAS `verification_sessions.row_version`, insert media refs, kiểm tra đủ logical part, chuyển `WAITING_MEDIA → QUEUED`, tạo job và ghi outbox trong cùng transaction.
 - **Claim job:** queue dùng at-least-once. Worker dedupe theo `job_id`, claim bằng lease/CAS; message trùng không gọi provider lại nếu operation đã có terminal `provider_attempts`.
-- **Provider call:** S3/KMS/FPT call luôn nằm ngoài DB transaction. Timeout connect/read, bulkhead, circuit breaker, quota và concurrency được cấu hình riêng theo operation/provider.
+- **Read media/provider call:** worker xin read grant ngay trước khi đọc media; grant URL chỉ giữ trong memory và không log/persist. Media API, Object Storage, KMS và FPT call luôn nằm ngoài DB transaction; timeout, bulkhead, circuit breaker, quota và concurrency được cấu hình riêng theo dependency/operation.
 - **Persist result:** normalize payload trước; trong transaction ngắn upsert checks/result, cập nhật progress, chuyển `status=COMPLETED`, gán `outcome`, append history và outbox `VerificationCompleted`.
 - **Worker retry:** chỉ retry lỗi network trước khi gửi body hoặc lỗi provider được xác nhận retry-safe. Nếu timeout xảy ra sau khi body có thể đã tới FPT, ghi provider attempt là `UNKNOWN`, không POST lại mù và kết thúc `PROVIDER_ERROR` để tránh tính phí/kết quả trùng.
 - **Journey retry API:** luôn tạo `verificationId/attempt` mới và liên kết `retry_of`. OCR chỉ được reuse immutable finalized media khi outcome là `PROVIDER_ERROR`; `NEED_RETRY` do chất lượng phải upload media mới. eKYC luôn capture/upload media mới để chống replay.
@@ -858,7 +824,7 @@ vhm-verification-service
 ├── worker                  # OCR/eKYC/page worker và page aggregator
 ├── provider/spi            # provider-neutral ports
 ├── provider/fpt            # FPT session/OCR/liveness adapters
-├── media                   # upload slot, S3 signing, finalize, validate/read/purge exact object
+├── media                   # client/adapter cho FINALIZED metadata và short-lived read grant
 ├── persistence             # PostgreSQL repositories, locking, migrations
 ├── messaging               # outbox publisher, queue consumer, DLQ
 └── security-observability  # KMS/secrets, masking, audit, metrics, tracing
@@ -870,7 +836,7 @@ API và Worker là hai deployment độc lập nhưng dùng chung codebase/domai
 
 | **Nhóm** | **Implementation bắt buộc** |
 | --- | --- |
-| Network/IAM | Service private; mTLS + service token; S3 IAM giới hạn theo verification prefix cho sign/HEAD/GET/delete; egress allowlist chỉ tới Object Storage, KMS/Secret Manager và endpoint FPT |
+| Network/IAM | Service private; mTLS + service token khi gọi domain/Media API; không giữ S3 credential diện rộng; egress allowlist tới Media API, read-grant Object Storage URL, KMS/Secret Manager và endpoint FPT |
 | Secret/PII | API key/session reference trong Secret Manager/KMS; TLS in transit; DB/S3 encryption at rest; application-layer encryption cho Canonical Result; masking theo role |
 | Input | Giới hạn type/size/page/duration; kiểm tra checksum, MIME + magic bytes, object version; malware scan nếu policy tài liệu yêu cầu |
 | Logging/Audit | Không log body/media/PII/credential; audit create, submit, query result, retry, cancel, state/outcome transition và apply result |
@@ -880,12 +846,12 @@ API và Worker là hai deployment độc lập nhưng dùng chung codebase/domai
 
 ### 9.3. Thứ tự triển khai
 
-1. Xây Verification Media Manager, API upload slot/finalize, PostgreSQL migration, S3 signing/versioning, orphan cleanup, retention, security và audit.
-2. Xây verification API/status model, idempotency, outbox, queue, worker skeleton và mock Provider Adapter.
+1. Chốt contract với `vhm-media-service`, xây Media Service Adapter và contract test cho `FINALIZED` metadata/read grant.
+2. Xây verification API/status model, PostgreSQL migration, idempotency, outbox, queue, worker skeleton và mock Provider Adapter.
 3. Triển khai `OCR` cho CCCD/GPLX/Hộ chiếu qua FPT `/session/init` → `/ocr`, Canonical Result và polling end-to-end.
 4. Bổ sung Document OCR cho PDF/tài liệu nhiều trang sau khi chốt provider, input limit, SLA và sync/async contract.
 5. Triển khai `EKYC` `/session/init` → `/ocr` → `/face/liveness` và polling end-to-end.
-6. Load/chaos/security test; chốt retry budget, provider quota, retention, masking và alert threshold trước production.
+6. Load/chaos/security test; chốt retry budget, provider quota, retention kết quả, masking và alert threshold trước production.
 
 ### 9.4. Kiểm thử tối thiểu
 
@@ -893,12 +859,12 @@ API và Worker là hai deployment độc lập nhưng dùng chung codebase/domai
 | --- | --- |
 | Unit/domain | Mọi state transition, journey-outcome guard, decision mapping, masking, retry classification và idempotency fingerprint |
 | Contract | Request/response/error fixture cho FPT session, OCR và liveness; tolerant optional field nhưng fail với critical field sai schema |
-| Integration | PostgreSQL constraint/locking, upload-slot idempotency, Presigned PUT/finalize, outbox-to-queue, duplicate/out-of-order message, lease recovery, KMS và exact-object media access |
+| Integration | PostgreSQL constraint/locking, Media API metadata/read-grant contract, outbox-to-queue, duplicate/out-of-order message, lease recovery, KMS và exact-version media access |
 | End-to-end | OCR ảnh định danh, OCR nhiều trang partial, eKYC verified/rejected/need-retry, cancel, expire, poll và confirm/apply |
-| Security/resilience | `mediaId`/business binding tamper, object version/checksum mismatch, expired Presigned URL, unauthorized result query, log leakage, provider timeout/429/5xx, backlog và DLQ recovery |
+| Security/resilience | `mediaId`/business binding tamper, `mediaVersion`/checksum mismatch, expired read grant, unauthorized result query, log leakage, provider timeout/429/5xx, backlog và DLQ recovery |
 
 ### 9.5. Điểm cần chốt trước production
 
-Các điểm cần xác nhận với FPT: liveness mode/media requirement theo Mobile/Web; giới hạn và SLA của AI Read/Document OCR; provider idempotency, timeout-unknown handling, result retention và quota.
+Các điểm cần chốt với platform: contract/SLA của immutable media metadata và read grant. Các điểm cần xác nhận với FPT: liveness mode/media requirement theo Mobile/Web; giới hạn và SLA của AI Read/Document OCR; provider idempotency, timeout-unknown handling, result retention và quota.
 
 `vhm-verification-service` chịu trách nhiệm capability OCR/eKYC và dữ liệu verification. Quyết định sử dụng kết quả, cập nhật khách hàng và phê duyệt hồ sơ NOXH vẫn thuộc `vhm-dossier-core`.
