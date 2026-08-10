@@ -2,7 +2,7 @@
 
 ## 1. Phạm vi và quyết định kiến trúc
 
-`vhm-verification-service` cung cấp capability OCR/eKYC dùng chung cho nhiều domain. Mobile/Web không gọi trực tiếp FPT AI; domain service không phụ thuộc credential, session, payload hoặc error code của provider.
+`vhm-verification-service` cung cấp capability OCR/eKYC tập trung cho nhiều domain. Mobile/Web không gọi trực tiếp FPT AI; domain service không phụ thuộc credential, session, payload hoặc error code của provider.
 
 Baseline dùng **backend API + queue/worker** cho cả hai loại verification:
 
@@ -28,7 +28,7 @@ Các call FPT trả kết quả đồng bộ cho worker. Resource của VHM vẫ
 
 OCR chỉ hỗ trợ số hóa/gợi ý dữ liệu. eKYC hỗ trợ kiểm tra giấy tờ, liveness và face match. Cả hai không tự quyết định hồ sơ đủ điều kiện NOXH; người dùng phải xác nhận trước khi domain apply kết quả.
 
-## 2. Kiến trúc dùng chung
+## 2. Thành phần và quy ước nền tảng
 
 ### 2.1. Thành phần và trách nhiệm
 
@@ -48,77 +48,9 @@ OCR chỉ hỗ trợ số hóa/gợi ý dữ liệu. eKYC hỗ trợ kiểm tra 
 
 Verification API, Outbox Publisher, hai worker handler/pool, Provider Adapter và Result Normalizer/Policy là module/workload trong cùng `vhm-verification-service`, không phải các public service riêng.
 
-Hai worker pool dùng chung code nền, schema và job contract nhưng cấu hình concurrency/quota riêng. OCR chậm hoặc backlog lớn không được chiếm toàn bộ capacity của eKYC và ngược lại.
+Hai worker pool tái sử dụng code nền, schema và job contract nhưng có cấu hình concurrency/quota riêng. OCR chậm hoặc backlog lớn không được chiếm toàn bộ capacity của eKYC và ngược lại.
 
-### 2.2. Kiến trúc tổng quan
-
-```mermaid
-flowchart TB
-    CLIENT["`**Mobile/Web**
-Upload · Submit · Poll`"]
-    BFF["`**vhm-agent-api**
-Xác thực · routing`"]
-    DOMAIN["`**Domain Service**
-Authorize · Apply result`"]
-    MEDIA_API["`**vhm-media-service**
-Presigned PUT`"]
-    STORAGE[("`**Private Object Storage**
-Verification media`")]
-
-    subgraph VERIFY["`**vhm-verification-service (private)**
-OCR · eKYC · Provider Adapter`"]
-        direction TB
-        API["`**Verification API**
-Create · Status · Result`"]
-        OUTBOX["`**Outbox Publisher**
-Committed jobs`"]
-        OCR_WORKER["`**OCR Worker pool**
-One document`"]
-        EKYC_WORKER["`**eKYC Worker pool**
-Document · Liveness`"]
-        ADAPTER["`**Provider Adapter**
-FPT contract · credential`"]
-        NORMALIZE["`**Result Normalizer/Policy**
-Canonical Result · Outcome`"]
-
-        OCR_WORKER --> ADAPTER
-        EKYC_WORKER --> ADAPTER
-        ADAPTER --> NORMALIZE
-    end
-
-    JOB_BUS[("`**Verification Job Bus**
-Route OCR · eKYC`")]
-    FPT["`**FPT AI Backend**
-Session · OCR · Face/Liveness`"]
-    DB[("`**Verification Database**
-Shared schema`")]
-
-    CLIENT <-->|"Application API"| BFF
-    BFF <-->|"Request upload URL"| MEDIA_API
-    CLIENT ==>|"Presigned PUT"| STORAGE
-    MEDIA_API -->|"Sign configured bucket/prefix"| STORAGE
-
-    BFF <-->|"Create/query/apply"| DOMAIN
-    DOMAIN <-->|"Private command/query"| API
-    API <-->|"Persist/read"| DB
-    OUTBOX <-->|"Claim outbox"| DB
-    OUTBOX -->|"Publish by type"| JOB_BUS
-    JOB_BUS -->|"OCR job"| OCR_WORKER
-    JOB_BUS -->|"eKYC job"| EKYC_WORKER
-
-    OCR_WORKER -->|"HEAD/GET exact media"| STORAGE
-    EKYC_WORKER -->|"HEAD/GET exact media"| STORAGE
-    ADAPTER <-->|"Synchronous provider API"| FPT
-    NORMALIZE -->|"Checkpoint/final result"| DB
-```
-
-Ba trách nhiệm tách rõ:
-
-- Upload binary: `Mobile/Web → Presigned PUT → Object Storage`.
-- Verification processing: `Worker → Object Storage → FPT AI Backend`.
-- Business authorization/apply: `Mobile/Web → BFF → Domain Service`.
-
-### 2.3. Upload media dùng chung
+### 2.2. Upload media OCR
 
 Upload diễn ra trước create verification. Contract Media Service hiện có không trả `mediaId` và không có bước finalize; durable reference là `s3PathFile`.
 
@@ -168,7 +100,7 @@ Quy ước:
 - Worker ghép `basePrefix + s3PathFile`, HEAD/GET trực tiếp S3 bằng IAM read-only rồi kiểm tra object, MIME/magic bytes và kích thước.
 - Contract hiện tại không cung cấp object version/finalized proof; thiết kế không giả định media immutable.
 
-### 2.4. Lifecycle dùng chung
+### 2.3. Lifecycle verification
 
 `status` mô tả vòng đời kỹ thuật:
 
@@ -185,7 +117,7 @@ QUEUED → PROCESSING → COMPLETED
 | `CANCELLED` | Bị hủy trước khi hoàn tất |
 | `EXPIRED` | Quá processing deadline |
 
-`currentStep` dùng chung: `VALIDATE_MEDIA`, `INIT_SESSION`, `OCR`, `LIVENESS`, `NORMALIZE`, `DONE`. OCR bỏ qua `LIVENESS`; eKYC phải đi qua bước này trong baseline.
+`currentStep` được chuẩn hóa thành: `VALIDATE_MEDIA`, `INIT_SESSION`, `OCR`, `LIVENESS`, `NORMALIZE`, `DONE`. OCR bỏ qua `LIVENESS`; eKYC phải đi qua bước này trong baseline.
 
 `outcome` chỉ có khi `status=COMPLETED` và được kiểm tra theo `verificationType`:
 
@@ -213,7 +145,61 @@ POST /ocr
 
 `/ocr` trả response đồng bộ cho worker. VHM không trả provider `session-id` xuống Mobile/Web.
 
-### 3.2. Flowchart OCR
+### 3.2. Kiến trúc tổng quan OCR
+
+```mermaid
+flowchart TB
+    CLIENT["`**Mobile/Web**
+Upload document · Submit OCR · Poll`"]
+    BFF["`**vhm-agent-api**
+Xác thực · routing`"]
+    DOMAIN["`**vhm-dossier-core**
+Authorize · Apply result`"]
+    MEDIA_API["`**vhm-media-service**
+Presigned PUT`"]
+    STORAGE[("`**Private Object Storage**
+OCR document`")]
+
+    subgraph VERIFY["`**vhm-verification-service (private)**
+OCR · Provider Adapter`"]
+        direction LR
+        API["`**Verification API**
+Create · Status · Result`"]
+        OUTBOX["`**Outbox Publisher**
+OCR_JOB_CREATED`"]
+        WORKER["`**OCR Worker pool**
+Internal workload`"]
+        ADAPTER["`**Provider Adapter**
+Session · OCR`"]
+        NORMALIZE["`**Result Normalizer**
+Canonical Result`"]
+
+        WORKER --> ADAPTER --> NORMALIZE
+    end
+
+    BUS[("`**Verification Job Bus**
+OCR jobs`")]
+    FPT["`**FPT AI Backend**
+Session API · OCR API`"]
+    DB[("`**Verification Database**
+Verification · Media · Attempt · Result`")]
+
+    CLIENT <-->|"Application API"| BFF
+    BFF <-->|"Request upload URL"| MEDIA_API
+    CLIENT ==>|"Presigned PUT"| STORAGE
+    MEDIA_API -->|"Sign bucket/prefix"| STORAGE
+    BFF <-->|"Create/query/apply OCR"| DOMAIN
+    DOMAIN <-->|"Private OCR command/query"| API
+    API <-->|"Persist/read"| DB
+    OUTBOX <-->|"Claim outbox"| DB
+    OUTBOX -->|"Publish"| BUS
+    BUS -->|"Consume"| WORKER
+    WORKER -->|"HEAD/GET OCR_DOCUMENT"| STORAGE
+    ADAPTER <-->|"Synchronous provider APIs"| FPT
+    NORMALIZE -->|"Persist final result"| DB
+```
+
+### 3.3. Luồng xử lý OCR trong `vhm-verification-service`
 
 ```mermaid
 flowchart LR
@@ -240,7 +226,7 @@ COMPLETED · outcome · final result`"]
     WORKER --> READ --> INIT --> OCR --> NORMALIZE --> DONE
 ```
 
-### 3.3. Sequence OCR end-to-end
+### 3.4. Sequence OCR end-to-end
 
 ```mermaid
 sequenceDiagram
@@ -303,6 +289,8 @@ sequenceDiagram
 
 ### 4.1. Media manifest và provider flow
 
+Media eKYC được upload theo [luồng Upload media OCR](#22-upload-media-ocr). Mobile/Web lặp lại flow đó cho từng document/selfie/video file, sau đó đưa các `s3PathFile` vào manifest dưới đây.
+
 Một eKYC verification chứa nhiều physical media với role/order rõ ràng:
 
 | **Role** | **Số lượng** | **Nội dung** |
@@ -330,7 +318,61 @@ POST /face/liveness
 
 `sourcePlatform` map FPT `device-type`: `ANDROID → android`, `IOS → ios`, `WEB → web-sdk`.
 
-### 4.2. Flowchart eKYC
+### 4.2. Kiến trúc tổng quan eKYC
+
+```mermaid
+flowchart TB
+    CLIENT["`**Mobile/Web**
+Upload media · Submit eKYC · Poll`"]
+    BFF["`**vhm-agent-api**
+Xác thực · routing`"]
+    DOMAIN["`**vhm-dossier-core**
+Authorize · Apply result`"]
+    MEDIA_API["`**vhm-media-service**
+Presigned PUT`"]
+    STORAGE[("`**Private Object Storage**
+Document · Selfie/Video`")]
+
+    subgraph VERIFY["`**vhm-verification-service (private)**
+eKYC · Provider Adapter`"]
+        direction LR
+        API["`**Verification API**
+Create · Status · Result`"]
+        OUTBOX["`**Outbox Publisher**
+EKYC_JOB_CREATED`"]
+        WORKER["`**eKYC Worker pool**
+Internal workload`"]
+        ADAPTER["`**Provider Adapter**
+Session · OCR · Liveness`"]
+        POLICY["`**Result Normalizer/Policy**
+Canonical Result · Outcome`"]
+
+        WORKER --> ADAPTER --> POLICY
+    end
+
+    BUS[("`**Verification Job Bus**
+eKYC jobs`")]
+    FPT["`**FPT AI Backend**
+Session · OCR · Face/Liveness`"]
+    DB[("`**Verification Database**
+Verification · Media · Attempt · Result`")]
+
+    CLIENT <-->|"Application API"| BFF
+    BFF <-->|"Request upload URL"| MEDIA_API
+    CLIENT ==>|"Presigned PUT"| STORAGE
+    MEDIA_API -->|"Sign bucket/prefix"| STORAGE
+    BFF <-->|"Create/query/apply eKYC"| DOMAIN
+    DOMAIN <-->|"Private eKYC command/query"| API
+    API <-->|"Persist/read"| DB
+    OUTBOX <-->|"Claim outbox"| DB
+    OUTBOX -->|"Publish"| BUS
+    BUS -->|"Consume"| WORKER
+    WORKER -->|"HEAD/GET media by role"| STORAGE
+    ADAPTER <-->|"Synchronous provider APIs"| FPT
+    POLICY -->|"Checkpoint/final result"| DB
+```
+
+### 4.3. Luồng xử lý eKYC trong `vhm-verification-service`
 
 ```mermaid
 flowchart LR
@@ -359,7 +401,7 @@ COMPLETED · outcome · final result`"]
     WORKER --> READ --> INIT --> OCR --> LIVE --> POLICY --> DONE
 ```
 
-### 4.3. Sequence eKYC end-to-end
+### 4.4. Sequence eKYC end-to-end
 
 ```mermaid
 sequenceDiagram
@@ -435,7 +477,7 @@ sequenceDiagram
 
 ### 5.1. Danh sách API
 
-API theo use case vẫn tách để contract rõ, nhưng cùng map vào shared verification aggregate:
+API theo use case vẫn tách để contract rõ, nhưng đều map vào verification aggregate:
 
 | **Use case** | **Private API** | **Response** |
 | --- | --- | --- |
@@ -589,7 +631,7 @@ Chỉ trả field nằm trong allowlist của `documentType`. Không trả raw p
 
 Provider error phát sinh trong worker được lưu vào attempt/outcome để Mobile/Web nhận khi poll; không trả raw FPT error.
 
-## 6. Schema dữ liệu dùng chung
+## 6. Schema dữ liệu
 
 ### 6.1. Mô hình logic
 
@@ -803,7 +845,7 @@ Timeout outbound của từng FPT call phải ngắn hơn worker lease còn lạ
 ### 7.4. Quota và backlog
 
 - OCR và eKYC dùng token bucket/concurrency limit riêng theo FPT quota.
-- Job Bus route theo type tới consumer pool riêng; shared queue contract không có nghĩa dùng chung toàn bộ thread/capacity.
+- Job Bus route theo type tới consumer pool riêng; một job contract không có nghĩa hai flow sử dụng cùng toàn bộ thread/capacity.
 - Circuit breaker dừng claim job mới của flow đang lỗi diện rộng; job còn `QUEUED` và `available_at` được dời theo backoff.
 - Alert tối thiểu: queue age/depth theo type, provider latency/error/429, stale lease, outbox lag, terminal outcome rate.
 
@@ -813,7 +855,7 @@ Timeout outbound của từng FPT call phải ngắn hơn worker lease còn lạ
 
 1. Chốt `s3PathFile` prefix, media roles, IAM read-only và input limit.
 2. Chốt FPT `documentType → API/model`, request/response/error, quota, session TTL và timeout.
-3. Xây shared schema, Verification API core, idempotency, outbox và Job Bus routing.
+3. Xây schema, Verification API core, idempotency, outbox và Job Bus routing.
 4. Xây OCR handler/provider flow và Canonical Result.
 5. Xây eKYC handler/provider flow, step checkpoint và policy engine.
 6. Tích hợp polling/confirm/apply với domain.
