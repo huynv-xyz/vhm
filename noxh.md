@@ -57,8 +57,8 @@ OCR chỉ hỗ trợ số hóa và kiểm tra dữ liệu theo khả năng của
 | --- | --- |
 | Verification API | Nhận internal command/query từ `vhm-dossier-core`; validate contract, idempotency key và authorized media reference; trả `verificationId/status/result` |
 | Journey Orchestrator | Chọn `OCR` hoặc `EKYC`, kiểm tra milestone bắt buộc và điều khiển state transition |
-| OCR Worker | Đọc media đã finalize, xử lý ảnh định danh hoặc tách trang/batch cho tài liệu lớn, theo dõi progress và tổng hợp kết quả |
-| eKYC Worker | Điều phối provider session, OCR front/back, liveness và face matching |
+| OCR Worker workload | Internal worker không mở API; đọc media đã finalize, xử lý ảnh định danh hoặc tách trang/batch cho tài liệu lớn, theo dõi progress và tổng hợp kết quả |
+| EKYC Worker workload | Internal worker không mở API; điều phối provider session, OCR front/back, liveness và face matching |
 | Provider Adapter | Inject server credential; ánh xạ request/response/error; quản lý timeout, quota, circuit breaker và provider session |
 | Result Normalizer | Chuẩn hóa field, confidence, warning, liveness/face-match check thành Canonical Result có version |
 | Decision Mapper | Ánh xạ canonical checks thành journey outcome; không chứa rule phê duyệt hồ sơ NOXH |
@@ -115,6 +115,38 @@ Giải pháp này tách nghiệp vụ NOXH khỏi chi tiết tích hợp provide
 | Kết quả | Authorize `status/result`; đối chiếu `resultVersion` và apply dữ liệu người dùng đã xác nhận | Lưu và trả status, progress, outcome và Canonical Result có version; không trả raw provider payload |
 | Dữ liệu và vận hành | Lưu attachment metadata và audit việc apply | Lưu session/job/check/result cùng media reference đã mã hóa; masking, audit, monitoring và purge theo policy |
 
+### 3.4. Lifecycle và outcome dùng chung
+
+`status` chỉ thể hiện vòng đời kỹ thuật. `outcome` chỉ được gán khi `status=COMPLETED`; vì vậy một lần xác minh bị lỗi provider sau khi hết recovery budget vẫn là `COMPLETED + PROVIDER_ERROR`, không phải `REJECTED`.
+
+```mermaid
+stateDiagram-v2
+    [*] --> WAITING_MEDIA: Create EKYC
+    [*] --> QUEUED: Create OCR
+    WAITING_MEDIA --> QUEUED: Submit đủ finalized media
+    WAITING_MEDIA --> CANCELLED: User hủy
+    WAITING_MEDIA --> EXPIRED: Hết capture TTL
+    QUEUED --> PROCESSING: Worker claim job
+    QUEUED --> CANCELLED: Hủy trước khi claim
+    QUEUED --> EXPIRED: Quá processing deadline
+    PROCESSING --> COMPLETED: Persist Canonical Result
+    PROCESSING --> CANCEL_REQUESTED: Hủy trong khi gọi provider
+    CANCEL_REQUESTED --> CANCELLED: Worker dừng an toàn
+    COMPLETED --> [*]
+    CANCELLED --> [*]
+    EXPIRED --> [*]
+```
+
+| **Journey** | **Outcome khi `COMPLETED`** | **Ý nghĩa** |
+| --- | --- | --- |
+| `OCR` | `OCR_COMPLETED` | Đọc đủ tài liệu; vẫn cần người dùng xác nhận dữ liệu |
+| `OCR` | `PARTIAL` | Chỉ một phần trang/field xử lý thành công |
+| `OCR` | `NEED_REVIEW` | Confidence/warning vượt ngưỡng cần kiểm tra thủ công |
+| Cả hai | `NEED_RETRY` | Media hoặc thao tác người dùng có thể thực hiện lại |
+| `EKYC` | `VERIFIED` | Document, liveness và face match đạt policy |
+| `EKYC` | `REJECTED` | Check nghiệp vụ xác minh không đạt policy; không dùng cho lỗi transport/provider |
+| Cả hai | `PROVIDER_ERROR` | Hết retry budget hoặc provider không trả kết quả hợp lệ |
+
 ## 4. Upload media
 
 Upload được mô tả duy nhất tại mục này và dùng chung cho cả hai journey. `vhm-dossier-core` sở hữu attachment; `vhm-verification-service` không cấp Presigned URL và không nhận binary qua API.
@@ -169,10 +201,14 @@ Attachment sẵn sàng`"]
 dossierId · mediaId · documentType`"]
     AUTHORIZE["`**vhm-dossier-core**
 Authorize hồ sơ và media`"]
-    JOB["`**vhm-verification-service**
-Create job · QUEUED · 202`"]
-    WORKER["`**OCR Worker**
-PROCESSING · Validate media`"]
+    subgraph VERIFY["`**vhm-verification-service**
+Một service · cùng codebase`"]
+        JOB["`**Verification API**
+Create OCR job · QUEUED · 202`"]
+        WORKER["`**OCR Worker workload**
+Internal · No API · PROCESSING`"]
+    end
+    QUEUE[("`**OCR Job Queue**`")]
     TYPE{"`**Loại tài liệu**`"}
     IDENTITY["`**FPT eKYC OCR**
 IDR · Passport · DLR`"]
@@ -186,7 +222,8 @@ NEED_REVIEW · PROVIDER_ERROR`"]
     CLIENT["`**Mobile/Web**
 Poll · Confirm result`"]
 
-    MEDIA --> REQUEST --> AUTHORIZE --> JOB --> WORKER --> TYPE
+    MEDIA --> REQUEST --> AUTHORIZE --> JOB
+    JOB --> QUEUE --> WORKER --> TYPE
     TYPE -->|Giấy tờ định danh| IDENTITY
     TYPE -->|Tài liệu nhiều trang| DOCUMENT
     IDENTITY --> RESULT
@@ -264,18 +301,22 @@ sequenceDiagram
 flowchart TD
     START["`**Bắt đầu EKYC**
 dossierId · subjectRef · consentRef`"]
-    SESSION["`**vhm-verification-service**
+    subgraph VERIFY["`**vhm-verification-service**
+Một service · cùng codebase`"]
+        SESSION["`**Verification API**
 Create session · WAITING_MEDIA`"]
+        JOB["`**Verification API**
+Create EKYC job · QUEUED · 202`"]
+        WORKER["`**EKYC Worker workload**
+Internal · No API · PROCESSING`"]
+    end
     CAPTURE["`**Mobile/Web**
 Capture document · selfie/liveness`"]
     UPLOAD["`**Upload theo Mục 4**
 Presigned PUT · FINALIZED`"]
     SUBMIT["`**Submit media manifest**
 Bind verificationId · attempt`"]
-    JOB["`**Verification Job**
-QUEUED · 202`"]
-    WORKER["`**eKYC Worker**
-PROCESSING · Validate media`"]
+    QUEUE[("`**EKYC Job Queue**`")]
     INIT["`**FPT /session/init**
 Provider session`"]
     OCR["`**FPT /ocr**
@@ -291,7 +332,7 @@ NEED_RETRY · PROVIDER_ERROR`"]
 Poll status/result`"]
 
     START --> SESSION --> CAPTURE --> UPLOAD --> SUBMIT --> JOB
-    JOB --> WORKER --> INIT --> OCR --> FACE --> RESULT --> COMPLETE --> CLIENT
+    JOB --> QUEUE --> WORKER --> INIT --> OCR --> FACE --> RESULT --> COMPLETE --> CLIENT
 ```
 
 ### 6.2. Sequence diagram
@@ -354,7 +395,7 @@ sequenceDiagram
 
 Mobile/Web sử dụng SDK/capture component của VHM để tạo raw document/selfie/liveness artifact và upload vào VHM Object Storage. Provider credential chỉ tồn tại trong `vhm-verification-service`; client không gọi FPT trực tiếp.
 
-## 7. API, lifecycle và kết quả
+## 7. API và kết quả
 
 ### 7.1. Thiết kế API
 
@@ -484,41 +525,7 @@ Quy ước HTTP/error:
 
 Error body chỉ dùng canonical `code`, `message`, `retryable`, `correlationId`; không trả raw FPT code/message, stack trace, media reference hoặc credential. Lỗi provider xảy ra trong worker được thể hiện bằng job retry và final `outcome`, không biến thành HTTP error của request polling.
 
-### 7.2. Lifecycle và outcome
-
-`status` chỉ thể hiện vòng đời kỹ thuật. `outcome` chỉ được gán khi `status=COMPLETED`; vì vậy một lần xác minh bị lỗi provider sau khi hết recovery budget vẫn là `COMPLETED + PROVIDER_ERROR`, không phải `REJECTED`.
-
-```mermaid
-stateDiagram-v2
-    [*] --> WAITING_MEDIA: Create EKYC
-    [*] --> QUEUED: Create OCR
-    WAITING_MEDIA --> QUEUED: Submit đủ finalized media
-    WAITING_MEDIA --> CANCELLED: User hủy
-    WAITING_MEDIA --> EXPIRED: Hết capture TTL
-    QUEUED --> PROCESSING: Worker claim job
-    QUEUED --> CANCELLED: Hủy trước khi claim
-    QUEUED --> EXPIRED: Quá processing deadline
-    PROCESSING --> COMPLETED: Persist Canonical Result
-    PROCESSING --> CANCEL_REQUESTED: Hủy trong khi gọi provider
-    CANCEL_REQUESTED --> CANCELLED: Worker dừng an toàn
-    COMPLETED --> [*]
-    CANCELLED --> [*]
-    EXPIRED --> [*]
-```
-
-| **Journey** | **Outcome khi `COMPLETED`** | **Ý nghĩa** |
-| --- | --- | --- |
-| `OCR` | `OCR_COMPLETED` | Đọc đủ tài liệu; vẫn cần người dùng xác nhận dữ liệu |
-| `OCR` | `PARTIAL` | Chỉ một phần trang/field xử lý thành công |
-| `OCR` | `NEED_REVIEW` | Confidence/warning vượt ngưỡng cần kiểm tra thủ công |
-| Cả hai | `NEED_RETRY` | Media hoặc thao tác người dùng có thể thực hiện lại |
-| `EKYC` | `VERIFIED` | Document, liveness và face match đạt policy |
-| `EKYC` | `REJECTED` | Check nghiệp vụ xác minh không đạt policy; không dùng cho lỗi transport/provider |
-| Cả hai | `PROVIDER_ERROR` | Hết retry budget hoặc provider không trả kết quả hợp lệ |
-
-Worker có trạng thái riêng `PENDING/RUNNING/RETRY_WAIT/SUCCEEDED/DEAD`. `RETRY_WAIT` và `DEAD` là chi tiết vận hành của job, không được trả trực tiếp thành lifecycle/outcome cho Mobile/Web.
-
-### 7.3. Canonical Result
+### 7.2. Canonical Result
 
 Canonical Result có `schemaVersion`, không phụ thuộc tên field hoặc error code của FPT. API Result chỉ trả field nằm trong allowlist theo purpose; PII được mask theo role và raw score chỉ dành cho rule engine/audit có quyền.
 
@@ -768,6 +775,8 @@ Không dùng `provider_session_id`, `businessRef`, media URL hoặc PII làm met
 - **Tài liệu lớn:** tách `OCR_PAGE` job, giới hạn số trang chạy song song, retry từng trang; aggregator hoàn tất khi mọi unit terminal và cho outcome `PARTIAL` nếu policy cho phép.
 - **Dead job:** khi hết recovery budget, worker persist `COMPLETED + PROVIDER_ERROR` và `nextAction=RETRY`; DLQ chỉ phục vụ vận hành, không để client polling vô hạn.
 - **Cancel:** `WAITING_MEDIA/QUEUED` chuyển `CANCELLED` ngay. Khi `PROCESSING`, chuyển `CANCEL_REQUESTED`; worker không phát sinh call mới, kết thúc call đang chạy rồi bỏ result và chuyển `CANCELLED`.
+
+Worker có trạng thái riêng `PENDING/RUNNING/RETRY_WAIT/SUCCEEDED/DEAD`. `RETRY_WAIT` và `DEAD` là chi tiết vận hành của job, không được trả trực tiếp thành lifecycle/outcome cho Mobile/Web.
 
 ## 9. Thiết kế triển khai và vận hành
 
