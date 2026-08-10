@@ -136,13 +136,10 @@ OCR chỉ hỗ trợ số hóa và kiểm tra dữ liệu theo khả năng của
 
 **Phương án chọn:** Sử dụng **`vhm-verification-service`** làm lớp tích hợp tập trung cho cả OCR và eKYC, với vai trò kiến trúc là Verification Provider Proxy. `vhm-dossier-core` kiểm tra quyền nghiệp vụ, tạo phiên và nhận Canonical Result; không gọi trực tiếp hoặc phụ thuộc contract của FPT AI.
 
-**Quy ước tên service:** Chọn `vhm-verification-service` vì đủ rộng cho `OCR_ONLY` và eKYC đầy đủ (OCR, liveness, face matching). Không dùng `vhm-ocr-service` vì quá hẹp; không dùng `vhm-identity-service` vì dễ nhầm với IAM/Identity Provider.
-
 ```mermaid
 flowchart LR
     subgraph CLIENT["Kênh người dùng"]
-        MOBILE["Vinhomes Agent Mobile<br/>iOS / Android<br/>Mobile SDK + Upload"]
-        WEB["Vinhomes Agent Web<br/>Desktop / Mobile browser<br/>Web SDK + Upload"]
+        AGENT["Vinhomes Agent Mobile/Web<br/>SDK + Upload"]
     end
 
     subgraph APPLICATION["Tầng Application - Hạ tầng VHM"]
@@ -152,8 +149,8 @@ flowchart LR
         DB[("Verification Database<br/>Session và Canonical Result")]
         MEDIA[("Private Object Storage<br/>Verification media theo retention policy")]
 
-        BFF -->|"create / upload-slot / submit<br/>status / result"| NOXH
-        NOXH -->|"create / status / result<br/>businessRef + documentType"| PROXY
+        BFF <-->|"1. create/upload URL<br/>3. submit · 7. status/result"| NOXH
+        NOXH <-->|"1. session/media slot<br/>3. process OCR · 6. Canonical Result"| PROXY
         PROXY --> DB
         PROXY -.->|"Cấp upload slot · quản lý metadata/retention"| MEDIA
     end
@@ -162,13 +159,11 @@ flowchart LR
         PROVIDER["FPT AI Backend"]
     end
 
-    MOBILE -->|"1. create / xin upload URL<br/>3. submit mediaId"| BFF
-    WEB -->|"1. create / xin upload URL<br/>3. submit mediaId"| BFF
-    MOBILE ==>|"2. Presigned PUT<br/>binary + checksum"| MEDIA
-    WEB ==>|"2. Presigned PUT<br/>binary + checksum"| MEDIA
+    AGENT <-->|"1. create/xin upload URL<br/>3. submit · 7. status/result"| BFF
+    AGENT ==>|"2. Presigned PUT<br/>binary + checksum"| MEDIA
     PROXY -->|"4. HEAD/GET object đã validate"| MEDIA
-    PROXY ==>|"Init/OCR/Result API<br/>api-key chỉ inject phía server"| PROVIDER
-    PROVIDER ==>|"Synchronous OCR Result"| PROXY
+    PROXY ==>|"5. POST /ocr<br/>api-key inject phía server"| PROVIDER
+    PROVIDER ==>|"6. OCR Result"| PROXY
     PROVIDER -.->|"Provider Callback — bổ sung"| PROXY
 
 ```
