@@ -84,8 +84,8 @@ Authorize · Apply result`"]
 Media API có sẵn`"]
     VERIFY["`**vhm-verification-service**
 OCR · eKYC · Provider Adapter`"]
-    PROVIDER["`**OCR/eKYC Provider**
-Provider/model theo documentType`"]
+    PROVIDER["`**FPT AI Backend**
+OCR · eKYC API/model`"]
     DB[("`**Verification Database**
 Media ref · Job · Canonical result`")]
 
@@ -211,17 +211,18 @@ Read grant cho exact media version`"]
         P_STORAGE[("`**Private Object Storage**
 Document media`")]
         P_ADAPTER["`**Provider Adapter**
-Chọn provider/model theo documentType`"]
-        P_PROVIDER["`**OCR Provider**
-Xử lý document · trả kết quả`"]
+Map contract · server credential`"]
+        P_PROVIDER["`**FPT AI Backend**
+OCR API/model theo documentType`"]
         P_RESULT["`**Verification Database**
 COMPLETED · outcome · Canonical Result`"]
 
         P_QUEUE --> P_WORKER
         P_WORKER <-->|"Lấy read grant"| P_READ
         P_WORKER <-->|"Đọc document"| P_STORAGE
-        P_WORKER --> P_ADAPTER
-        P_ADAPTER <-->|"OCR request/result"| P_PROVIDER
+        P_WORKER -->|"Chọn API/model theo documentType"| P_ADAPTER
+        P_ADAPTER ==>|"Init session · OCR request"| P_PROVIDER
+        P_PROVIDER ==>|"Session/result"| P_ADAPTER
         P_ADAPTER -->|"Normalize và persist"| P_RESULT
     end
 
@@ -262,7 +263,7 @@ sequenceDiagram
     participant QUEUE as Verification Job Queue
     participant MEDIA_API as vhm-media-service
     participant MEDIA as Private Object Storage
-    participant PROVIDER as OCR/eKYC Provider
+    participant PROVIDER as FPT AI Backend
 
     CLIENT->>BFF: Yêu cầu OCR<br/>dossierId + mediaId + documentType
     BFF->>NOXH: Xác thực và routing
@@ -284,9 +285,9 @@ sequenceDiagram
     MEDIA-->>OCR: Object stream
     OCR->>OCR: Validate binding/MIME/magic bytes/size
 
-    OCR->>OCR: Chọn provider/model theo documentType
-    OCR->>PROVIDER: OCR một document<br/>server credential + provider contract
-    PROVIDER-->>OCR: Provider result của document
+    OCR->>OCR: Provider Adapter chọn API/model theo documentType
+    OCR->>PROVIDER: Init session nếu API yêu cầu<br/>OCR document bằng server credential
+    PROVIDER-->>OCR: Provider session/result
 
     OCR->>OCR: Chuẩn hóa Canonical Result
     OCR->>OCR: Persist status=COMPLETED<br/>Canonical Result + outcome
