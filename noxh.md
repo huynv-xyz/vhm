@@ -57,7 +57,7 @@ Cách bọc này tránh giữ kết nối Mobile/Web trong thời gian upload me
 | OCR Worker | Claim job, đọc tài liệu, gọi provider và persist kết quả; không mở public API |
 | Provider Adapter | Ánh xạ `documentType` sang FPT API/model; inject credential; map response/error |
 | Result Normalizer | Chuyển provider response thành Canonical Result có version |
-| Verification Database + Outbox | Lưu lifecycle, media snapshot, job, provider attempt, result, history và sự kiện |
+| Verification Database + Outbox | Lưu lifecycle, `mediaId`, worker lease/retry, provider attempt, result và sự kiện |
 
 `Verification API`, `OCR Worker`, `Provider Adapter` và `Result Normalizer` là module/workload trong cùng `vhm-verification-service`, không phải các service public riêng.
 
@@ -94,7 +94,7 @@ Async job`")]
     FPT["`**FPT AI Backend**
 Session API · OCR API`"]
     DB[("`**Verification Database**
-Job · Provider attempt · Result`")]
+Verification · Provider attempt · Result`")]
 
     CLIENT <-->|"Application API"| BFF
     BFF <-->|"Upload/finalize"| MEDIA_API
@@ -131,7 +131,7 @@ QUEUED → PROCESSING → COMPLETED
    └───────────────→ CANCELLED/EXPIRED
 ```
 
-- `QUEUED`: job đã được persist và có outbox để publish.
+- `QUEUED`: verification đã lưu `mediaId`/worker state và có outbox để publish message.
 - `PROCESSING`: worker đã claim job.
 - `COMPLETED`: đã có kết luận cuối cùng, kể cả trường hợp provider lỗi sau khi hết recovery budget.
 - `CANCELLED/EXPIRED`: kết thúc không có outcome.
@@ -171,7 +171,7 @@ sequenceDiagram
     CLIENT->>BFF: Finalize mediaId
     BFF->>BFF: Authorize actor + media binding
     BFF->>MEDIA_API: Finalize authorized mediaId
-    MEDIA_API-->>BFF: mediaId + mediaVersion + FINALIZED
+    MEDIA_API-->>BFF: mediaId + FINALIZED
     BFF-->>CLIENT: mediaId + FINALIZED
 ```
 
@@ -192,12 +192,12 @@ flowchart LR
     API["`**Verification API**
 Validate request`"]
     ACCEPT["`**Database transaction**
-QUEUED · Media snapshot · Outbox`"]
+QUEUED · mediaId · Outbox`"]
     QUEUE[("`**OCR Job Queue**`")]
     WORKER["`**OCR Worker**
 PROCESSING`"]
     READ["`**Media Adapter**
-Read exact media version`"]
+Read finalized media`"]
     INIT["`**FPT Session API**
 POST /session/init`"]
     OCR["`**FPT OCR API**
@@ -236,8 +236,8 @@ sequenceDiagram
     DOSSIER->>DOSSIER: Authorize dossier + mediaId
     DOSSIER->>VERIFY: POST OCR<br/>businessRef + mediaId + documentType
     VERIFY->>MEDIA_API: Validate binding + FINALIZED metadata
-    MEDIA_API-->>VERIFY: mediaVersion + checksum + MIME + size
-    VERIFY->>DB: Transaction: verification QUEUED<br/>media snapshot + job + outbox
+    MEDIA_API-->>VERIFY: mediaId + FINALIZED
+    VERIFY->>DB: Transaction: verification QUEUED<br/>mediaId + worker state + outbox
     DB-->>VERIFY: Commit
     VERIFY-->>DOSSIER: 202 + verificationId + resourceUri
     DOSSIER-->>BFF: 202 + verificationId + statusUrl
@@ -245,10 +245,10 @@ sequenceDiagram
 
     DB-->>QUEUE: Outbox publisher: OCR_JOB_CREATED
     QUEUE-->>VERIFY: Worker claim verificationId
-    VERIFY->>DB: Job RUNNING + verification PROCESSING
+    VERIFY->>DB: Claim lease + verification PROCESSING
 
-    VERIFY->>MEDIA_API: Request read grant<br/>mediaId + mediaVersion + verificationId
-    MEDIA_API-->>VERIFY: Presigned GET exact version
+    VERIFY->>MEDIA_API: Request read grant<br/>mediaId + verificationId
+    MEDIA_API-->>VERIFY: FINALIZED metadata + Presigned GET
     VERIFY->>STORAGE: GET document stream
     STORAGE-->>VERIFY: Binary
     VERIFY->>VERIFY: Validate checksum + MIME/magic bytes + size
@@ -259,7 +259,7 @@ sequenceDiagram
     FPT-->>VERIFY: Synchronous errorCode + data
 
     VERIFY->>VERIFY: Map provider error + normalize result
-    VERIFY->>DB: Transaction: provider attempt + checks/result<br/>COMPLETED + outcome + history
+    VERIFY->>DB: Transaction: provider attempt + result<br/>COMPLETED + outcome + outbox
 
     loop Khi status chưa kết thúc
         CLIENT->>BFF: GET statusUrl
@@ -272,7 +272,7 @@ sequenceDiagram
         BFF-->>CLIENT: Status + outcome/result
     end
 
-    CLIENT->>BFF: Confirm resultVersion
+    CLIENT->>BFF: Confirm OCR result<br/>verificationId
     BFF->>DOSSIER: Apply confirmed OCR result
     DOSSIER->>DOSSIER: Update dossier in local transaction
 ```
@@ -290,21 +290,21 @@ VHM không trả `session-id` xuống Mobile/Web và không dùng nó làm `veri
 
 | **Use case** | **Private API** | **Response** |
 | --- | --- | --- |
-| Tạo OCR | `POST /internal/v1/ocr-verifications` | `202 + verificationId + resourceUri` |
-| Lấy trạng thái | `GET /internal/v1/ocr-verifications/{verificationId}` | Status, outcome, next action |
-| Lấy kết quả | `GET /internal/v1/ocr-verifications/{verificationId}/result` | Canonical Result |
-| Thử lại | `POST /internal/v1/ocr-verifications/{verificationId}/retries` | `202`, tạo verification mới |
+| Tạo OCR | `POST /v1/ocr-verifications` | `202 + verificationId + resourceUri` |
+| Lấy trạng thái | `GET /v1/ocr-verifications/{verificationId}` | Status, outcome, next action |
+| Lấy kết quả | `GET /v1/ocr-verifications/{verificationId}/result` | Canonical Result |
+| Thử lại | `POST /v1/ocr-verifications/{verificationId}/retries` | `202`, tạo verification mới |
 
-Các API trên chỉ mở cho service caller được cấp scope và không chứa khái niệm `dossierId` trong URL. Domain caller truyền định danh nghiệp vụ bằng `businessRef.type + businessRef.id` trong command và tự lưu association với `verificationId`.
+Các API trên chỉ được expose qua private ingress/DNS cho service caller có mTLS hoặc service token đúng scope. Prefix `/internal` không được sử dụng vì toàn bộ API của `vhm-verification-service` đã là private. URL không chứa khái niệm `dossierId`; domain caller truyền định danh nghiệp vụ bằng `businessRef.type + businessRef.id` trong command và tự lưu association với `verificationId`.
 
 Các route `/dossiers/...` nếu có thuộc Application API của `vhm-agent-api`/`vhm-dossier-core`, không phải contract của service dùng chung. Tương tự, upload/finalize thuộc API hiện có của `vhm-media-service`, còn confirm/apply kết quả thuộc API và transaction của từng domain; ba nhóm API này không được định nghĩa lại trong mục này.
 
-`vhm-verification-service` trả `resourceUri` nội bộ. Domain caller ánh xạ URI này thành URL thuộc application của mình và authorize lại trên mỗi request từ Mobile/Web; internal URI không được chuyển nguyên cho client.
+`vhm-verification-service` trả service `resourceUri`. Domain caller ánh xạ URI này thành URL thuộc application của mình và authorize lại trên mỗi request từ Mobile/Web; URI của private service không được chuyển nguyên cho client.
 
 ### 6.2. Tạo OCR
 
 ```http
-POST /internal/v1/ocr-verifications
+POST /v1/ocr-verifications
 Authorization: Bearer <service-token>
 Idempotency-Key: 72aacfa4-97b8-4d0f-bb74-490f17352b1b
 Content-Type: application/json
@@ -325,11 +325,11 @@ Retry-After: 3
 {
   "verificationId": "ver-123",
   "status": "QUEUED",
-  "resourceUri": "/internal/v1/ocr-verifications/ver-123"
+  "resourceUri": "/v1/ocr-verifications/ver-123"
 }
 ```
 
-Create chỉ trả `202` sau khi verification, immutable media snapshot, job và outbox đã commit thành công. Nếu không thể persist an toàn, API trả lỗi; không trả `202` rồi để mất job.
+Create chỉ trả `202` sau khi verification chứa `mediaId`/worker state và outbox đã commit thành công. Nếu không thể persist an toàn, API trả lỗi; không trả `202` rồi để mất yêu cầu xử lý.
 
 ### 6.3. Status và result
 
@@ -351,7 +351,6 @@ Canonical Result không phụ thuộc tên field/error code của FPT:
   "verificationId": "ver-123",
   "status": "COMPLETED",
   "outcome": "OCR_COMPLETED",
-  "resultVersion": 1,
   "schemaVersion": "1.0",
   "document": {
     "type": "MARRIAGE_CERTIFICATE",
@@ -387,7 +386,7 @@ Kết quả chỉ chứa field nằm trong allowlist của `documentType`. Raw p
 | `429` | Admission control/quota nội bộ; trả `Retry-After` |
 | `503` | Không thể persist/enqueue an toàn |
 
-Error response của VHM chỉ dùng `code`, `message`, `retryable` và `correlationId`. Provider error phát sinh trong worker được lưu vào trạng thái job/result để Mobile/Web nhận khi poll, không trả raw FPT response.
+Error response của VHM chỉ dùng `code`, `message`, `retryable` và `correlationId`. Provider error phát sinh trong worker được lưu vào verification/provider attempt để Mobile/Web nhận khi poll, không trả raw FPT response.
 
 ## 7. Dữ liệu
 
@@ -395,21 +394,17 @@ Error response của VHM chỉ dùng `code`, `message`, `retryable` và `correla
 
 | **Bảng** | **Mục đích** |
 | --- | --- |
-| `ocr_verifications` | Aggregate root, lifecycle, idempotency và business binding |
-| `ocr_media_refs` | Snapshot immutable của đúng `mediaId/mediaVersion` đã finalize |
-| `ocr_jobs` | Trạng thái vận hành của worker |
+| `ocr_verifications` | Aggregate root; chứa business binding, `mediaId`, lifecycle, idempotency và worker lease/retry |
 | `provider_attempts` | Ghi từng lần init/OCR và trạng thái timeout không xác định |
 | `ocr_results` | Canonical Result hiện hành, có version |
-| `verification_history` | Lịch sử lifecycle append-only |
 | `outbox_events` | Bảo đảm DB commit và enqueue/event không lệch nhau |
+
+Baseline quy ước một verification có một `mediaId` immutable sau khi `FINALIZED` và một workload OCR. Verification Database chỉ lưu opaque `mediaId`; metadata, checksum và storage binding vẫn thuộc `vhm-media-service` và được worker kiểm tra lại khi xin read grant. Chỉ tách bảng media khi một verification thực sự cần nhiều tài liệu.
 
 ```mermaid
 erDiagram
-    OCR_VERIFICATION ||--|| OCR_MEDIA_REF : reads
-    OCR_VERIFICATION ||--|| OCR_JOB : schedules
     OCR_VERIFICATION ||--o{ PROVIDER_ATTEMPT : invokes
     OCR_VERIFICATION ||--o| OCR_RESULT : produces
-    OCR_VERIFICATION ||--o{ VERIFICATION_HISTORY : records
     OCR_VERIFICATION ||--o{ OUTBOX_EVENT : publishes
 ```
 
@@ -423,15 +418,22 @@ CREATE TABLE ocr_verifications (
     subject_ref_ciphertext  BYTEA,
     channel                 VARCHAR(20) NOT NULL CHECK (channel IN ('MOBILE', 'WEB')),
     document_type           VARCHAR(50) NOT NULL,
+
+    media_id                UUID NOT NULL,
+
     status                  VARCHAR(30) NOT NULL CHECK (status IN
                                 ('QUEUED', 'PROCESSING', 'COMPLETED',
                                  'CANCELLED', 'EXPIRED')),
     outcome                 VARCHAR(30),
+    attempt_count           INTEGER NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
+    available_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
+    lease_owner             VARCHAR(100),
+    lease_until             TIMESTAMPTZ,
+    last_error_code         VARCHAR(80),
+
     retry_of                UUID REFERENCES ocr_verifications(verification_id),
     idempotency_key         VARCHAR(100) NOT NULL,
     request_fingerprint     CHAR(64) NOT NULL,
-    result_schema_version   VARCHAR(20) NOT NULL,
-    next_action             VARCHAR(40),
     terminal_reason_code    VARCHAR(80),
     row_version             BIGINT NOT NULL DEFAULT 0,
     created_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -442,48 +444,22 @@ CREATE TABLE ocr_verifications (
         (status = 'COMPLETED' AND outcome IN
             ('OCR_COMPLETED', 'NEED_REVIEW', 'NEED_RETRY', 'PROVIDER_ERROR')) OR
         (status <> 'COMPLETED' AND outcome IS NULL)
+    ),
+    CONSTRAINT ck_ocr_completed_at CHECK (
+        (status = 'COMPLETED' AND completed_at IS NOT NULL) OR
+        (status <> 'COMPLETED' AND completed_at IS NULL)
     )
 );
 
 CREATE INDEX ix_ocr_business
     ON ocr_verifications (business_type, business_ref, created_at DESC);
-CREATE INDEX ix_ocr_active
-    ON ocr_verifications (status, updated_at)
+CREATE INDEX ix_ocr_dispatch
+    ON ocr_verifications (status, available_at)
     WHERE status IN ('QUEUED', 'PROCESSING');
-
-CREATE TABLE ocr_media_refs (
-    verification_id         UUID PRIMARY KEY REFERENCES ocr_verifications(verification_id),
-    media_id                 UUID NOT NULL,
-    media_version            VARCHAR(200) NOT NULL,
-    checksum_sha256          CHAR(64) NOT NULL,
-    content_type             VARCHAR(100) NOT NULL,
-    size_bytes               BIGINT NOT NULL CHECK (size_bytes > 0),
-    finalized_at             TIMESTAMPTZ NOT NULL,
-    created_at               TIMESTAMPTZ NOT NULL DEFAULT now(),
-    CONSTRAINT uq_ocr_media UNIQUE (verification_id, media_id)
-);
-
-CREATE TABLE ocr_jobs (
-    job_id                   UUID PRIMARY KEY,
-    verification_id         UUID NOT NULL UNIQUE REFERENCES ocr_verifications(verification_id),
-    status                   VARCHAR(20) NOT NULL CHECK (status IN
-                                ('PENDING', 'RUNNING', 'RETRY_WAIT', 'SUCCEEDED', 'DEAD')),
-    attempt_count            INTEGER NOT NULL DEFAULT 0,
-    max_attempts             INTEGER NOT NULL,
-    available_at             TIMESTAMPTZ NOT NULL DEFAULT now(),
-    lease_owner              VARCHAR(100),
-    lease_until              TIMESTAMPTZ,
-    last_error_code          VARCHAR(80),
-    created_at               TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at               TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
-CREATE INDEX ix_ocr_job_dispatch ON ocr_jobs (status, available_at);
 
 CREATE TABLE provider_attempts (
     provider_attempt_id      UUID PRIMARY KEY,
     verification_id         UUID NOT NULL REFERENCES ocr_verifications(verification_id),
-    job_id                   UUID NOT NULL REFERENCES ocr_jobs(job_id),
     provider                 VARCHAR(30) NOT NULL,
     operation                VARCHAR(30) NOT NULL CHECK (operation IN ('INIT_SESSION', 'OCR')),
     attempt_no               INTEGER NOT NULL CHECK (attempt_no > 0),
@@ -502,28 +478,11 @@ CREATE TABLE provider_attempts (
 
 CREATE TABLE ocr_results (
     verification_id         UUID PRIMARY KEY REFERENCES ocr_verifications(verification_id),
-    result_version           INTEGER NOT NULL,
     schema_version           VARCHAR(20) NOT NULL,
     canonical_payload_ciphertext BYTEA NOT NULL,
     payload_key_version      VARCHAR(40) NOT NULL,
-    result_hash              CHAR(64) NOT NULL,
     created_at               TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-
-CREATE TABLE verification_history (
-    history_id               UUID PRIMARY KEY,
-    verification_id         UUID NOT NULL REFERENCES ocr_verifications(verification_id),
-    from_status              VARCHAR(30),
-    to_status                VARCHAR(30) NOT NULL,
-    outcome                  VARCHAR(30),
-    reason_code              VARCHAR(80),
-    actor_type               VARCHAR(30) NOT NULL,
-    correlation_id           VARCHAR(100) NOT NULL,
-    created_at               TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
-CREATE INDEX ix_ocr_history
-    ON verification_history (verification_id, created_at);
 
 CREATE TABLE outbox_events (
     event_id                 UUID PRIMARY KEY,
@@ -533,26 +492,40 @@ CREATE TABLE outbox_events (
     status                   VARCHAR(20) NOT NULL DEFAULT 'NEW' CHECK (status IN
                                 ('NEW', 'PUBLISHING', 'PUBLISHED', 'FAILED')),
     available_at             TIMESTAMPTZ NOT NULL DEFAULT now(),
+    lease_owner              VARCHAR(100),
+    lease_until              TIMESTAMPTZ,
     published_at             TIMESTAMPTZ,
     attempt_count            INTEGER NOT NULL DEFAULT 0,
-    created_at               TIMESTAMPTZ NOT NULL DEFAULT now()
+    created_at               TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT ck_outbox_publishing_lease CHECK (
+        (status = 'PUBLISHING' AND lease_owner IS NOT NULL AND lease_until IS NOT NULL) OR
+        (status <> 'PUBLISHING' AND lease_owner IS NULL AND lease_until IS NULL)
+    )
 );
 
-CREATE INDEX ix_outbox_publish ON outbox_events (status, available_at);
+CREATE INDEX ix_outbox_publish
+    ON outbox_events (available_at)
+    WHERE status IN ('NEW', 'FAILED');
+CREATE INDEX ix_outbox_lease_recovery
+    ON outbox_events (lease_until)
+    WHERE status = 'PUBLISHING';
 ```
 
 Không lưu object path, Presigned URL hoặc raw provider payload trong các bảng trên. Outbox chỉ chứa ID/reference tối thiểu, không chứa tài liệu hoặc Canonical Result.
+
+Retry budget được lấy từ cấu hình theo provider/operation, không lưu `max_attempts` trên từng verification. Schema version chỉ lưu cùng Canonical Result trong `ocr_results.schema_version`. `nextAction` trong API response được tính từ `status + outcome`, không persist trong database. Mỗi verification có một result immutable nên không cần `result_version` hoặc `result_hash`; retry tạo `verificationId` mới.
 
 ## 8. Xử lý tin cậy và timeout
 
 ### 8.1. Transaction và idempotency
 
 - Verification API kiểm tra media `FINALIZED` và lấy immutable metadata ngoài DB transaction.
-- Sau đó insert `ocr_verifications`, `ocr_media_refs`, `ocr_jobs` và `outbox_events` trong một transaction ngắn.
+- Sau đó insert `ocr_verifications` chứa `mediaId`/worker state và `outbox_events` trong một transaction ngắn.
 - Cùng `Idempotency-Key` và fingerprint trả resource cũ; cùng key nhưng fingerprint khác trả `409 IDEMPOTENCY_CONFLICT`.
-- Queue dùng at-least-once. Worker dedupe theo `jobId` và không gọi provider lại nếu đã có provider attempt terminal thành công.
+- Queue dùng at-least-once. Message chỉ chứa `verificationId`; worker claim aggregate bằng lease/CAS và không gọi provider lại nếu đã có provider attempt terminal thành công.
+- Outbox Publisher claim event `NEW/FAILED` bằng `PUBLISHING + lease`; khi thành công chuyển `PUBLISHED`, khi lỗi chuyển `FAILED` và đặt `available_at` theo backoff. Event `PUBLISHING` có lease hết hạn được publisher khác phục hồi, vì vậy không bị kẹt khi process chết giữa chừng.
 - Provider call, Object Storage và Media API luôn nằm ngoài DB transaction.
-- Persist result trong transaction ngắn: provider attempt, Canonical Result, lifecycle, history và outbox `OCR_COMPLETED`.
+- Persist result trong transaction ngắn: provider attempt, Canonical Result, lifecycle và outbox `OCR_COMPLETED`.
 
 ### 8.2. Timeout FPT synchronous API
 
@@ -569,11 +542,11 @@ Normal flow không polling FPT vì `/ocr` trả kết quả synchronous. Nếu t
 
 Timeout outbound tới FPT phải ngắn hơn lease của worker. Giá trị cụ thể cần được chốt theo SLA và p95/p99 thực tế của từng endpoint; tài liệu này không giả định một con số timeout là SLA chính thức của FPT.
 
-### 8.3. Kết thúc job
+### 8.3. Kết thúc xử lý
 
-- Thành công: `ocr_jobs=SUCCEEDED`, verification `COMPLETED` và outcome `OCR_COMPLETED/NEED_REVIEW/NEED_RETRY`.
-- Hết recovery budget: `ocr_jobs=DEAD`, verification `COMPLETED + PROVIDER_ERROR`; client không bị poll vô hạn.
-- `RETRY_WAIT/DEAD` là trạng thái nội bộ của worker, không trả trực tiếp cho Mobile/Web.
+- Thành công: verification chuyển `COMPLETED` với outcome `OCR_COMPLETED/NEED_REVIEW/NEED_RETRY`, đồng thời xóa worker lease.
+- Lỗi retry-safe: verification trở lại `QUEUED`, tăng `attempt_count` và đặt `available_at` theo backoff.
+- Hết recovery budget: verification chuyển `COMPLETED + PROVIDER_ERROR`; client không bị poll vô hạn.
 
 ## 9. Kế hoạch triển khai và kiểm thử
 
@@ -592,7 +565,7 @@ Timeout outbound tới FPT phải ngắn hơn lease của worker. Giá trị c�
 | --- | --- |
 | Unit | Lifecycle/outcome guard, idempotency fingerprint, field mapping, confidence/warning và timeout classification |
 | Contract | Media metadata/read grant; FPT init/OCR success, business error, malformed response, 429, 5xx và timeout fixture |
-| Integration | PostgreSQL constraint/locking, outbox publish, queue duplicate, worker lease/recovery và exact media version |
+| Integration | PostgreSQL constraint/locking, outbox publish, queue duplicate, worker lease/recovery và immutable media binding |
 | End-to-end | Upload → finalize → create `202` → processing → result → confirm/apply |
 | Resilience | FPT slow/timeout, unknown-after-send, queue backlog, worker crash, DLQ và client polling không vô hạn |
 
@@ -601,6 +574,6 @@ Timeout outbound tới FPT phải ngắn hơn lease của worker. Giá trị c�
 - API/model FPT cho giấy đăng ký kết hôn, giấy chứng nhận hộ nghèo/cận nghèo và tài liệu ngoài `idr/passport/dlr`.
 - File type/size/page limit, request multipart contract và SLA/quota của từng model.
 - Threshold confidence/warning theo từng `documentType`.
-- Retention của Canonical Result, provider session metadata và audit history.
+- Retention của Canonical Result, provider session metadata và centralized audit log.
 
 `vhm-verification-service` chịu trách nhiệm OCR và cô lập FPT contract. `vhm-dossier-core` vẫn chịu trách nhiệm authorization, xác nhận người dùng và cập nhật hồ sơ NOXH.
