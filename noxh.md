@@ -39,7 +39,7 @@ OCR chỉ hỗ trợ số hóa và kiểm tra dữ liệu theo khả năng của
 | **`vhm-dossier-core` tích hợp trực tiếp FPT AI** | Ít thành phần; thời gian triển khai ban đầu ngắn | `vhm-dossier-core` phải xử lý credential, provider session, queue/worker, retry và mã lỗi riêng của FPT AI; thay đổi provider tác động trực tiếp nghiệp vụ NOXH; tăng rủi ro dữ liệu định danh trong service hồ sơ | **No** |
 | **`vhm-verification-service`** | `vhm-dossier-core` chỉ authorize nghiệp vụ và sử dụng kết quả; luồng upload tái sử dụng `vhm-media-service` có sẵn; verification service tập trung vào async job, provider integration, credential, session, retry, quota, audit và chuẩn hóa; thay provider không tác động domain | Thêm một service và network hop trên luồng xử lý; verification service phải đáp ứng HA/SLA vì là dependency dùng chung | **Yes** |
 
-**Phương án chọn:** Sử dụng **`vhm-verification-service`** làm capability tập trung cho cả OCR và eKYC. `vhm-dossier-core` kiểm tra quyền nghiệp vụ trước mọi upload/create/submit/query/apply; **`vhm-media-service` được coi là dependency có sẵn** cho luồng media; `vhm-verification-service` chỉ quản lý journey, xử lý bất đồng bộ và tích hợp provider.
+**Phương án chọn:** Sử dụng **`vhm-verification-service`** làm capability tập trung cho cả OCR và eKYC. `vhm-agent-api` xác thực và authorize upload/finalize trước khi gọi `vhm-media-service`; `vhm-dossier-core` authorize các thao tác create/submit/query/apply của journey; `vhm-verification-service` quản lý journey, xử lý bất đồng bộ và tích hợp provider.
 
 **Nguyên tắc kiến trúc:**
 
@@ -77,7 +77,7 @@ flowchart LR
     CLIENT["`**Mobile/Web**
 Capture · Submit · Poll`"]
     BFF["`**vhm-agent-api**
-Xác thực · routing`"]
+Xác thực · Authorize upload · routing`"]
     DOSSIER["`**vhm-dossier-core**
 Authorize · Apply result`"]
     MEDIA_SERVICE["`**vhm-media-service**
@@ -108,8 +108,8 @@ Giải pháp này tái sử dụng Media API hiện có và giữ `vhm-verificat
 
 | **Năng lực** | **`vhm-dossier-core`** | **`vhm-verification-service`** |
 | --- | --- | --- |
-| Nghiệp vụ và authorization | Authorize actor, hồ sơ, `businessRef`, purpose và association của `mediaId`; quyết định sử dụng kết quả | Kiểm tra service caller và binding `businessRef/mediaId/verificationId/attempt`; không xử lý rule NOXH |
-| Media integration | Trả authorization decision/binding cho BFF và lưu association nghiệp vụ khi cần; không gọi Media API | Chỉ consume media `FINALIZED` qua Media Service Adapter và lưu immutable snapshot; không triển khai upload/storage |
+| Nghiệp vụ và authorization | Authorize create/submit/query/apply của journey; quyết định sử dụng kết quả | Kiểm tra service caller và binding `businessRef/mediaId/verificationId/attempt`; không xử lý rule NOXH |
+| Media integration | Không tham gia upload/finalize; nhận `mediaId` khi domain xử lý yêu cầu OCR/eKYC | Chỉ consume media `FINALIZED` qua Media Service Adapter và lưu immutable snapshot; không triển khai upload/storage |
 | Journey | Với OCR, chỉ create sau khi media `FINALIZED`; với EKYC, authorize start và submit đủ media | Quản lý `verificationId`, state machine, idempotency, queue/worker, attempt và progress |
 | Provider | Không gọi provider | Quản lý credential/session, model/template, timeout, retry, circuit breaker, quota và chuẩn hóa error |
 | Kết quả | Authorize `status/result`; đối chiếu `resultVersion` và apply dữ liệu đã xác nhận | Lưu và trả status, progress, outcome và Canonical Result có version; không trả raw provider payload |
@@ -118,24 +118,6 @@ Giải pháp này tái sử dụng Media API hiện có và giữ `vhm-verificat
 ### 3.4. Lifecycle và outcome dùng chung
 
 `status` chỉ thể hiện vòng đời kỹ thuật. `outcome` chỉ được gán khi `status=COMPLETED`; vì vậy một lần xác minh bị lỗi provider sau khi hết recovery budget vẫn là `COMPLETED + PROVIDER_ERROR`, không phải `REJECTED`.
-
-```mermaid
-stateDiagram-v2
-    [*] --> WAITING_MEDIA: Create EKYC
-    [*] --> QUEUED: Create OCR
-    WAITING_MEDIA --> QUEUED: Submit đủ finalized media
-    WAITING_MEDIA --> CANCELLED: User hủy
-    WAITING_MEDIA --> EXPIRED: Hết capture TTL
-    QUEUED --> PROCESSING: Worker claim job
-    QUEUED --> CANCELLED: Hủy trước khi claim
-    QUEUED --> EXPIRED: Quá processing deadline
-    PROCESSING --> COMPLETED: Persist Canonical Result
-    PROCESSING --> CANCEL_REQUESTED: Hủy trong khi gọi provider
-    CANCEL_REQUESTED --> CANCELLED: Worker dừng an toàn
-    COMPLETED --> [*]
-    CANCELLED --> [*]
-    EXPIRED --> [*]
-```
 
 | **Journey** | **Outcome khi `COMPLETED`** | **Ý nghĩa** |
 | --- | --- | --- |
@@ -149,21 +131,18 @@ stateDiagram-v2
 
 ## 4. Upload media
 
-Upload tái sử dụng flow có sẵn của `vhm-media-service`. `vhm-dossier-core` authorize nghiệp vụ; `vhm-verification-service` không tham gia upload/finalize. Binary không đi qua BFF hoặc backend service.
+Upload tái sử dụng flow có sẵn của `vhm-media-service`. `vhm-agent-api` xác thực và authorize upload/finalize; `vhm-dossier-core` và `vhm-verification-service` không tham gia luồng này. Binary không đi qua BFF hoặc backend service.
 
 ```mermaid
 sequenceDiagram
     autonumber
     participant CLIENT as Mobile/Web
     participant BFF as vhm-agent-api
-    participant DOSSIER as vhm-dossier-core
     participant MEDIA_API as vhm-media-service
     participant MEDIA as Private Object Storage
 
-    CLIENT->>BFF: Request upload slot<br/>purpose + documentType + role + file metadata
-    BFF->>DOSSIER: Authorize upload<br/>actor + dossierId + purpose
-    DOSSIER->>DOSSIER: Authorize actor + hồ sơ + purpose
-    DOSSIER-->>BFF: Authorized businessRef + binding
+    CLIENT->>BFF: Request upload slot<br/>businessRef + purpose + role + file metadata
+    BFF->>BFF: Authenticate + authorize upload
     BFF->>MEDIA_API: Create upload slot<br/>authorized binding + file metadata
     MEDIA_API-->>BFF: mediaId + Presigned PUT URL
     BFF-->>CLIENT: mediaId + Presigned PUT URL
@@ -172,15 +151,13 @@ sequenceDiagram
     MEDIA-->>CLIENT: Upload response
 
     CLIENT->>BFF: Finalize mediaId
-    BFF->>DOSSIER: Authorize finalize<br/>actor + dossierId + mediaId
-    DOSSIER->>DOSSIER: Authorize businessRef + mediaId
-    DOSSIER-->>BFF: Authorized businessRef + binding
+    BFF->>BFF: Authorize actor + media binding
     BFF->>MEDIA_API: Finalize authorized mediaId
     MEDIA_API-->>BFF: mediaId + mediaVersion + FINALIZED
     BFF-->>CLIENT: mediaId + FINALIZED
 ```
 
-- Mobile/Web chỉ gọi `vhm-agent-api`. BFF lấy authorization decision/binding từ `vhm-dossier-core`, sau đó gọi thẳng `vhm-media-service` để create slot hoặc finalize; `vhm-dossier-core` không tích hợp Media API.
+- Mobile/Web chỉ gọi `vhm-agent-api`. BFF xác thực actor, kiểm tra quyền upload theo `businessRef/purpose`, sau đó gọi thẳng `vhm-media-service` để create slot hoặc finalize.
 - Với `OCR`, media service tạo `mediaId` bind với `businessRef/purpose/documentType` nhưng chưa có `verificationId`; chỉ khi media `FINALIZED` và domain yêu cầu OCR thì verification service mới sinh `verificationId`. Với `EKYC`, upload slot được bind với `verificationId/attempt/mediaRole` đã tạo ở trạng thái `WAITING_MEDIA`.
 - Sau PUT, Mobile/Web finalize `mediaId` qua domain và chỉ tiếp tục OCR/EKYC khi Media API trả `FINALIZED + mediaVersion`. Finalize không tự động khởi chạy journey.
 - Mobile/Web dùng camera/file capture component của ứng dụng để tạo raw document/selfie/liveness artifact rồi PUT trực tiếp vào Private Object Storage; không gọi FPT trực tiếp.
@@ -408,9 +385,9 @@ Mobile/Web sử dụng camera/file capture component của ứng dụng để t�
 
 ### 7.1. Thiết kế API
 
-`vhm-verification-service` chỉ mở API private dưới `/internal/v1`. Kết nối từ `vhm-dossier-core` dùng mTLS và service token có scope; `Idempotency-Key` bắt buộc với các command create, submit, cancel và retry. Mobile/Web chỉ nhìn thấy API của domain; `vhm-agent-api` làm nhiệm vụ xác thực và routing.
+`vhm-verification-service` chỉ mở API private dưới `/internal/v1`. Kết nối từ `vhm-dossier-core` dùng mTLS và service token có scope; `Idempotency-Key` bắt buộc với các command create, submit, cancel và retry. Mobile/Web chỉ gọi Application API của `vhm-agent-api`; BFF tự authorize upload/finalize và route các thao tác journey qua `vhm-dossier-core`.
 
-| **Use case** | **API của `vhm-dossier-core` cho Mobile/Web** | **Private downstream API (owner)** | **Kết quả** |
+| **Use case** | **Application API qua `vhm-agent-api`** | **Private downstream API (owner)** | **Kết quả** |
 | --- | --- | --- | --- |
 | Tạo upload slot | `POST /dossiers/{dossierId}/media/upload-slots` | `vhm-media-service`: dùng contract hiện có | `201`, trả `mediaId` và thông tin upload |
 | Finalize media | `POST /dossiers/{dossierId}/media/{mediaId}/finalize` | `vhm-media-service`: dùng contract hiện có | `200`, trả `mediaId + mediaVersion + FINALIZED` |
