@@ -140,14 +140,22 @@ OCR chỉ hỗ trợ số hóa và kiểm tra dữ liệu theo khả năng của
 
 ```mermaid
 flowchart LR
-    AGENT["<b>Vinhomes Agent Mobile/Web</b><br/>SDK + Upload"]
-    BFF["<b>vhm-agent-api</b><br/>Xác thực · routing"]
-    NOXH["<b>vhm-dossier-core</b><br/>Authorize · Presigned URL · Media metadata"]
-    MEDIA[("<b>Private Object Storage</b><br/>Dossier attachments")]
+    AGENT["`**Vinhomes Agent Mobile/Web**
+SDK + Upload`"]
+    BFF["`**vhm-agent-api**
+Xác thực · routing`"]
+    NOXH["`**vhm-dossier-core**
+Authorize · Presigned URL · Media metadata`"]
+    MEDIA[("`**Private Object Storage**
+Dossier attachments`")]
 
-    AGENT <-->|"1. Request · 3. Receive URL<br/>5. Submit mediaId"| BFF
-    BFF <-->|"2. Authorize/request URL<br/>3. Response · 5. Submit metadata"| NOXH
-    AGENT ==>|"4. Presigned PUT<br/>binary + checksum"| MEDIA
+    AGENT <-->|"`1. Request · 3. Receive URL
+5. Submit mediaId`"| BFF
+    BFF <-->|"`2. Authorize/request URL
+3. Response
+5. Submit metadata`"| NOXH
+    AGENT ==>|"`4. Presigned PUT
+binary + checksum`"| MEDIA
     NOXH -->|"6. HEAD/validate và finalize object"| MEDIA
 ```
 
@@ -155,19 +163,28 @@ flowchart LR
 
 ```mermaid
 flowchart LR
-    AGENT["<b>Vinhomes Agent Mobile/Web</b><br/>Tra cứu kết quả"]
-    BFF["<b>vhm-agent-api</b><br/>Xác thực · routing"]
-    NOXH["<b>vhm-dossier-core</b><br/>Authorize · Apply result"]
-    VERIFY["<b>vhm-verification-service</b><br/>OCR · eKYC · Provider Adapter"]
-    MEDIA[("<b>Private Object Storage</b><br/>Finalized attachments")]
-    PROVIDER["<b>FPT AI Backend</b><br/>OCR Provider"]
-    DB[("<b>Verification Database</b><br/>Canonical Result")]
+    AGENT["`**Vinhomes Agent Mobile/Web**
+Tra cứu kết quả`"]
+    BFF["`**vhm-agent-api**
+Xác thực · routing`"]
+    NOXH["`**vhm-dossier-core**
+Authorize · Apply result`"]
+    VERIFY["`**vhm-verification-service**
+OCR · eKYC · Provider Adapter`"]
+    MEDIA[("`**Private Object Storage**
+Finalized attachments`")]
+    PROVIDER["`**FPT AI Backend**
+OCR Provider`"]
+    DB[("`**Verification Database**
+Canonical Result`")]
 
     AGENT <-->|"7. status/result"| BFF
     BFF <-->|"7. authorized query/result"| NOXH
-    NOXH <-->|"1. Process OCR + authorized mediaRef<br/>6. Canonical Result"| VERIFY
+    NOXH <-->|"`1. Process OCR + authorized mediaRef
+6. Canonical Result`"| VERIFY
     VERIFY -->|"2. GET finalized object"| MEDIA
-    VERIFY ==>|"3. POST /ocr<br/>server api-key"| PROVIDER
+    VERIFY ==>|"`3. POST /ocr
+server api-key`"| PROVIDER
     PROVIDER ==>|"4. OCR Result"| VERIFY
     PROVIDER -.->|"Provider Callback — bổ sung"| VERIFY
     VERIFY -->|"5. Lưu kết quả chuẩn hóa"| DB
