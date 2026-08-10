@@ -159,7 +159,42 @@ binary + checksum`"| MEDIA
 - `vhm-verification-service` không tin object path từ client. Service chỉ đọc exact object do `vhm-dossier-core` ủy quyền, kiểm tra binding, MIME/magic bytes, kích thước, thứ tự mặt/trang và attempt trước khi gửi provider.
 - Không retry mù request sau khi body đã được gửi. Retry chỉ thực hiện theo idempotency contract của provider hoặc tạo attempt/page job mới có kiểm soát để tránh tính phí và kết quả trùng.
 
-### 5.2. Luồng xử lý
+### 5.2. Luồng tổng quan
+
+```mermaid
+flowchart TD
+    MEDIA["`**Media FINALIZED**
+Attachment sẵn sàng`"]
+    REQUEST["`**Yêu cầu OCR**
+dossierId · mediaId · documentType`"]
+    AUTHORIZE["`**vhm-dossier-core**
+Authorize hồ sơ và media`"]
+    JOB["`**vhm-verification-service**
+Create job · QUEUED · 202`"]
+    WORKER["`**OCR Worker**
+PROCESSING · Validate media`"]
+    TYPE{"`**Loại tài liệu**`"}
+    IDENTITY["`**FPT eKYC OCR**
+IDR · Passport · DLR`"]
+    DOCUMENT["`**Document OCR**
+Tách trang · Xử lý batch`"]
+    RESULT["`**Canonical Result**
+Normalize · Persist`"]
+    COMPLETE["`**COMPLETED**
+OCR_COMPLETED · PARTIAL
+NEED_REVIEW · PROVIDER_ERROR`"]
+    CLIENT["`**Mobile/Web**
+Poll · Confirm result`"]
+
+    MEDIA --> REQUEST --> AUTHORIZE --> JOB --> WORKER --> TYPE
+    TYPE -->|Giấy tờ định danh| IDENTITY
+    TYPE -->|Tài liệu nhiều trang| DOCUMENT
+    IDENTITY --> RESULT
+    DOCUMENT --> RESULT
+    RESULT --> COMPLETE --> CLIENT
+```
+
+### 5.3. Sequence diagram
 
 ```mermaid
 sequenceDiagram
@@ -223,7 +258,43 @@ sequenceDiagram
 
 `EKYC` tạo `verificationId` ở trạng thái `WAITING_MEDIA` trước capture để trả capture policy và bind attempt. Sau khi media được upload/finalize theo Mục 4, worker gọi FPT theo thứ tự `/session/init → /ocr → /face/liveness`, sau đó chuẩn hóa kết quả OCR, liveness và face matching ([FPT eKYC backend API](https://docs-vision.fpt.ai/ekyc/III-integration/III-2-APIs/a-APIs%20of%20eKYC%20Flows/APIs-in-update-information-flow/)).
 
-### 6.1. Luồng xử lý
+### 6.1. Luồng tổng quan
+
+```mermaid
+flowchart TD
+    START["`**Bắt đầu EKYC**
+dossierId · subjectRef · consentRef`"]
+    SESSION["`**vhm-verification-service**
+Create session · WAITING_MEDIA`"]
+    CAPTURE["`**Mobile/Web**
+Capture document · selfie/liveness`"]
+    UPLOAD["`**Upload theo Mục 4**
+Presigned PUT · FINALIZED`"]
+    SUBMIT["`**Submit media manifest**
+Bind verificationId · attempt`"]
+    JOB["`**Verification Job**
+QUEUED · 202`"]
+    WORKER["`**eKYC Worker**
+PROCESSING · Validate media`"]
+    INIT["`**FPT /session/init**
+Provider session`"]
+    OCR["`**FPT /ocr**
+Document result`"]
+    FACE["`**FPT /face/liveness**
+Liveness · Face match`"]
+    RESULT["`**Canonical Result**
+Normalize · Decision Mapper`"]
+    COMPLETE["`**COMPLETED**
+VERIFIED · REJECTED
+NEED_RETRY · PROVIDER_ERROR`"]
+    CLIENT["`**Mobile/Web**
+Poll status/result`"]
+
+    START --> SESSION --> CAPTURE --> UPLOAD --> SUBMIT --> JOB
+    JOB --> WORKER --> INIT --> OCR --> FACE --> RESULT --> COMPLETE --> CLIENT
+```
+
+### 6.2. Sequence diagram
 
 ```mermaid
 sequenceDiagram
