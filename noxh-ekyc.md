@@ -50,7 +50,35 @@ Verification API, Outbox Publisher, hai worker handler/pool, Provider Adapter v�
 
 Hai worker pool tái sử dụng code nền, schema và job contract nhưng có cấu hình concurrency/quota riêng. OCR chậm hoặc backlog lớn không được chiếm toàn bộ capacity của eKYC và ngược lại.
 
-### 2.2. Upload media OCR
+### 2.2. Lifecycle verification
+
+`status` mô tả vòng đời kỹ thuật:
+
+```text
+QUEUED → PROCESSING → COMPLETED
+   └───────────────→ CANCELLED/EXPIRED
+```
+
+| **Status** | **Ý nghĩa** |
+| --- | --- |
+| `QUEUED` | Aggregate và outbox đã commit, chờ worker claim |
+| `PROCESSING` | Worker đang xử lý hoặc chờ retry step |
+| `COMPLETED` | Đã có outcome cuối, kể cả provider error sau hết recovery budget |
+| `CANCELLED` | Bị hủy trước khi hoàn tất |
+| `EXPIRED` | Quá processing deadline |
+
+`currentStep` được chuẩn hóa thành: `VALIDATE_MEDIA`, `INIT_SESSION`, `OCR`, `LIVENESS`, `NORMALIZE`, `DONE`. OCR bỏ qua `LIVENESS`; eKYC phải đi qua bước này trong baseline.
+
+`outcome` chỉ có khi `status=COMPLETED` và được kiểm tra theo `verificationType`:
+
+| **Type** | **Outcome** |
+| --- | --- |
+| `OCR` | `OCR_COMPLETED`, `NEED_REVIEW`, `NEED_RETRY`, `PROVIDER_ERROR` |
+| `EKYC` | `EKYC_VERIFIED`, `EKYC_REJECTED`, `NEED_REVIEW`, `NEED_RETRY`, `PROVIDER_ERROR` |
+
+## 3. Luồng OCR
+
+### 3.1. Upload media
 
 Upload diễn ra trước create verification. Contract Media Service hiện có không trả `mediaId` và không có bước finalize; durable reference là `s3PathFile`.
 
@@ -100,35 +128,7 @@ Quy ước:
 - Worker ghép `basePrefix + s3PathFile`, HEAD/GET trực tiếp S3 bằng IAM read-only rồi kiểm tra object, MIME/magic bytes và kích thước.
 - Contract hiện tại không cung cấp object version/finalized proof; thiết kế không giả định media immutable.
 
-### 2.3. Lifecycle verification
-
-`status` mô tả vòng đời kỹ thuật:
-
-```text
-QUEUED → PROCESSING → COMPLETED
-   └───────────────→ CANCELLED/EXPIRED
-```
-
-| **Status** | **Ý nghĩa** |
-| --- | --- |
-| `QUEUED` | Aggregate và outbox đã commit, chờ worker claim |
-| `PROCESSING` | Worker đang xử lý hoặc chờ retry step |
-| `COMPLETED` | Đã có outcome cuối, kể cả provider error sau hết recovery budget |
-| `CANCELLED` | Bị hủy trước khi hoàn tất |
-| `EXPIRED` | Quá processing deadline |
-
-`currentStep` được chuẩn hóa thành: `VALIDATE_MEDIA`, `INIT_SESSION`, `OCR`, `LIVENESS`, `NORMALIZE`, `DONE`. OCR bỏ qua `LIVENESS`; eKYC phải đi qua bước này trong baseline.
-
-`outcome` chỉ có khi `status=COMPLETED` và được kiểm tra theo `verificationType`:
-
-| **Type** | **Outcome** |
-| --- | --- |
-| `OCR` | `OCR_COMPLETED`, `NEED_REVIEW`, `NEED_RETRY`, `PROVIDER_ERROR` |
-| `EKYC` | `EKYC_VERIFIED`, `EKYC_REJECTED`, `NEED_REVIEW`, `NEED_RETRY`, `PROVIDER_ERROR` |
-
-## 3. Luồng OCR
-
-### 3.1. Media và provider flow
+### 3.2. Media và provider flow
 
 Mỗi OCR verification xử lý một logical document, được lưu thành một row `verification_media_refs` với role `OCR_DOCUMENT`. `documentType` chọn provider API/model và Canonical Result schema, không tạo workflow khác.
 
@@ -145,7 +145,7 @@ POST /ocr
 
 `/ocr` trả response đồng bộ cho worker. VHM không trả provider `session-id` xuống Mobile/Web.
 
-### 3.2. Kiến trúc tổng quan OCR
+### 3.3. Kiến trúc tổng quan
 
 ```mermaid
 flowchart TB
@@ -199,7 +199,7 @@ Verification · Media · Attempt · Result`")]
     NORMALIZE -->|"Persist final result"| DB
 ```
 
-### 3.3. Luồng xử lý OCR trong `vhm-verification-service`
+### 3.4. Luồng xử lý trong `vhm-verification-service`
 
 ```mermaid
 flowchart LR
@@ -226,7 +226,7 @@ COMPLETED · outcome · final result`"]
     WORKER --> READ --> INIT --> OCR --> NORMALIZE --> DONE
 ```
 
-### 3.4. Sequence OCR end-to-end
+### 3.5. Sequence end-to-end
 
 ```mermaid
 sequenceDiagram
@@ -289,7 +289,7 @@ sequenceDiagram
 
 ### 4.1. Media manifest và provider flow
 
-Media eKYC được upload theo [luồng Upload media OCR](#22-upload-media-ocr). Mobile/Web lặp lại flow đó cho từng document/selfie/video file, sau đó đưa các `s3PathFile` vào manifest dưới đây.
+Media eKYC được upload theo [mục Upload media của luồng OCR](#31-upload-media). Mobile/Web lặp lại flow đó cho từng document/selfie/video file, sau đó đưa các `s3PathFile` vào manifest dưới đây.
 
 Một eKYC verification chứa nhiều physical media với role/order rõ ràng:
 
@@ -318,7 +318,7 @@ POST /face/liveness
 
 `sourcePlatform` map FPT `device-type`: `ANDROID → android`, `IOS → ios`, `WEB → web-sdk`.
 
-### 4.2. Kiến trúc tổng quan eKYC
+### 4.2. Kiến trúc tổng quan
 
 ```mermaid
 flowchart TB
@@ -372,7 +372,7 @@ Verification · Media · Attempt · Result`")]
     POLICY -->|"Checkpoint/final result"| DB
 ```
 
-### 4.3. Luồng xử lý eKYC trong `vhm-verification-service`
+### 4.3. Luồng xử lý trong `vhm-verification-service`
 
 ```mermaid
 flowchart LR
@@ -401,7 +401,7 @@ COMPLETED · outcome · final result`"]
     WORKER --> READ --> INIT --> OCR --> LIVE --> POLICY --> DONE
 ```
 
-### 4.4. Sequence eKYC end-to-end
+### 4.4. Sequence end-to-end
 
 ```mermaid
 sequenceDiagram
