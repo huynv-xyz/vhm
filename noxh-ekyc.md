@@ -929,13 +929,4 @@ Timeout outbound của từng FPT call phải ngắn hơn worker lease còn lạ
 | eKYC end-to-end | Upload document → OCR → `WAITING_LIVENESS` → upload/submit liveness → result → confirm/apply |
 | Resilience | Slow/large media, crash giữa step, unknown-after-send, provider outage, queue backlog burst |
 
-### 8.3. Điểm cần chốt
-
-- FPT API/model và input contract cho từng OCR/eKYC `documentType`.
-- Image/video size, duration, resolution, MIME và capture quality rule.
-- Capture UX/guidance của Mobile/Web khi không dùng FPT SDK.
-- OCR confidence và eKYC liveness/deepfake/face-match/need-review thresholds.
-- Session TTL, SLA/quota/timeout và retry-safe matrix của từng endpoint.
-- Consent evidence, retention và quy tắc xóa media/PII/session/result/outbox/attempt.
-
 `vhm-verification-service` chịu trách nhiệm điều phối kỹ thuật OCR/eKYC, provider isolation và Canonical Result. Domain Service chịu trách nhiệm authorization, bind hồ sơ/chủ thể, xác nhận người dùng và apply kết quả nghiệp vụ.
