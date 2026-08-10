@@ -80,7 +80,7 @@ QUEUED → PROCESSING → COMPLETED
 
 ### 3.1. Upload media
 
-Upload diễn ra trước create verification. Contract Media Service hiện có không trả `mediaId` và không có bước finalize; durable reference là `s3PathFile`.
+Upload diễn ra trước create verification. `s3PathFile` trong response của Media Service là durable reference được dùng khi tạo OCR/eKYC.
 
 ```mermaid
 sequenceDiagram
@@ -100,52 +100,7 @@ sequenceDiagram
     STORAGE-->>CLIENT: Upload response
 ```
 
-Response rút gọn theo contract hiện có:
-
-```json
-{
-  "code": 0,
-  "message": "Thành công",
-  "data": {
-    "presignHeaders": {
-      "x-amz-meta-vhm_performer": "dossier-svc",
-      "x-amz-meta-vhm_performer_source": "http-internal",
-      "x-amz-server-side-encryption": "aws:kms",
-      "x-amz-server-side-encryption-aws-kms-key-id": "<kms-key-arn>"
-    },
-    "presignedUrl": "<temporary-presigned-put-url>",
-    "s3PathFile": "registrations/<business-ref>/<generated-file-name>"
-  }
-}
-```
-
-Quy ước:
-
-- Client phải gửi đúng `Content-Type` và toàn bộ signed headers.
-- Chỉ relative `s3PathFile` được truyền vào command và persist; không lưu Presigned URL, full S3 URL, bucket hoặc temporary credential.
-- Domain Service authorize path thuộc đúng business prefix trước khi gọi Verification API.
-- Verification API chuẩn hóa/reject full URL, absolute path, traversal và path ngoài prefix cho phép.
-- Worker ghép `basePrefix + s3PathFile`, HEAD/GET trực tiếp S3 bằng IAM read-only rồi kiểm tra object, MIME/magic bytes và kích thước.
-- Contract hiện tại không cung cấp object version/finalized proof; thiết kế không giả định media immutable.
-
-### 3.2. Media và provider flow
-
-Mỗi OCR verification xử lý một logical document, được lưu thành một row `verification_media_refs` với role `OCR_DOCUMENT`. `documentType` chọn provider API/model và Canonical Result schema, không tạo workflow khác.
-
-FPT OCR flow của worker:
-
-```text
-POST /session/init
-  client_uuid = verificationId
-  only-engine = 1
-
-POST /ocr
-  session-id + device-type + document-type + document file
-```
-
-`/ocr` trả response đồng bộ cho worker. VHM không trả provider `session-id` xuống Mobile/Web.
-
-### 3.3. Kiến trúc tổng quan
+### 3.2. Kiến trúc tổng quan
 
 ```mermaid
 flowchart TB
@@ -199,7 +154,7 @@ Verification · Media · Attempt · Result`")]
     NORMALIZE -->|"Persist final result"| DB
 ```
 
-### 3.4. Luồng xử lý trong `vhm-verification-service`
+### 3.3. Luồng xử lý trong `vhm-verification-service`
 
 ```mermaid
 flowchart LR
@@ -226,7 +181,7 @@ COMPLETED · outcome · final result`"]
     WORKER --> READ --> INIT --> OCR --> NORMALIZE --> DONE
 ```
 
-### 3.5. Sequence end-to-end
+### 3.4. Sequence end-to-end
 
 ```mermaid
 sequenceDiagram
