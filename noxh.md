@@ -37,7 +37,7 @@ OCR chỉ hỗ trợ số hóa và kiểm tra dữ liệu theo khả năng của
 | **Hướng tiếp cận** | **Ưu điểm** | **Nhược điểm** | **Lựa chọn (Yes/No)** |
 | --- | --- | --- | --- |
 | **`vhm-dossier-core` tích hợp trực tiếp FPT AI** | Ít thành phần; thời gian triển khai ban đầu ngắn | `vhm-dossier-core` phải xử lý credential, provider session, queue/worker, retry và mã lỗi riêng của FPT AI; thay đổi provider tác động trực tiếp nghiệp vụ NOXH; tăng rủi ro dữ liệu định danh trong service hồ sơ | **No** |
-| **`vhm-verification-service`** | `vhm-dossier-core` chỉ authorize nghiệp vụ và sử dụng kết quả; luồng upload tái sử dụng `vhm-media-service` có sẵn; verification service tập trung vào async job, provider integration, credential, session, retry, quota, audit và chuẩn hóa; thay provider không tác động domain | Thêm một service và network hop trên luồng xử lý; verification service phải đáp ứng HA/SLA vì là dependency dùng chung | **Yes** |
+| **`vhm-verification-service`** | `vhm-dossier-core` chỉ authorize journey và sử dụng kết quả; luồng upload do `vhm-agent-api` gọi `vhm-media-service` có sẵn; verification service tập trung vào async job, provider integration, credential, session, retry, quota, audit và chuẩn hóa; thay provider không tác động domain | Thêm một service và network hop trên luồng xử lý; verification service phải đáp ứng HA/SLA vì là dependency dùng chung | **Yes** |
 
 **Phương án chọn:** Sử dụng **`vhm-verification-service`** làm capability tập trung cho cả OCR và eKYC. `vhm-agent-api` xác thực và authorize upload/finalize trước khi gọi `vhm-media-service`; `vhm-dossier-core` authorize các thao tác create/submit/query/apply của journey; `vhm-verification-service` quản lý journey, xử lý bất đồng bộ và tích hợp provider.
 
@@ -159,7 +159,7 @@ sequenceDiagram
 
 - Mobile/Web chỉ gọi `vhm-agent-api`. BFF xác thực actor, kiểm tra quyền upload theo `businessRef/purpose`, sau đó gọi thẳng `vhm-media-service` để create slot hoặc finalize.
 - Với `OCR`, media service tạo `mediaId` bind với `businessRef/purpose/documentType` nhưng chưa có `verificationId`; chỉ khi media `FINALIZED` và domain yêu cầu OCR thì verification service mới sinh `verificationId`. Với `EKYC`, upload slot được bind với `verificationId/attempt/mediaRole` đã tạo ở trạng thái `WAITING_MEDIA`.
-- Sau PUT, Mobile/Web finalize `mediaId` qua domain và chỉ tiếp tục OCR/EKYC khi Media API trả `FINALIZED + mediaVersion`. Finalize không tự động khởi chạy journey.
+- Sau PUT, Mobile/Web finalize `mediaId` qua `vhm-agent-api` và chỉ tiếp tục OCR/EKYC khi Media API trả `FINALIZED + mediaVersion`. Finalize không tự động khởi chạy journey.
 - Mobile/Web dùng camera/file capture component của ứng dụng để tạo raw document/selfie/liveness artifact rồi PUT trực tiếp vào Private Object Storage; không gọi FPT trực tiếp.
 
 ## 5. OCR
@@ -176,41 +176,22 @@ sequenceDiagram
 ### 5.2. Luồng tổng quan
 
 ```mermaid
-flowchart TD
+flowchart LR
     REQUEST["`**Mobile/Web**
-Yêu cầu OCR cho media FINALIZED`"]
-    AUTHORIZE["`**vhm-dossier-core**
-Authorize hồ sơ · businessRef · mediaId`"]
-    MEDIA["`**vhm-media-service**
-Xác nhận media FINALIZED`"]
-    subgraph VERIFY["`**vhm-verification-service (private)**`"]
-        ACCEPT["`**Tiếp nhận yêu cầu**
-Create job · QUEUED · 202`"]
-        TYPE{"`**Chọn xử lý**
-documentType`"}
-        IDENTITY["`**Giấy tờ định danh**
-Gọi FPT eKYC OCR`"]
-        DOCUMENT["`**Tài liệu nhiều trang**
-Tách trang · Gọi Document OCR`"]
-        RESULT["`**Chuẩn hóa và lưu kết quả**
-COMPLETED + outcome`"]
+Yêu cầu OCR · mediaId`"]
+    BFF["`**vhm-agent-api**
+Xác thực · routing`"]
+    DOSSIER["`**vhm-dossier-core**
+Authorize hồ sơ · mediaId`"]
+    VERIFY["`**vhm-verification-service**
+202 QUEUED · Async OCR · Canonical Result`"]
+    RESULT["`**Mobile/Web**
+Poll status/result · Confirm`"]
 
-        ACCEPT --> TYPE
-        TYPE -->|CCCD · GPLX · Hộ chiếu| IDENTITY
-        TYPE -->|PDF · tài liệu khác| DOCUMENT
-        IDENTITY --> RESULT
-        DOCUMENT --> RESULT
-    end
-    QUERY["`**vhm-dossier-core**
-Authorize status/result`"]
-    CLIENT["`**Mobile/Web**
-Poll qua vhm-agent-api · Confirm result`"]
-
-    REQUEST --> AUTHORIZE --> MEDIA --> ACCEPT
-    RESULT --> QUERY --> CLIENT
+    REQUEST --> BFF --> DOSSIER --> VERIFY --> RESULT
 ```
 
-Flowchart chỉ giữ các mốc của journey. Queue và OCR Worker là chi tiết triển khai nội bộ của cùng `vhm-verification-service`, được thể hiện trong sequence diagram thay vì vẽ như service độc lập.
+Mobile/Web polling qua `vhm-agent-api` và `vhm-dossier-core`; Media API, provider, queue và worker được thể hiện tại sequence diagram.
 
 ### 5.3. Sequence diagram
 
