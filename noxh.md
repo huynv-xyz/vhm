@@ -75,7 +75,7 @@ OCR chỉ hỗ trợ số hóa và kiểm tra dữ liệu theo khả năng của
 ```mermaid
 flowchart LR
     CLIENT["`**Mobile/Web**
-Upload media · Submit · Poll`"]
+Capture · Submit · Poll`"]
     BFF["`**vhm-agent-api**
 Xác thực · routing`"]
     DOSSIER["`**vhm-dossier-core**
@@ -84,33 +84,21 @@ Authorize · Apply result`"]
 Media API có sẵn`"]
     VERIFY["`**vhm-verification-service**
 OCR · eKYC · Provider Adapter`"]
-    MEDIA[("`**Private Object Storage**
-Verification media`")]
     PROVIDER["`**OCR/eKYC Provider**
 FPT eKYC · Document OCR`"]
     DB[("`**Verification Database**
 Media ref · Job · Canonical result`")]
 
-    CLIENT -->|"Request upload/verification · GET status"| BFF
-    BFF -->|"Authenticated request"| DOSSIER
-    BFF -->|"Upload/finalize sau authorization"| MEDIA_SERVICE
-    DOSSIER -->|"Authorized create/submit/query"| VERIFY
-
-    CLIENT ==>|"Presigned PUT"| MEDIA
-    MEDIA_SERVICE <-->|"Media operations"| MEDIA
-    VERIFY <-->|"Validate media · Read grant"| MEDIA_SERVICE
-    VERIFY -->|"GET exact finalized version"| MEDIA
-    VERIFY ==>|"Worker: OCR/eKYC request"| PROVIDER
-    PROVIDER ==>|"Provider result"| VERIFY
-    VERIFY <-->|"Persist/read job"| DB
-
-    MEDIA_SERVICE -.->|"Upload URL · FINALIZED"| BFF
-    VERIFY -.->|"201/202 · Status · Result"| DOSSIER
-    DOSSIER -.->|"Authorized response"| BFF
-    BFF -.->|"Response"| CLIENT
+    CLIENT -->|"Application API"| BFF
+    BFF -->|"Authorize · Status · Apply"| DOSSIER
+    BFF -->|"Upload · Finalize"| MEDIA_SERVICE
+    DOSSIER -->|"Create · Submit · Query"| VERIFY
+    VERIFY -->|"Metadata · Read grant"| MEDIA_SERVICE
+    VERIFY -->|"OCR · eKYC"| PROVIDER
+    VERIFY -->|"Persist · Query"| DB
 ```
 
-Đường liền thể hiện request/xử lý; đường nét đứt thể hiện response `201/202`, trạng thái và kết quả. Chart này chỉ mô tả thành phần và hướng dữ liệu; thứ tự end-to-end được thể hiện ở hai sequence diagram `OCR` và `EKYC` bên dưới.
+Sơ đồ chỉ thể hiện dependency giữa các thành phần. Response quay lại theo cùng request path; Presigned PUT và thứ tự end-to-end được thể hiện tại các sequence diagram bên dưới.
 
 Request tạo OCR chỉ chờ đến khi `vhm-verification-service` persist job và trả `verificationId + QUEUED`; việc đọc object và gọi provider diễn ra trong worker. Mobile/Web không giữ kết nối chờ provider mà tra cứu trạng thái/kết quả qua `vhm-agent-api` và `vhm-dossier-core`.
 
