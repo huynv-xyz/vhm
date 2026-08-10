@@ -12,7 +12,7 @@ Phạm vi baseline gồm:
 - eKYC Worker đọc media từ Object Storage rồi gọi tuần tự FPT session, OCR và liveness/face-match API.
 - Worker chuẩn hóa kết quả thành Canonical Result; Mobile/Web polling API của VHM và xác nhận trước khi apply vào hồ sơ.
 
-Baseline không dùng FPT SDK, SDK Proxy, provider callback, NFC hoặc QR. Khi cần các năng lực đó, phải thiết kế contract và lifecycle riêng; không ghép ngầm vào luồng API này.
+Baseline không dùng FPT SDK, SDK Proxy, NFC hoặc QR. Khi cần các năng lực đó, phải thiết kế contract và lifecycle riêng; không ghép ngầm vào luồng API này.
 
 Các giấy tờ định danh chỉ được enable khi FPT xác nhận hỗ trợ đúng `documentType`, số mặt, định dạng/giới hạn file và response schema. Kết quả eKYC hỗ trợ xác minh danh tính nhưng không tự quyết định hồ sơ đủ điều kiện NOXH.
 
@@ -183,6 +183,8 @@ sequenceDiagram
 
 Sau khi upload đủ role theo `documentType/policy`, client submit media manifest. Chỉ lưu relative `s3PathFile`; không lưu Presigned URL, full S3 URL, bucket hoặc signed credential. Worker kiểm tra path prefix, object tồn tại, content length, MIME/magic bytes và giới hạn riêng cho image/video trước khi gọi FPT.
 
+Worker đọc media đúng lúc thực hiện từng provider step, không giữ toàn bộ document/video trong heap. Nếu HTTP multipart client cần replay hoặc biết trước content length, chỉ spool vào vùng tạm mã hóa có quota và xóa ngay sau attempt.
+
 ## 5. Luồng eKYC bằng API
 
 ### 5.1. Luồng tổng quan trong `vhm-verification-service`
@@ -250,8 +252,6 @@ sequenceDiagram
         VERIFY->>VERIFY: Normalize s3PathFile<br/>fullKey = basePrefix + s3PathFile
         VERIFY->>STORAGE: HEAD exact object bằng read-only IAM
         STORAGE-->>VERIFY: Object metadata
-        VERIFY->>STORAGE: GET object stream bằng read-only IAM
-        STORAGE-->>VERIFY: Image/video binary
         VERIFY->>VERIFY: Validate MIME/magic bytes + size
     end
 
@@ -261,11 +261,15 @@ sequenceDiagram
     VERIFY->>DB: Init attempt SUCCEEDED<br/>encrypted session reference
 
     VERIFY->>DB: currentStep=DOCUMENT_OCR<br/>OCR attempt STARTED
+    VERIFY->>STORAGE: GET document media bằng read-only IAM
+    STORAGE-->>VERIFY: Document stream
     VERIFY->>FPT: POST /ocr<br/>session-id + document-type + document files
     FPT-->>VERIFY: Synchronous OCR result
     VERIFY->>DB: OCR attempt SUCCEEDED<br/>normalized document partial result
 
     VERIFY->>DB: currentStep=LIVENESS<br/>LIVENESS attempt STARTED
+    VERIFY->>STORAGE: GET selfie/video bằng read-only IAM
+    STORAGE-->>VERIFY: Liveness media stream
     VERIFY->>FPT: POST /face/liveness<br/>session-id + selfies hoặc video
     FPT-->>VERIFY: Synchronous liveness + face-match result
     VERIFY->>DB: LIVENESS attempt SUCCEEDED<br/>currentStep=NORMALIZE
@@ -485,7 +489,7 @@ CREATE TABLE ekyc_verifications (
     ),
     CONSTRAINT ck_ekyc_completed_at CHECK (
         (status = 'COMPLETED' AND completed_at IS NOT NULL AND current_step = 'DONE') OR
-        (status <> 'COMPLETED' AND completed_at IS NULL)
+        (status <> 'COMPLETED' AND completed_at IS NULL AND current_step <> 'DONE')
     )
 );
 
