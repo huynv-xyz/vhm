@@ -21,7 +21,7 @@ Các tài liệu nghiệp vụ dự kiến:
 - Bản sao có chứng thực giấy chứng nhận hộ nghèo/cận nghèo.
 - Các giấy tờ khác trong checklist hồ sơ NOXH sau khi có model/template và schema kết quả tương ứng.
 
-Mỗi yêu cầu OCR xử lý **một logical document**, được tham chiếu bằng một `mediaId`. `documentType` chỉ dùng để chọn provider API/model và schema chuẩn hóa; nó không tạo một workflow khác.
+Mỗi yêu cầu OCR xử lý **một logical document**, được tham chiếu bằng `s3PathFile` do `vhm-media-service` sinh. `documentType` chỉ dùng để chọn provider API/model và schema chuẩn hóa; nó không tạo một workflow khác.
 
 OCR chỉ hỗ trợ số hóa và gợi ý dữ liệu. Kết quả OCR không xác minh người thao tác là chủ thể của giấy tờ và không tự quyết định hồ sơ đủ điều kiện NOXH. Người dùng phải xác nhận trước khi `vhm-dossier-core` cập nhật dữ liệu nghiệp vụ.
 
@@ -50,14 +50,14 @@ Cách bọc này tránh giữ kết nối Mobile/Web trong thời gian upload me
 | **Thành phần** | **Trách nhiệm** |
 | --- | --- |
 | Mobile/Web | Upload tài liệu; tạo OCR; poll; hiển thị và cho người dùng xác nhận kết quả |
-| `vhm-agent-api` | Xác thực/routing; authorize upload/finalize; không giữ FPT credential |
-| `vhm-dossier-core` | Authorize hồ sơ, `businessRef`, `mediaId`, query/apply kết quả |
-| `vhm-media-service` | Cấp upload slot, finalize media, cung cấp immutable metadata và exact-version read grant |
+| `vhm-agent-api` | Xác thực/routing và authorize yêu cầu cấp Presigned PUT; không giữ FPT credential |
+| `vhm-dossier-core` | Authorize hồ sơ, `businessRef`, yêu cầu OCR, query/apply kết quả |
+| `vhm-media-service` | Trả `presignHeaders + presignedUrl + s3PathFile`; resolve/read file theo `s3PathFile` cho backend |
 | Verification API | Private command/query API của `vhm-verification-service` |
 | OCR Worker | Claim job, đọc tài liệu, gọi provider và persist kết quả; không mở public API |
 | Provider Adapter | Ánh xạ `documentType` sang FPT API/model; inject credential; map response/error |
 | Result Normalizer | Chuyển provider response thành Canonical Result có version |
-| Verification Database + Outbox | Lưu lifecycle, `mediaId`, worker lease/retry, provider attempt, result và sự kiện |
+| Verification Database + Outbox | Lưu lifecycle, `s3PathFile`, worker lease/retry, provider attempt, result và sự kiện |
 
 `Verification API`, `OCR Worker`, `Provider Adapter` và `Result Normalizer` là module/workload trong cùng `vhm-verification-service`, không phải các service public riêng.
 
@@ -72,7 +72,7 @@ Xác thực · routing`"]
     DOSSIER["`**vhm-dossier-core**
 Authorize · Apply result`"]
     MEDIA_API["`**vhm-media-service**
-Upload · FINALIZED · Read grant`"]
+Presigned PUT · File resolve`"]
     STORAGE[("`**Private Object Storage**
 OCR document`")]
     subgraph VERIFY["`**vhm-verification-service (private)**
@@ -97,7 +97,7 @@ Session API · OCR API`"]
 Verification · Provider attempt · Result`")]
 
     CLIENT <-->|"Application API"| BFF
-    BFF <-->|"Upload/finalize"| MEDIA_API
+    BFF <-->|"Request upload URL"| MEDIA_API
     CLIENT ==>|"Presigned PUT"| STORAGE
     MEDIA_API <-->|"Object operations"| STORAGE
 
@@ -109,8 +109,8 @@ Verification · Provider attempt · Result`")]
     OUTBOX -->|"Publish"| QUEUE
     QUEUE -->|"Worker consume"| WORKER
 
-    WORKER <-->|"Validate metadata · Read grant"| MEDIA_API
-    WORKER -->|"GET exact finalized version"| STORAGE
+    WORKER <-->|"Resolve/read s3PathFile"| MEDIA_API
+    WORKER -->|"GET resolved object"| STORAGE
     ADAPTER <-->|"Synchronous provider API"| FPT
     WORKER -->|"Persist attempt · result"| DB
 ```
@@ -131,7 +131,7 @@ QUEUED → PROCESSING → COMPLETED
    └───────────────→ CANCELLED/EXPIRED
 ```
 
-- `QUEUED`: verification đã lưu `mediaId`/worker state và có outbox để publish message.
+- `QUEUED`: verification đã lưu `s3PathFile`/worker state và có outbox để publish message.
 - `PROCESSING`: worker đã claim job.
 - `COMPLETED`: đã có kết luận cuối cùng, kể cả trường hợp provider lỗi sau khi hết recovery budget.
 - `CANCELLED/EXPIRED`: kết thúc không có outcome.
@@ -149,7 +149,7 @@ Lỗi transport/provider không được ánh xạ thành lỗi nghiệp vụ c�
 
 ## 4. Upload tài liệu
 
-Upload diễn ra trước OCR và không tạo `verificationId`. `vhm-agent-api` gọi thẳng `vhm-media-service`; `vhm-dossier-core` và `vhm-verification-service` không nằm trong luồng upload.
+Upload diễn ra trước OCR và không tạo `verificationId`. `vhm-agent-api` gọi thẳng `vhm-media-service`; `vhm-dossier-core` và `vhm-verification-service` không nằm trong luồng upload. Contract hiện có không trả `mediaId` và không có bước finalize trong flow này.
 
 ```mermaid
 sequenceDiagram
@@ -159,29 +159,43 @@ sequenceDiagram
     participant MEDIA_API as vhm-media-service
     participant STORAGE as Private Object Storage
 
-    CLIENT->>BFF: Request upload slot<br/>businessRef + documentType + file metadata
+    CLIENT->>BFF: Request Presigned PUT<br/>businessRef + documentType + file metadata
     BFF->>BFF: Authenticate + authorize upload
-    BFF->>MEDIA_API: Create upload slot<br/>authorized binding + file metadata
-    MEDIA_API-->>BFF: mediaId + Presigned PUT URL<br/>required headers + expiresAt
-    BFF-->>CLIENT: mediaId + Presigned PUT URL
+    BFF->>MEDIA_API: Request Presigned PUT<br/>authorized path context + file metadata
+    MEDIA_API-->>BFF: code + message + data<br/>presignHeaders + presignedUrl + s3PathFile
+    BFF-->>CLIENT: presignHeaders + presignedUrl + s3PathFile
 
-    CLIENT->>STORAGE: PUT binary + signed checksum headers
+    CLIENT->>STORAGE: PUT binary<br/>Content-Type + toàn bộ presignHeaders
     STORAGE-->>CLIENT: Upload response
+```
 
-    CLIENT->>BFF: Finalize mediaId
-    BFF->>BFF: Authorize actor + media binding
-    BFF->>MEDIA_API: Finalize authorized mediaId
-    MEDIA_API-->>BFF: mediaId + FINALIZED
-    BFF-->>CLIENT: mediaId + FINALIZED
+Response hiện có của Media Service:
+
+```json
+{
+  "code": 0,
+  "message": "Thành công",
+  "data": {
+    "presignHeaders": {
+      "x-amz-meta-vhm_performer": "dossier-svc",
+      "x-amz-meta-vhm_performer_source": "http-internal",
+      "x-amz-server-side-encryption": "aws:kms",
+      "x-amz-server-side-encryption-aws-kms-key-id": "<kms-key-arn>"
+    },
+    "presignedUrl": "<temporary-presigned-put-url>",
+    "s3PathFile": "registrations/9170c0b1-09ce-4016-b701-3626386abea0/document-c9eedd4c.png"
+  }
+}
 ```
 
 Quy ước tích hợp:
 
-- Một tài liệu upload là một `mediaId`.
-- OCR chỉ được tạo sau khi media có trạng thái `FINALIZED`.
-- Finalize không tự động khởi chạy OCR.
-- Client/domain chỉ truyền `mediaId`, không truyền bucket, object key, Presigned GET URL hoặc storage path.
-- `vhm-verification-service` chỉ đọc exact finalized version thông qua read grant ngắn hạn do `vhm-media-service` cấp.
+- Client phải gửi đúng `Content-Type` và toàn bộ `presignHeaders`; thay đổi hoặc thiếu signed header làm S3 từ chối request.
+- Sau khi S3 trả upload thành công, Mobile/Web submit OCR bằng `s3PathFile`; không có request finalize riêng.
+- Chỉ `s3PathFile` được dùng làm durable reference. Không persist hoặc chuyển tiếp lại `presignedUrl` sau upload vì URL chứa credential tạm thời và sẽ hết hạn.
+- `s3PathFile` phải là relative path do Media Service sinh trong business prefix đã authorize; không nhận full S3 URL, bucket hoặc path tùy ý từ client.
+- Trước khi gọi FPT, worker resolve file theo `s3PathFile`, kiểm tra object tồn tại cùng MIME/magic bytes/kích thước rồi mới đọc binary.
+- Contract hiện tại không cung cấp `mediaId`, trạng thái `FINALIZED` hoặc bằng chứng object immutable; TDD không giả định các năng lực này.
 
 ## 5. Luồng OCR bằng API
 
@@ -192,12 +206,12 @@ flowchart LR
     API["`**Verification API**
 Validate request`"]
     ACCEPT["`**Database transaction**
-QUEUED · mediaId · Outbox`"]
+QUEUED · s3PathFile · Outbox`"]
     QUEUE[("`**OCR Job Queue**`")]
     WORKER["`**OCR Worker**
 PROCESSING`"]
     READ["`**Media Adapter**
-Read finalized media`"]
+Resolve/read s3PathFile`"]
     INIT["`**FPT Session API**
 POST /session/init`"]
     OCR["`**FPT OCR API**
@@ -231,13 +245,11 @@ sequenceDiagram
     participant STORAGE as Private Object Storage
     participant FPT as FPT AI Backend
 
-    CLIENT->>BFF: Submit OCR<br/>dossierId + mediaId + documentType
+    CLIENT->>BFF: Submit OCR<br/>dossierId + s3PathFile + documentType
     BFF->>DOSSIER: Authenticated request
-    DOSSIER->>DOSSIER: Authorize dossier + mediaId
-    DOSSIER->>VERIFY: POST OCR<br/>businessRef + mediaId + documentType
-    VERIFY->>MEDIA_API: Validate binding + FINALIZED metadata
-    MEDIA_API-->>VERIFY: mediaId + FINALIZED
-    VERIFY->>DB: Transaction: verification QUEUED<br/>mediaId + worker state + outbox
+    DOSSIER->>DOSSIER: Authorize dossier + OCR action<br/>validate registration path prefix
+    DOSSIER->>VERIFY: POST OCR<br/>businessRef + s3PathFile + documentType
+    VERIFY->>DB: Transaction: verification QUEUED<br/>s3PathFile + worker state + outbox
     DB-->>VERIFY: Commit
     VERIFY-->>DOSSIER: 202 + verificationId + resourceUri
     DOSSIER-->>BFF: 202 + verificationId + statusUrl
@@ -247,9 +259,9 @@ sequenceDiagram
     QUEUE-->>VERIFY: Worker claim verificationId
     VERIFY->>DB: Claim lease + verification PROCESSING
 
-    VERIFY->>MEDIA_API: Request read grant<br/>mediaId + verificationId
-    MEDIA_API-->>VERIFY: FINALIZED metadata + Presigned GET
-    VERIFY->>STORAGE: GET document stream
+    VERIFY->>MEDIA_API: Resolve/read file<br/>s3PathFile + verificationId
+    MEDIA_API-->>VERIFY: Object metadata + temporary read access
+    VERIFY->>STORAGE: GET resolved document stream
     STORAGE-->>VERIFY: Binary
     VERIFY->>VERIFY: Validate checksum + MIME/magic bytes + size
 
@@ -297,7 +309,7 @@ VHM không trả `session-id` xuống Mobile/Web và không dùng nó làm `veri
 
 Các API trên chỉ được expose qua private ingress/DNS cho service caller có mTLS hoặc service token đúng scope. Prefix `/internal` không được sử dụng vì toàn bộ API của `vhm-verification-service` đã là private. URL không chứa khái niệm `dossierId`; domain caller truyền định danh nghiệp vụ bằng `businessRef.type + businessRef.id` trong command và tự lưu association với `verificationId`.
 
-Các route `/dossiers/...` nếu có thuộc Application API của `vhm-agent-api`/`vhm-dossier-core`, không phải contract của service dùng chung. Tương tự, upload/finalize thuộc API hiện có của `vhm-media-service`, còn confirm/apply kết quả thuộc API và transaction của từng domain; ba nhóm API này không được định nghĩa lại trong mục này.
+Các route `/dossiers/...` nếu có thuộc Application API của `vhm-agent-api`/`vhm-dossier-core`, không phải contract của service dùng chung. Tương tự, cấp Presigned PUT thuộc API hiện có của `vhm-media-service`, còn confirm/apply kết quả thuộc API và transaction của từng domain; các nhóm API này không được định nghĩa lại trong mục này.
 
 `vhm-verification-service` trả service `resourceUri`. Domain caller ánh xạ URI này thành URL thuộc application của mình và authorize lại trên mỗi request từ Mobile/Web; URI của private service không được chuyển nguyên cho client.
 
@@ -314,7 +326,7 @@ Content-Type: application/json
   "subjectRef": "customer-opaque-ref",
   "channel": "MOBILE",
   "documentType": "MARRIAGE_CERTIFICATE",
-  "mediaId": "d01ab6c8-3c0a-4be8-93b2-bd3df8bb15b7"
+  "s3PathFile": "registrations/9170c0b1-09ce-4016-b701-3626386abea0/document-c9eedd4c.png"
 }
 ```
 
@@ -329,7 +341,7 @@ Retry-After: 3
 }
 ```
 
-Create chỉ trả `202` sau khi verification chứa `mediaId`/worker state và outbox đã commit thành công. Nếu không thể persist an toàn, API trả lỗi; không trả `202` rồi để mất yêu cầu xử lý.
+Create chỉ trả `202` sau khi verification chứa `s3PathFile`/worker state và outbox đã commit thành công. Nếu không thể persist an toàn, API trả lỗi; không trả `202` rồi để mất yêu cầu xử lý.
 
 ### 6.3. Status và result
 
@@ -394,12 +406,12 @@ Error response của VHM chỉ dùng `code`, `message`, `retryable` và `correla
 
 | **Bảng** | **Mục đích** |
 | --- | --- |
-| `ocr_verifications` | Aggregate root; chứa business binding, `mediaId`, lifecycle, idempotency và worker lease/retry |
+| `ocr_verifications` | Aggregate root; chứa business binding, `s3PathFile`, lifecycle, idempotency và worker lease/retry |
 | `provider_attempts` | Ghi từng lần init/OCR và trạng thái timeout không xác định |
 | `ocr_results` | Canonical Result hiện hành, có version |
 | `outbox_events` | Bảo đảm DB commit và enqueue/event không lệch nhau |
 
-Baseline quy ước một verification có một `mediaId` immutable sau khi `FINALIZED` và một workload OCR. Verification Database chỉ lưu opaque `mediaId`; metadata, checksum và storage binding vẫn thuộc `vhm-media-service` và được worker kiểm tra lại khi xin read grant. Chỉ tách bảng media khi một verification thực sự cần nhiều tài liệu.
+Baseline quy ước một verification có một `s3PathFile` và một workload OCR. Verification Database chỉ lưu relative path do `vhm-media-service` sinh; không lưu Presigned URL, bucket hoặc AWS credential. Worker resolve lại object metadata/read access theo path trước khi gọi FPT. Chỉ tách bảng file reference khi một verification thực sự cần nhiều tài liệu.
 
 ```mermaid
 erDiagram
@@ -419,7 +431,7 @@ CREATE TABLE ocr_verifications (
     channel                 VARCHAR(20) NOT NULL CHECK (channel IN ('MOBILE', 'WEB')),
     document_type           VARCHAR(50) NOT NULL,
 
-    media_id                UUID NOT NULL,
+    s3_path_file            TEXT NOT NULL,
 
     status                  VARCHAR(30) NOT NULL CHECK (status IN
                                 ('QUEUED', 'PROCESSING', 'COMPLETED',
@@ -519,8 +531,8 @@ Retry budget được lấy từ cấu hình theo provider/operation, không lư
 
 ### 8.1. Transaction và idempotency
 
-- Verification API kiểm tra media `FINALIZED` và lấy immutable metadata ngoài DB transaction.
-- Sau đó insert `ocr_verifications` chứa `mediaId`/worker state và `outbox_events` trong một transaction ngắn.
+- Domain caller chỉ gửi `s3PathFile` đã nhận từ upload flow và đã kiểm tra business prefix; Verification API validate đây là relative path hợp lệ, không nhận full URL/bucket.
+- Sau đó insert `ocr_verifications` chứa `s3PathFile`/worker state và `outbox_events` trong một transaction ngắn.
 - Cùng `Idempotency-Key` và fingerprint trả resource cũ; cùng key nhưng fingerprint khác trả `409 IDEMPOTENCY_CONFLICT`.
 - Queue dùng at-least-once. Message chỉ chứa `verificationId`; worker claim aggregate bằng lease/CAS và không gọi provider lại nếu đã có provider attempt terminal thành công.
 - Outbox Publisher claim event `NEW/FAILED` bằng `PUBLISHING + lease`; khi thành công chuyển `PUBLISHED`, khi lỗi chuyển `FAILED` và đặt `available_at` theo backoff. Event `PUBLISHING` có lease hết hạn được publisher khác phục hồi, vì vậy không bị kẹt khi process chết giữa chừng.
@@ -552,7 +564,7 @@ Timeout outbound tới FPT phải ngắn hơn lease của worker. Giá trị c�
 
 ### 9.1. Thứ tự triển khai
 
-1. Chốt contract `FINALIZED metadata/read grant` với `vhm-media-service`.
+1. Chốt contract resolve metadata/read access bằng `s3PathFile` với `vhm-media-service`.
 2. Chốt với FPT từng `documentType → API/model`, input contract, file limit, response/error, quota và timeout.
 3. Xây Verification API, schema, idempotency và outbox/queue/worker skeleton bằng mock Provider Adapter.
 4. Tích hợp FPT `/session/init → /ocr`, Result Normalizer và polling end-to-end.
@@ -564,9 +576,9 @@ Timeout outbound tới FPT phải ngắn hơn lease của worker. Giá trị c�
 | **Lớp test** | **Phạm vi** |
 | --- | --- |
 | Unit | Lifecycle/outcome guard, idempotency fingerprint, field mapping, confidence/warning và timeout classification |
-| Contract | Media metadata/read grant; FPT init/OCR success, business error, malformed response, 429, 5xx và timeout fixture |
-| Integration | PostgreSQL constraint/locking, outbox publish, queue duplicate, worker lease/recovery và immutable media binding |
-| End-to-end | Upload → finalize → create `202` → processing → result → confirm/apply |
+| Contract | Media upload response/read-by-path; FPT init/OCR success, business error, malformed response, 429, 5xx và timeout fixture |
+| Integration | PostgreSQL constraint/locking, outbox publish, queue duplicate, worker lease/recovery và authorized `s3PathFile` |
+| End-to-end | Presigned PUT → create `202` bằng `s3PathFile` → processing → result → confirm/apply |
 | Resilience | FPT slow/timeout, unknown-after-send, queue backlog, worker crash, DLQ và client polling không vô hạn |
 
 ### 9.3. Điểm cần chốt
