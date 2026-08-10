@@ -132,7 +132,7 @@ OCR chỉ hỗ trợ số hóa và kiểm tra dữ liệu theo khả năng của
 | **Hướng tiếp cận** | **Ưu điểm** | **Nhược điểm** | **Lựa chọn (Yes/No)** |
 | --- | --- | --- | --- |
 | **`vhm-dossier-core` tích hợp trực tiếp FPT AI** | Ít thành phần; thời gian triển khai ban đầu ngắn | `vhm-dossier-core` phải xử lý credential, callback, retry và mã lỗi riêng của FPT AI; thay đổi provider tác động trực tiếp nghiệp vụ NOXH; tăng rủi ro dữ liệu định danh trong service hồ sơ | **No** |
-| **`vhm-verification-service`** (vai trò Verification Provider Proxy) | `vhm-dossier-core` chỉ cần tạo phiên và nhận kết quả; toàn bộ provider integration, credential, session, callback, retry, quota, lưu trữ, bảo mật, audit và chuẩn hóa kết quả được xử lý tại service; thay SDK/provider không yêu cầu sửa nghiệp vụ NOXH | Thêm một service và một network hop; `vhm-verification-service` phải đáp ứng HA/SLA vì là dependency của NOXH | **Yes** |
+| **`vhm-verification-service`** (vai trò Verification Provider Proxy) | `vhm-dossier-core` chỉ cần tạo phiên, cung cấp media đã finalize và nhận kết quả; toàn bộ provider integration, credential, session, callback, retry, quota, lưu trữ kết quả, bảo mật, audit và chuẩn hóa được xử lý tại service; thay provider không yêu cầu sửa nghiệp vụ NOXH | Thêm một service và một network hop; `vhm-verification-service` phải đáp ứng HA/SLA vì là dependency của NOXH | **Yes** |
 
 **Phương án chọn:** Sử dụng **`vhm-verification-service`** làm lớp tích hợp tập trung cho cả OCR và eKYC, với vai trò kiến trúc là Verification Provider Proxy. `vhm-dossier-core` kiểm tra quyền nghiệp vụ, tạo phiên và nhận Canonical Result; không gọi trực tiếp hoặc phụ thuộc contract của FPT AI.
 
@@ -142,15 +142,13 @@ OCR chỉ hỗ trợ số hóa và kiểm tra dữ liệu theo khả năng của
 flowchart LR
     AGENT["Vinhomes Agent Mobile/Web<br/>SDK + Upload"]
     BFF["vhm-agent-api<br/>Xác thực · routing"]
-    NOXH["vhm-dossier-core<br/>Authorize hồ sơ/dự án"]
-    VERIFY["vhm-verification-service<br/>Media Session · Upload Slot"]
-    MEDIA[("Private Object Storage<br/>Verification media")]
+    NOXH["vhm-dossier-core<br/>Authorize · Presigned URL · Media metadata"]
+    MEDIA[("Private Object Storage<br/>Dossier attachments")]
 
-    AGENT <-->|"1. Request · 4. Receive URL<br/>6. Submit mediaId"| BFF
-    BFF <-->|"2. Authorize · 4. Response<br/>6. Submit metadata"| NOXH
-    NOXH <-->|"3. Create slot · 4. Response<br/>7. Finalize media"| VERIFY
-    AGENT ==>|"5. Presigned PUT<br/>binary + checksum"| MEDIA
-    VERIFY -->|"7. HEAD/validate object"| MEDIA
+    AGENT <-->|"1. Request · 3. Receive URL<br/>5. Submit mediaId"| BFF
+    BFF <-->|"2. Authorize/request URL<br/>3. Response · 5. Submit metadata"| NOXH
+    AGENT ==>|"4. Presigned PUT<br/>binary + checksum"| MEDIA
+    NOXH -->|"6. HEAD/validate và finalize object"| MEDIA
 ```
 
 **Luồng 2 — Xử lý OCR:**
@@ -167,25 +165,26 @@ flowchart LR
 
     AGENT <-->|"7. status/result"| BFF
     BFF <-->|"7. authorized query/result"| NOXH
-    NOXH <-->|"1. Process OCR + mediaId<br/>6. Canonical Result"| VERIFY
-    VERIFY -->|"2. HEAD/GET object"| MEDIA
+    NOXH <-->|"1. Process OCR + authorized mediaRef<br/>6. Canonical Result"| VERIFY
+    VERIFY -->|"2. GET finalized object"| MEDIA
     VERIFY ==>|"3. POST /ocr<br/>server api-key"| PROVIDER
     PROVIDER ==>|"4. OCR Result"| VERIFY
     PROVIDER -.->|"Provider Callback — bổ sung"| VERIFY
     VERIFY -->|"5. Lưu kết quả chuẩn hóa"| DB
 ```
 
-Giải pháp này tách nghiệp vụ NOXH khỏi chi tiết tích hợp FPT AI. Chi phí của một service và một network hop được chấp nhận để credential, quota, callback, dữ liệu, audit và vận hành provider được quản lý tập trung tại `vhm-verification-service`.
+Giải pháp này tách nghiệp vụ NOXH khỏi chi tiết tích hợp FPT AI. Chi phí của một service và một network hop được chấp nhận để credential, quota, callback, provider result, audit và vận hành provider được quản lý tập trung tại `vhm-verification-service`; attachment upload vẫn thuộc `vhm-dossier-core`.
 
 **Phân định ownership:**
 
 | **Năng lực** | **`vhm-dossier-core`** | **`vhm-verification-service`** |
 | --- | --- | --- |
 | Nghiệp vụ | Kiểm tra quyền trên hồ sơ/dự án; gửi `businessRef`; quyết định sử dụng kết quả | Không xử lý rule nghiệp vụ NOXH |
-| API tích hợp | Chỉ gọi API nội bộ `create/status/result` với `documentType` | Quản lý SDK/API contract, model/template và credential FPT AI |
+| Upload tài liệu | Sở hữu `mediaId`, object key, Presigned URL, attachment metadata, finalize và retention; binary nằm trong Private Object Storage | Không cấp Presigned URL và không sở hữu attachment; chỉ đọc object đã finalize khi có yêu cầu OCR được ủy quyền |
+| API tích hợp | Gọi API nội bộ `create/process/status/result` với `businessRef`, `documentType` và authorized `mediaRef` | Quản lý provider API contract, model/template và credential FPT AI |
 | Phiên xử lý | Không quản lý state machine OCR | Sinh `verificationId` và sử dụng làm `client_uuid` khi gọi FPT AI; quản lý session, attempt, timeout, idempotency và trạng thái |
 | Kết quả | Chỉ nhận Canonical Result theo loại tài liệu | Nhận synchronous result từ FPT AI Backend; Provider Callback và Result API dùng để lấy/đối soát bổ sung; chuẩn hóa field, confidence, warning và error code |
-| Dữ liệu | Không lưu ảnh hoặc raw provider payload | Không lưu binary trong database; ảnh cần lưu được đưa vào private object storage, database chỉ giữ reference đã mã hóa, checksum và retention metadata |
+| Dữ liệu | Database lưu attachment metadata/reference, checksum, object version và retention; không lưu binary hoặc raw provider payload | Database chỉ lưu verification session, Canonical Result và provider metadata tối thiểu; không lưu binary hoặc sở hữu attachment reference lâu dài |
 | Resilience | Không retry trực tiếp với FPT AI | Retry, reconciliation, circuit breaker, rate limit và quota |
 | Audit/Monitoring | Chỉ audit việc áp dụng kết quả vào nghiệp vụ | Audit toàn bộ vòng đời OCR và vận hành provider |
 
@@ -194,6 +193,8 @@ Nhờ đó, `vhm-dossier-core` không phải triển khai provider adapter, call
 **Trách nhiệm của `vhm-verification-service`:**
 
 - Quản lý phiên OCR; sinh `verificationId` dùng làm `client_uuid` của FPT AI và liên kết với `businessRef` của NOXH.
+- Chỉ nhận `mediaId/mediaRef` đã được `vhm-dossier-core` authorize và finalize; không cấp Presigned URL, không nhận object path từ Mobile/Web và không quản lý attachment nghiệp vụ.
+- Đọc object từ Private Object Storage bằng quyền read-only giới hạn theo exact object; kiểm tra lại binding, MIME/magic bytes và kích thước trước khi gửi provider.
 - Nhận `documentType`, chọn model/template OCR tương ứng và chuẩn hóa kết quả theo schema của từng loại tài liệu.
 - Là điểm tích hợp duy nhất với FPT AI: giữ API key, khởi tạo provider session, forward request/response, nhận Provider Callback và gọi Result API khi cần đối soát.
 - Ghi nhận và chuẩn hóa synchronous result từ FPT AI Backend mà không bắt buộc chờ Provider Callback.
@@ -201,13 +202,16 @@ Nhờ đó, `vhm-dossier-core` không phải triển khai provider adapter, call
 - Gửi NOXH Callback đã chuẩn hóa, có xác thực và idempotency về `vhm-dossier-core` khi phiên hoàn tất.
 - Chuẩn hóa payload và error code của FPT AI thành contract nội bộ ổn định, không trả raw provider payload cho NOXH.
 - Quản lý retry, timeout, circuit breaker, quota/rate limit và cô lập sự cố provider khỏi `vhm-dossier-core`.
-- Áp dụng kiểm soát truy cập, mã hóa dữ liệu nhạy cảm, masking, audit và chính sách lưu/xóa dữ liệu OCR.
-- Cung cấp API để NOXH tạo phiên, tra cứu trạng thái và lấy kết quả OCR.
+- Áp dụng kiểm soát truy cập, mã hóa dữ liệu nhạy cảm, masking, audit và chính sách lưu/xóa verification session, Canonical Result và provider payload tối thiểu.
+- Cung cấp API để NOXH tạo phiên, yêu cầu xử lý media đã finalize, tra cứu trạng thái và lấy kết quả OCR.
 
 **Trách nhiệm tối thiểu của `vhm-dossier-core`:**
 
 - Kiểm tra Đại lý có quyền thao tác hồ sơ/dự án.
-- Gửi `businessRef=dossierId`, `documentType` khi tạo phiên và lấy Canonical Result từ `vhm-verification-service`.
+- Sinh `mediaId` và exact object key, cấp Presigned PUT URL sau authorization, lưu attachment metadata và finalize object sau khi HEAD/validate checksum/version thành công.
+- Quản lý orphan cleanup, retention và quyền truy cập attachment theo hồ sơ/dự án.
+- Gửi `businessRef=dossierId`, `documentType` và authorized `mediaRef` khi yêu cầu `vhm-verification-service` xử lý; không truyền object path do client cung cấp.
+- Lấy Canonical Result từ `vhm-verification-service` và bind lại với đúng hồ sơ/media trước khi sử dụng.
 - Cho Đại lý xác nhận dữ liệu trước khi cập nhật khách hàng hoặc hồ sơ NOXH.
 
 **Cách hoạt động:**
@@ -235,23 +239,22 @@ sequenceDiagram
 
     CLIENT->>CLIENT: SDK chụp/chọn ảnh<br/>kiểm tra sơ bộ + tính checksum
     CLIENT->>BFF: Xin presigned upload URL<br/>verificationId + file metadata + checksum
-    BFF->>NOXH: Kiểm tra quyền hồ sơ/dự án và upload scope
-    NOXH->>OCR: Create media slot idempotent
-    OCR->>OCR: Cấp mediaId + exact object key + expiry
-    OCR-->>NOXH: Presigned PUT URL + required headers
-    NOXH-->>BFF: Upload slot
+    BFF->>NOXH: Authorize và create media slot idempotent
+    NOXH->>NOXH: Cấp mediaId + exact object key + expiry<br/>sinh Presigned PUT URL
+    NOXH-->>BFF: Presigned PUT URL + required headers
     BFF-->>CLIENT: Presigned PUT URL + mediaId
 
     CLIENT->>MEDIA: PUT binary trực tiếp<br/>content-length + content-type + checksum
     MEDIA-->>CLIENT: ETag + object version
     CLIENT->>BFF: Submit mediaId + checksum + object version
     BFF->>NOXH: Authorized media submit
-    NOXH->>OCR: Finalize media và yêu cầu OCR
-    OCR->>MEDIA: HEAD object và đọc metadata
-    MEDIA-->>OCR: size + content-type + checksum + version
-    OCR->>OCR: Validate binding/MIME/magic bytes/size/checksum
+    NOXH->>MEDIA: HEAD object và đọc metadata
+    MEDIA-->>NOXH: size + content-type + checksum + version
+    NOXH->>NOXH: Validate checksum và finalize attachment
+    NOXH->>OCR: Process OCR<br/>businessRef + documentType + mediaId/objectRef
     OCR->>MEDIA: GET object bằng private credential
     MEDIA-->>OCR: Object stream
+    OCR->>OCR: Validate binding/MIME/magic bytes/size
     OCR->>FPT: POST /ocr multipart từ object stream<br/>api-key + session-id + device-type + document-type
 
     FPT-->>OCR: OCR result
@@ -279,14 +282,14 @@ sequenceDiagram
 
 - Vinhomes Agent Mobile/Web luôn tạo phiên OCR trước khi chụp hoặc upload. Mỗi phiên chỉ thuộc một channel; mọi request media phải bind với `verificationId`, caller, channel, `businessRef`, `documentType`, attempt và môi trường.
 - Mobile SDK/Web SDK chụp hoặc chọn ảnh và trả file/Blob cho client. Cả ảnh chụp và file có sẵn đều dùng chung cơ chế Presigned URL đã chọn tại Vấn đề 3.
-- Mobile/Web gọi `vhm-agent-api` để xin upload URL. `vhm-agent-api` và `vhm-dossier-core` chỉ xử lý authorization/metadata; không nhận hoặc forward binary sang `vhm-verification-service`.
+- Mobile/Web gọi `vhm-agent-api` để xin upload URL. `vhm-agent-api` chỉ xác thực/routing; `vhm-dossier-core` authorize hồ sơ, sinh `mediaId`/exact object key và trả Presigned URL. `vhm-verification-service` không tham gia luồng cấp URL.
 - Presigned URL phải có TTL ngắn và bind exact object key, method, content type, content length, checksum, `mediaId`, `verificationId` và attempt. Client không có quyền list/read object hoặc tự chọn object key.
-- Sau upload, Mobile/Web chỉ submit `mediaId`, checksum và object version qua `vhm-agent-api`. `vhm-dossier-core` kiểm tra lại quyền trên hồ sơ/dự án; `vhm-verification-service` mới finalize media, HEAD/validate object rồi đọc bằng private credential để stream sang FPT AI.
+- Sau upload, Mobile/Web submit `mediaId`, checksum và object version qua `vhm-agent-api`. `vhm-dossier-core` kiểm tra lại quyền, HEAD/validate object rồi chuyển attachment sang `FINALIZED`; chỉ sau đó mới gọi `vhm-verification-service` với authorized `mediaRef` để xử lý OCR.
 - Chỉ cho phép loại file, dung lượng, số trang/mặt và độ phân giải đã cấu hình theo từng `documentType`; PDF hoặc tài liệu nhiều trang chỉ được bật khi model/template và FPT AI contract tương ứng đã được xác nhận.
 - Mobile SDK và Web SDK không gọi thẳng FPT AI Backend hoặc `vhm-verification-service`, không nhận provider API key và không gửi binary qua `vhm-agent-api`.
-- `vhm-verification-service` kiểm tra binding phiên, object ownership, MIME/magic bytes, checksum, thứ tự mặt/trang và trạng thái attempt trước khi forward. Với CCCD gửi từng mặt, mặt trước phải được xử lý trước mặt sau theo contract `side-type` của FPT AI.
+- `vhm-verification-service` không tin object path từ client. Service chỉ đọc exact object do `vhm-dossier-core` ủy quyền, kiểm tra lại binding phiên, MIME/magic bytes, kích thước, thứ tự mặt/trang và trạng thái attempt trước khi forward. Với CCCD gửi từng mặt, mặt trước phải được xử lý trước mặt sau theo contract `side-type` của FPT AI.
 - Provider `api-key`, `session-id`, `device-type` và `document-type` chỉ được `vhm-verification-service` inject ở outbound request. Mobile/Web không nhìn thấy provider credential.
-- Binary upload nằm trong Private Object Storage; database chỉ lưu encrypted reference, checksum, media metadata và thời hạn xóa. Upload chưa finalize phải được orphan-cleanup theo TTL; object đã finalize phải được purge theo retention policy.
+- Binary upload nằm trong Private Object Storage do `vhm-dossier-core` quản lý. Dossier database chỉ lưu protected object reference, checksum, object version, media metadata và thời hạn xóa; upload chưa finalize được orphan-cleanup theo TTL, object đã finalize được purge theo retention policy.
 - Không retry tự động request OCR sau khi `vhm-verification-service` đã bắt đầu stream media sang FPT AI. Retry nghiệp vụ tạo attempt/run mới hoặc tái sử dụng object đã validate chỉ khi provider contract xác nhận idempotency, để tránh tính phí và kết quả trùng.
 - Flow này yêu cầu Mobile SDK/Web SDK cung cấp được file/Blob sau bước capture. Nếu phiên bản SDK chỉ tự gửi media vào endpoint FPT AI và không expose dữ liệu capture, phải xác nhận lại capability với FPT AI trước khi implement.
 
@@ -301,9 +304,11 @@ sequenceDiagram
 ```mermaid
 stateDiagram-v2
     [*] --> CREATED: Tạo OCR session
-    CREATED --> PROCESSING: SDK gửi dữ liệu OCR
+    CREATED --> WAITING_MEDIA: Chờ attachment
+    WAITING_MEDIA --> PROCESSING: Dossier finalize media và yêu cầu OCR
     PROCESSING --> COMPLETED: Synchronous OCR Result hợp lệ
     PROCESSING --> COMPLETED: Provider Callback hợp lệ
+    PROCESSING --> PROVIDER_ERROR: Provider lỗi, hết retry budget
     PROCESSING --> RECONCILING: Cần lấy lại hoặc đối soát
     RECONCILING --> COMPLETED: POST get_result thành công
     RECONCILING --> PROVIDER_ERROR: Hết recovery budget
