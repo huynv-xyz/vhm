@@ -4,6 +4,8 @@
 
 `vhm-verification-service` cung cấp capability OCR/eKYC tập trung cho nhiều domain. Mobile/Web không gọi trực tiếp FPT AI; domain service không phụ thuộc credential, session, payload hoặc error code của provider.
 
+### 1.1. Phương án được chọn
+
 Baseline dùng **backend API + queue/worker** cho cả hai loại verification:
 
 ```text
@@ -22,11 +24,22 @@ Upload document → create eKYC → 202 QUEUED
 
 Các call FPT trả kết quả đồng bộ cho worker. Resource của VHM vẫn bất đồng bộ để không giữ kết nối Mobile/Web/BFF trong lúc đọc media và chờ provider, đồng thời cô lập timeout, quota và backlog khỏi domain service.
 
-| **Hướng tiếp cận** | **Ưu điểm** | **Nhược điểm** | **Lựa chọn** |
-| --- | --- | --- | --- |
-| Domain service gọi trực tiếp FPT | Ít thành phần ban đầu | Domain phụ thuộc provider contract, credential và SLA | No |
-| Mobile/Web gọi FPT trực tiếp | Ít hop backend | Lộ provider contract/credential, khó kiểm soát dữ liệu và audit | No |
-| `vhm-verification-service` + API/queue/worker | Contract tập trung, tái sử dụng, cô lập provider và vận hành thống nhất | Thêm job infrastructure và bước polling | **Yes** |
+### 1.2. So sánh các hướng tích hợp FPT
+
+FPT SDK là thư viện chạy trên ứng dụng Mobile/Web để hướng dẫn capture và điều phối các bước eKYC. SDK không chạy trong Verification API hoặc worker. Nếu chọn SDK, kiến trúc client và đường truyền media phải thay đổi tương ứng.
+
+| **Hướng tiếp cận** | **Luồng chính** | **Ưu điểm** | **Nhược điểm** | **Lựa chọn** |
+| --- | --- | --- | --- | --- |
+| Backend API tập trung qua `vhm-verification-service` | Mobile/Web upload vào S3; Verification API tạo job; worker đọc media và gọi FPT API | Một contract cho nhiều domain và kênh; credential và provider contract chỉ nằm ở backend; VHM chủ động media, retry, quota, audit và Canonical Result; phù hợp cả OCR tài liệu đã upload | VHM phải tự xây giao diện capture, hướng dẫn chất lượng ảnh và điều phối eKYC; không tận dụng AI model trong SDK hoặc NFC của Mobile SDK; cần queue, worker và polling | **Yes — baseline OCR và eKYC** |
+| FPT SDK gọi trực tiếp FPT, không qua Proxy VHM | SDK trên Mobile/Web capture và gửi dữ liệu thẳng tới FPT; VHM nhận kết quả theo cơ chế tích hợp của FPT | Tích hợp eKYC phía VHM đơn giản hơn; ít hop và độ trễ truyền tải thấp; tận dụng capture UI, kiểm tra chất lượng thời gian thực, liveness và các capability SDK hỗ trợ | VHM không kiểm soát đường truyền media trước khi tới FPT; phụ thuộc SDK trên từng nền tảng và cơ chế nhận/đối soát kết quả; khó áp dụng contract upload/worker hiện tại; không phù hợp OCR tài liệu nghiệp vụ tổng quát | No |
+| FPT SDK qua Proxy Server của VHM | SDK trên Mobile/Web gọi endpoint Proxy; Proxy relay request/response giữa SDK và FPT | Vẫn tận dụng capture UX của SDK; VHM quan sát và kiểm soát luồng dữ liệu đi qua hạ tầng của mình; có thể chủ động lưu kết quả | Phải vận hành public streaming/multipart proxy có availability cao; thêm latency, bandwidth và điểm lỗi; proxy phụ thuộc chặt endpoint/header/protocol của SDK; các call tương tác không đi qua queue/worker; Verification API hiện là private nên cần ingress/proxy workload riêng | No |
+| Hybrid: OCR bằng backend API, eKYC bằng FPT SDK | OCR tài liệu đi qua worker; capture giấy tờ định danh/liveness đi qua SDK | Dùng đúng thế mạnh của từng cách: backend kiểm soát OCR tài liệu, SDK tối ưu trải nghiệm eKYC | Hai kiến trúc, hai cách quản lý session/media/result và hai cơ chế quan sát lỗi; Mobile/Web phụ thuộc SDK; tăng chi phí phát triển, kiểm thử và vận hành | Chỉ xem xét khi capture UX/NFC là yêu cầu bắt buộc |
+
+Không chọn cách từng domain service gọi trực tiếp FPT vì sẽ phân tán credential, provider contract, retry/quota và logic chuẩn hóa kết quả.
+
+Quyết định baseline ưu tiên contract tập trung, khả năng tái sử dụng và quyền kiểm soát dữ liệu. Đổi sang SDK không chỉ là thay cách gọi FPT trong worker mà là thay toàn bộ phần capture eKYC trên client. Nếu sau này bắt buộc dùng NFC hoặc cần AI guidance theo thời gian thực của FPT, đánh giá lại phương án hybrid; OCR tài liệu vẫn giữ backend API + worker.
+
+Căn cứ: [So sánh các phương thức tích hợp của FPT](https://docs-vision.fpt.ai/ekyc/III-integration/III-0-so-sanh/) và [kiến trúc tích hợp eKYC qua SDK](https://docs-vision.fpt.ai/ekyc/III-integration/III-1-SDKs/kien-truc-tich-hop/).
 
 OCR chỉ hỗ trợ số hóa/gợi ý dữ liệu. eKYC hỗ trợ kiểm tra giấy tờ, liveness và face match. Cả hai không tự quyết định hồ sơ đủ điều kiện NOXH; người dùng phải xác nhận trước khi domain apply kết quả.
 
