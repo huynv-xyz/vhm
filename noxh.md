@@ -89,16 +89,16 @@ FPT eKYC · Document OCR`"]
     DB[("`**Verification Database**
 Media ref · Job · Canonical result`")]
 
-    CLIENT -->|"Application API"| BFF
-    BFF -->|"Authorize · Status · Apply"| DOSSIER
-    BFF -->|"Upload · Finalize"| MEDIA_SERVICE
-    DOSSIER -->|"Create · Submit · Query"| VERIFY
-    VERIFY -->|"Metadata · Read grant"| MEDIA_SERVICE
-    VERIFY -->|"OCR · eKYC"| PROVIDER
-    VERIFY -->|"Persist · Query"| DB
+    CLIENT <-->|"Application API"| BFF
+    BFF <-->|"Authorize · Status · Apply"| DOSSIER
+    BFF <-->|"Upload · Finalize"| MEDIA_SERVICE
+    DOSSIER <-->|"Create · Submit · Query"| VERIFY
+    VERIFY <-->|"Metadata · Read grant"| MEDIA_SERVICE
+    VERIFY <-->|"OCR/eKYC request · result"| PROVIDER
+    VERIFY <-->|"Persist · Query"| DB
 ```
 
-Sơ đồ chỉ thể hiện dependency giữa các thành phần. Response quay lại theo cùng request path; Presigned PUT và thứ tự end-to-end được thể hiện tại các sequence diagram bên dưới.
+Mỗi dependency dùng một đường hai chiều để thể hiện request/response trên cùng kết nối. Presigned PUT và thứ tự end-to-end được thể hiện tại các sequence diagram bên dưới.
 
 Request tạo OCR chỉ chờ đến khi `vhm-verification-service` persist job và trả `verificationId + QUEUED`; việc đọc object và gọi provider diễn ra trong worker. Mobile/Web không giữ kết nối chờ provider mà tra cứu trạng thái/kết quả qua `vhm-agent-api` và `vhm-dossier-core`.
 
