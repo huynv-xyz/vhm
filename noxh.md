@@ -140,7 +140,7 @@ OCR chỉ hỗ trợ số hóa và kiểm tra dữ liệu theo khả năng của
 
 ```mermaid
 flowchart LR
-    AGENT["`**Vinhomes Agent Mobile/Web**
+    AGENT["`**Mobile/Web**
 SDK + Upload`"]
     BFF["`**vhm-agent-api**
 Xác thực · routing`"]
@@ -163,8 +163,8 @@ binary + checksum`"| MEDIA
 
 ```mermaid
 flowchart LR
-    AGENT["`**Vinhomes Agent Mobile/Web**
-Tra cứu kết quả`"]
+    AGENT["`**Mobile/Web**
+Yêu cầu OCR · Nhận kết quả`"]
     BFF["`**vhm-agent-api**
 Xác thực · routing`"]
     NOXH["`**vhm-dossier-core**
@@ -178,8 +178,10 @@ OCR Provider`"]
     DB[("`**Verification Database**
 Canonical Result`")]
 
-    AGENT <-->|"7. status/result"| BFF
-    BFF <-->|"7. authorized query/result"| NOXH
+    AGENT <-->|"`1. Yêu cầu OCR + mediaId
+7. status/result`"| BFF
+    BFF <-->|"`1. Authorized OCR request
+7. Query/result`"| NOXH
     NOXH <-->|"`1. Process OCR + authorized mediaRef
 6. Canonical Result`"| VERIFY
     VERIFY -->|"2. GET finalized object"| MEDIA
@@ -236,7 +238,7 @@ Nhờ đó, `vhm-dossier-core` không phải triển khai provider adapter, call
 ```mermaid
 sequenceDiagram
     autonumber
-    participant CLIENT as Vinhomes Agent Mobile/Web + SDK
+    participant CLIENT as Mobile/Web + SDK
     participant BFF as vhm-agent-api
     participant NOXH as vhm-dossier-core
     participant OCR as vhm-verification-service
