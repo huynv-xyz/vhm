@@ -136,36 +136,43 @@ OCR chỉ hỗ trợ số hóa và kiểm tra dữ liệu theo khả năng của
 
 **Phương án chọn:** Sử dụng **`vhm-verification-service`** làm lớp tích hợp tập trung cho cả OCR và eKYC, với vai trò kiến trúc là Verification Provider Proxy. `vhm-dossier-core` kiểm tra quyền nghiệp vụ, tạo phiên và nhận Canonical Result; không gọi trực tiếp hoặc phụ thuộc contract của FPT AI.
 
+**Luồng 1 — Upload tài liệu:**
+
 ```mermaid
 flowchart LR
-    subgraph CLIENT["Kênh người dùng"]
-        AGENT["Vinhomes Agent Mobile/Web<br/>SDK + Upload"]
-    end
+    AGENT["Vinhomes Agent Mobile/Web<br/>SDK + Upload"]
+    BFF["vhm-agent-api<br/>Xác thực · routing"]
+    NOXH["vhm-dossier-core<br/>Authorize hồ sơ/dự án"]
+    VERIFY["vhm-verification-service<br/>Media Session · Upload Slot"]
+    MEDIA[("Private Object Storage<br/>Verification media")]
 
-    subgraph APPLICATION["Tầng Application - Hạ tầng VHM"]
-        BFF["vhm-agent-api<br/>Xác thực · cấp upload URL · routing"]
-        NOXH["vhm-dossier-core<br/>Authorize · businessRef · Apply result"]
-        PROXY["vhm-verification-service<br/>OCR · eKYC · Provider Adapter<br/>Session · Result · Security · Audit"]
-        DB[("Verification Database<br/>Session và Canonical Result")]
-        MEDIA[("Private Object Storage<br/>Verification media theo retention policy")]
+    AGENT <-->|"1. Request · 4. Receive URL<br/>6. Submit mediaId"| BFF
+    BFF <-->|"2. Authorize · 4. Response<br/>6. Submit metadata"| NOXH
+    NOXH <-->|"3. Create slot · 4. Response<br/>7. Finalize media"| VERIFY
+    AGENT ==>|"5. Presigned PUT<br/>binary + checksum"| MEDIA
+    VERIFY -->|"7. HEAD/validate object"| MEDIA
+```
 
-        BFF <-->|"1. create/upload URL<br/>3. submit · 7. status/result"| NOXH
-        NOXH <-->|"1. session/media slot<br/>3. process OCR · 6. Canonical Result"| PROXY
-        PROXY --> DB
-        PROXY -.->|"Cấp upload slot · quản lý metadata/retention"| MEDIA
-    end
+**Luồng 2 — Xử lý OCR:**
 
-    subgraph FPT["Hạ tầng FPT AI"]
-        PROVIDER["FPT AI Backend"]
-    end
+```mermaid
+flowchart LR
+    AGENT["Vinhomes Agent Mobile/Web"]
+    BFF["vhm-agent-api"]
+    NOXH["vhm-dossier-core<br/>Authorize · Apply result"]
+    VERIFY["vhm-verification-service<br/>OCR · eKYC · Provider Adapter"]
+    MEDIA[("Private Object Storage")]
+    PROVIDER["FPT AI Backend"]
+    DB[("Verification Database<br/>Canonical Result")]
 
-    AGENT <-->|"1. create/xin upload URL<br/>3. submit · 7. status/result"| BFF
-    AGENT ==>|"2. Presigned PUT<br/>binary + checksum"| MEDIA
-    PROXY -->|"4. HEAD/GET object đã validate"| MEDIA
-    PROXY ==>|"5. POST /ocr<br/>api-key inject phía server"| PROVIDER
-    PROVIDER ==>|"6. OCR Result"| PROXY
-    PROVIDER -.->|"Provider Callback — bổ sung"| PROXY
-
+    AGENT <-->|"7. status/result"| BFF
+    BFF <-->|"7. authorized query/result"| NOXH
+    NOXH <-->|"1. Process OCR + mediaId<br/>6. Canonical Result"| VERIFY
+    VERIFY -->|"2. HEAD/GET object"| MEDIA
+    VERIFY ==>|"3. POST /ocr<br/>server api-key"| PROVIDER
+    PROVIDER ==>|"4. OCR Result"| VERIFY
+    PROVIDER -.->|"Provider Callback — bổ sung"| VERIFY
+    VERIFY -->|"5. Lưu kết quả chuẩn hóa"| DB
 ```
 
 Giải pháp này tách nghiệp vụ NOXH khỏi chi tiết tích hợp FPT AI. Chi phí của một service và một network hop được chấp nhận để credential, quota, callback, dữ liệu, audit và vận hành provider được quản lý tập trung tại `vhm-verification-service`.
