@@ -140,10 +140,10 @@ OCR chỉ hỗ trợ số hóa và kiểm tra dữ liệu theo khả năng của
 
 ```mermaid
 flowchart LR
-    AGENT["Vinhomes Agent Mobile/Web<br/>SDK + Upload"]
-    BFF["vhm-agent-api<br/>Xác thực · routing"]
-    NOXH["vhm-dossier-core<br/>Authorize · Presigned URL · Media metadata"]
-    MEDIA[("Private Object Storage<br/>Dossier attachments")]
+    AGENT["<b>Vinhomes Agent Mobile/Web</b><br/>SDK + Upload"]
+    BFF["<b>vhm-agent-api</b><br/>Xác thực · routing"]
+    NOXH["<b>vhm-dossier-core</b><br/>Authorize · Presigned URL · Media metadata"]
+    MEDIA[("<b>Private Object Storage</b><br/>Dossier attachments")]
 
     AGENT <-->|"1. Request · 3. Receive URL<br/>5. Submit mediaId"| BFF
     BFF <-->|"2. Authorize/request URL<br/>3. Response · 5. Submit metadata"| NOXH
@@ -155,13 +155,13 @@ flowchart LR
 
 ```mermaid
 flowchart LR
-    AGENT["Vinhomes Agent Mobile/Web"]
-    BFF["vhm-agent-api"]
-    NOXH["vhm-dossier-core<br/>Authorize · Apply result"]
-    VERIFY["vhm-verification-service<br/>OCR · eKYC · Provider Adapter"]
-    MEDIA[("Private Object Storage")]
-    PROVIDER["FPT AI Backend"]
-    DB[("Verification Database<br/>Canonical Result")]
+    AGENT["<b>Vinhomes Agent Mobile/Web</b><br/>Tra cứu kết quả"]
+    BFF["<b>vhm-agent-api</b><br/>Xác thực · routing"]
+    NOXH["<b>vhm-dossier-core</b><br/>Authorize · Apply result"]
+    VERIFY["<b>vhm-verification-service</b><br/>OCR · eKYC · Provider Adapter"]
+    MEDIA[("<b>Private Object Storage</b><br/>Finalized attachments")]
+    PROVIDER["<b>FPT AI Backend</b><br/>OCR Provider"]
+    DB[("<b>Verification Database</b><br/>Canonical Result")]
 
     AGENT <-->|"7. status/result"| BFF
     BFF <-->|"7. authorized query/result"| NOXH
