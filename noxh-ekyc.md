@@ -33,7 +33,7 @@ FPT SDK là thư viện chạy trên ứng dụng Mobile/Web để hướng dẫ
 | Backend API tại từng domain | Mobile/Web gọi domain backend; mỗi domain tự quản lý media, session và gọi FPT API | Không cần thêm capability/service tập trung; domain chủ động tùy chỉnh luồng theo nghiệp vụ riêng | Lặp code tích hợp ở nhiều domain; phân tán credential, session, retry, quota và audit; kết quả/error contract dễ không đồng nhất; mỗi lần đổi provider phải sửa nhiều service | No |
 | Backend API qua `vhm-verification-service` | Mobile/Web upload vào S3; domain gọi Verification API; Kafka phân phối job; worker đọc media và gọi FPT API | Domain mới chỉ tích hợp contract create/status/result, không phải tự xây FPT session, worker, retry và error mapping; đổi API/model/credential của FPT tại một nơi mà không sửa từng domain; Kafka, rate limit và circuit breaker cô lập latency/quota của FPT khỏi nghiệp vụ; bảo mật dữ liệu, audit và Canonical Result nhất quán giữa các domain/kênh | Phải vận hành thêm service, database, Kafka, outbox publisher và worker; trở thành dependency tập trung nên phải HA và cô lập quota/backlog theo workload; VHM vẫn tự xây capture UX và dùng polling | **Yes — baseline OCR và eKYC** |
 | FPT SDK gọi trực tiếp FPT, không qua Proxy VHM | SDK trên Mobile/Web capture và gửi dữ liệu thẳng tới FPT; VHM nhận kết quả theo cơ chế tích hợp của FPT | Tích hợp eKYC phía VHM đơn giản hơn; ít hop và độ trễ truyền tải thấp; tận dụng capture UI, kiểm tra chất lượng thời gian thực, liveness và các capability SDK hỗ trợ | VHM không kiểm soát đường truyền media trước khi tới FPT; phụ thuộc SDK trên từng nền tảng và cơ chế nhận/đối soát kết quả; khó áp dụng contract upload/worker hiện tại; không phù hợp OCR tài liệu nghiệp vụ tổng quát | No |
-| FPT SDK qua Proxy Server của VHM | SDK trên Mobile/Web gọi endpoint Proxy; Proxy relay request/response giữa SDK và FPT | Vẫn tận dụng capture UX của SDK; VHM quan sát và kiểm soát luồng dữ liệu đi qua hạ tầng của mình; có thể chủ động lưu kết quả | Phải vận hành public streaming/multipart proxy có availability cao; thêm latency, bandwidth và điểm lỗi; proxy phụ thuộc chặt endpoint/header/protocol của SDK; các call tương tác không đi qua queue/worker; Verification API hiện là private nên cần ingress/proxy workload riêng | No |
+| FPT SDK qua Proxy Server của VHM | SDK trên Mobile/Web gọi endpoint Proxy; Proxy relay request/response giữa SDK và FPT | Vẫn tận dụng capture UX của SDK; VHM quan sát và kiểm soát luồng dữ liệu đi qua hạ tầng của mình; có thể chủ động lưu kết quả | Phải vận hành public streaming/multipart proxy có availability cao; thêm latency, bandwidth và điểm lỗi; proxy phụ thuộc chặt endpoint/header/protocol của SDK; các call tương tác không đi qua Kafka/worker; Verification API hiện là private nên cần ingress/proxy workload riêng | No |
 
 Không chọn backend riêng tại từng domain vì phần tích hợp FPT là capability kỹ thuật lặp lại, không phải nghiệp vụ riêng của từng domain. Domain chỉ authorize business context và apply Canonical Result; `vhm-verification-service` quản lý provider contract, credential, session, retry/quota và chuẩn hóa kết quả.
 
@@ -189,8 +189,6 @@ OCR · Provider Adapter`"]
         direction LR
         API["`**Verification API**
 Create · Status · Result`"]
-        OUTBOX["`**Outbox Publisher**
-OCR_JOB_CREATED`"]
         WORKER["`**OCR Worker pool**
 Internal workload`"]
         ADAPTER["`**Provider Adapter**
@@ -201,8 +199,6 @@ Canonical Result`"]
         WORKER --> ADAPTER --> NORMALIZE
     end
 
-    KAFKA[("`**Kafka**
-vhm.verification.ocr.jobs.v1`")]
     FPT["`**FPT AI Backend**
 Session API · OCR API`"]
     DB[("`**Verification Database**
@@ -215,9 +211,7 @@ Verification · Media · Attempt · Result`")]
     BFF <-->|"Create/query/apply OCR"| DOMAIN
     DOMAIN <-->|"Private OCR command/query"| API
     API <-->|"Persist/read"| DB
-    OUTBOX <-->|"Claim outbox"| DB
-    OUTBOX -->|"Publish"| KAFKA
-    KAFKA -->|"Consume"| WORKER
+    API -.->|"Start async job"| WORKER
     WORKER -->|"HEAD/GET OCR_DOCUMENT"| STORAGE
     ADAPTER <-->|"Synchronous provider APIs"| FPT
     NORMALIZE -->|"Persist final result"| DB
@@ -230,11 +224,7 @@ flowchart LR
     API["`**Verification API**
 Validate OCR command`"]
     ACCEPT["`**Database transaction**
-OCR · QUEUED · Media ref · Outbox`"]
-    PUBLISHER["`**Outbox Publisher**
-Publish committed event`"]
-    KAFKA[("`**Kafka**
-OCR_JOB_CREATED`")]
+OCR · QUEUED · Media ref`"]
     WORKER["`**OCR Worker pool**
 PROCESSING`"]
     READ["`**Storage Reader**
@@ -248,7 +238,7 @@ Canonical fields · warnings`"]
     DONE["`**Verification Database**
 COMPLETED · outcome · final result`"]
 
-    API --> ACCEPT --> PUBLISHER -->|"Publish"| KAFKA --> WORKER
+    API --> ACCEPT -->|"Async job"| WORKER
     WORKER --> READ --> INIT --> OCR --> NORMALIZE --> DONE
 ```
 
@@ -262,8 +252,6 @@ sequenceDiagram
     participant DOMAIN as vhm-dossier-core
     participant VERIFY as vhm-verification-service
     participant DB as Verification Database
-    participant OUTBOX as Outbox Publisher
-    participant KAFKA as Kafka · OCR jobs
     participant STORAGE as Private Object Storage
     participant FPT as FPT AI Backend
 
@@ -277,12 +265,7 @@ sequenceDiagram
     DOMAIN-->>BFF: 202 + verificationId + statusUrl
     BFF-->>CLIENT: 202 + verificationId + statusUrl
 
-    OUTBOX->>DB: Claim due outbox event
-    DB-->>OUTBOX: OCR_JOB_CREATED
-    OUTBOX->>KAFKA: Publish · key=verificationId
-    KAFKA-->>OUTBOX: Acknowledge
-    OUTBOX->>DB: Mark outbox PUBLISHED
-    KAFKA-->>VERIFY: OCR consumer receives verificationId
+    VERIFY->>VERIFY: OCR Worker starts async job
     VERIFY->>DB: Claim lease + PROCESSING<br/>step=VALIDATE_MEDIA
     VERIFY->>STORAGE: HEAD/GET exact OCR_DOCUMENT
     STORAGE-->>VERIFY: Metadata + document stream
@@ -364,8 +347,6 @@ eKYC · Provider Adapter`"]
         direction LR
         API["`**Verification API**
 Create · Submit Liveness · Status · Result`"]
-        OUTBOX["`**Outbox Publisher**
-Document/Liveness jobs`"]
         WORKER["`**eKYC Worker pool**
 Internal workload`"]
         ADAPTER["`**Provider Adapter**
@@ -376,8 +357,6 @@ Canonical Result · Outcome`"]
         WORKER --> ADAPTER --> POLICY
     end
 
-    KAFKA[("`**Kafka**
-vhm.verification.ekyc.jobs.v1`")]
     FPT["`**FPT AI Backend**
 Session · OCR · Face/Liveness`"]
     DB[("`**Verification Database**
@@ -390,9 +369,7 @@ Verification · Media · Attempt · Result`")]
     BFF <-->|"Create/submit/query/apply eKYC"| DOMAIN
     DOMAIN <-->|"Private eKYC command/query"| API
     API <-->|"Persist/read"| DB
-    OUTBOX <-->|"Claim outbox"| DB
-    OUTBOX -->|"Publish"| KAFKA
-    KAFKA -->|"Consume"| WORKER
+    API -.->|"Start async job"| WORKER
     WORKER -->|"HEAD/GET media by role"| STORAGE
     ADAPTER <-->|"Synchronous provider APIs"| FPT
     POLICY -->|"Checkpoint/final result"| DB
@@ -405,11 +382,7 @@ flowchart TB
     CREATE["`**Create eKYC**
 Document media only`"]
     DOC_ACCEPT["`**Database transaction**
-QUEUED · Media refs · Outbox`"]
-    DOC_PUBLISH["`**Outbox Publisher**
-Publish committed event`"]
-    DOC_JOB[("`**Kafka**
-EKYC_DOCUMENT_JOB_CREATED`")]
+QUEUED · Document media`"]
     OCR_WORKER["`**eKYC Worker**
 Validate document · Init session · OCR`"]
     DOC_CHECK{"`**Document đạt policy?**`"}
@@ -422,11 +395,7 @@ Capture · Upload selfie/video`"]
     SUBMIT["`**Submit liveness media**
 Validate captureRef · TTL`"]
     LIVE_ACCEPT["`**Database transaction**
-QUEUED · Liveness media · Outbox`"]
-    LIVE_PUBLISH["`**Outbox Publisher**
-Publish committed event`"]
-    LIVE_JOB[("`**Kafka**
-EKYC_LIVENESS_JOB_CREATED`")]
+QUEUED · Liveness media`"]
     LIVE_WORKER["`**eKYC Worker**
 Reuse session · Face/Liveness`"]
     POLICY["`**Result Normalizer/Policy**
@@ -434,13 +403,11 @@ Document · Liveness · Face match`"]
     DONE["`**COMPLETED**
 Outcome · Final result`"]
 
-    CREATE --> DOC_ACCEPT -->|"Commit · 202"| DOC_PUBLISH --> DOC_JOB
-    DOC_JOB --> OCR_WORKER --> DOC_CHECK
+    CREATE --> DOC_ACCEPT -->|"Async job"| OCR_WORKER --> DOC_CHECK
     DOC_CHECK -->|"Có"| WAIT
     DOC_CHECK -->|"Không"| DOC_END
     WAIT --> CAPTURE --> SUBMIT --> LIVE_ACCEPT
-    LIVE_ACCEPT -->|"Commit · 202"| LIVE_PUBLISH --> LIVE_JOB
-    LIVE_JOB --> LIVE_WORKER --> POLICY --> DONE
+    LIVE_ACCEPT -->|"Async job"| LIVE_WORKER --> POLICY --> DONE
 ```
 
 ### 4.4. Sequence end-to-end
@@ -454,8 +421,6 @@ sequenceDiagram
     participant MEDIA_API as vhm-media-service
     participant VERIFY as vhm-verification-service
     participant DB as Verification Database
-    participant OUTBOX as Outbox Publisher
-    participant KAFKA as Kafka · eKYC jobs
     participant STORAGE as Private Object Storage
     participant FPT as FPT AI Backend
 
@@ -470,12 +435,7 @@ sequenceDiagram
     DOMAIN-->>BFF: 202 + verificationId + statusUrl
     BFF-->>CLIENT: 202 + verificationId + statusUrl
 
-    OUTBOX->>DB: Claim due outbox event
-    DB-->>OUTBOX: EKYC_DOCUMENT_JOB_CREATED
-    OUTBOX->>KAFKA: Publish · key=verificationId
-    KAFKA-->>OUTBOX: Acknowledge
-    OUTBOX->>DB: Mark outbox PUBLISHED
-    KAFKA-->>VERIFY: eKYC consumer receives document job
+    VERIFY->>VERIFY: eKYC Worker starts document job
     VERIFY->>DB: Claim lease + PROCESSING<br/>step=VALIDATE_MEDIA
 
     loop Với document media
@@ -522,12 +482,7 @@ sequenceDiagram
     DOMAIN-->>BFF: 202
     BFF-->>CLIENT: 202 + statusUrl
 
-    OUTBOX->>DB: Claim due outbox event
-    DB-->>OUTBOX: EKYC_LIVENESS_JOB_CREATED
-    OUTBOX->>KAFKA: Publish · key=verificationId
-    KAFKA-->>OUTBOX: Acknowledge
-    OUTBOX->>DB: Mark outbox PUBLISHED
-    KAFKA-->>VERIFY: eKYC consumer receives liveness job
+    VERIFY->>VERIFY: eKYC Worker starts liveness job
     VERIFY->>DB: Claim lease + PROCESSING<br/>step=LIVENESS
     VERIFY->>VERIFY: Validate provider session expiry
     VERIFY->>STORAGE: HEAD/GET selfie hoặc video
@@ -946,7 +901,7 @@ Quy ước schema:
 - eKYC checkpoint document result với `is_final=false`, chuyển `WAITING_LIVENESS`; sau liveness tăng version và đặt `is_final=true`.
 - Result update dùng compare-and-set theo `version`; row đã `is_final=true` không được update. Retry tạo `verificationId` mới.
 - Media-role combination được validate ở application layer theo `type + documentType`; CHECK SQL chỉ bảo vệ enum cơ bản.
-- Outbox/message chỉ chứa ID/reference tối thiểu, không chứa PII, media path, binary hoặc Canonical Result.
+- Outbox/Kafka message chỉ chứa ID/reference tối thiểu, không chứa PII, media path, binary hoặc Canonical Result.
 
 ## 7. Tin cậy, timeout và vận hành worker
 
@@ -1010,11 +965,12 @@ Timeout outbound của từng FPT call phải ngắn hơn worker lease còn lạ
 | --- | --- |
 | Unit | Type-specific media/outcome guard, lifecycle/step, idempotency, canonical mapping |
 | Provider contract | Init/OCR/liveness success, business error, malformed response, 429, 5xx, timeout |
-| Database | CHECK/unique/index, optimistic lock, result final guard, outbox/worker lease recovery |
-| Integration | Presigned upload contract, S3 path authorization, Kafka duplicate/redelivery, outbox publish và step resume |
+| Database | CHECK/unique/index, optimistic lock, result final guard, outbox publisher/worker lease recovery |
+| Kafka/Outbox | Publish ack nhưng chưa mark `PUBLISHED`, duplicate/redelivery, consumer restart/rebalance, offset sau DB checkpoint, poison message vào DLQ |
+| Integration | Presigned upload contract, S3 path authorization, Kafka dispatch và step resume |
 | OCR end-to-end | Upload → create `202` → OCR result → confirm/apply |
 | eKYC end-to-end | Upload document → OCR → `WAITING_LIVENESS` → upload/submit liveness → result → confirm/apply |
-| Resilience | Slow/large media, crash giữa step, unknown-after-send, provider outage, backlog burst |
+| Resilience | Slow/large media, crash giữa step, unknown-after-send, provider outage, Kafka backlog burst |
 
 ### 8.3. Điểm cần chốt
 
