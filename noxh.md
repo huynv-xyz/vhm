@@ -170,52 +170,40 @@ binary + checksum`"| MEDIA
 
 Upload là luồng độc lập với OCR. `vhm-dossier-core` chưa tạo `verificationId` và `vhm-verification-service` không tham gia cho đến khi attachment đã được finalize và người dùng yêu cầu OCR.
 
-**Luồng 2 — Xử lý OCR bất đồng bộ:**
+**Luồng 2 — Kiến trúc xử lý OCR bất đồng bộ:**
 
 ```mermaid
-sequenceDiagram
-    autonumber
-    participant CLIENT as Mobile/Web
-    participant BFF as vhm-agent-api
-    participant DOSSIER as vhm-dossier-core
-    participant VERIFY as vhm-verification-service
-    participant MEDIA as Private Object Storage
-    participant PROVIDER as OCR/eKYC Provider
+flowchart LR
+    CLIENT["`**Mobile/Web**
+Submit OCR · Poll result`"]
+    BFF["`**vhm-agent-api**
+Xác thực · routing`"]
+    DOSSIER["`**vhm-dossier-core**
+Authorize · Apply result`"]
+    VERIFY["`**vhm-verification-service**
+Async OCR · eKYC · Provider Adapter`"]
+    MEDIA[("`**Private Object Storage**
+Finalized attachments`")]
+    PROVIDER["`**OCR/eKYC Provider**
+FPT eKYC · Document OCR`"]
+    DB[("`**Verification Database**
+Job status · Canonical result`")]
 
-    rect rgb(235, 245, 255)
-        Note over CLIENT,VERIFY: A. Submit job và nhận phản hồi
-        CLIENT->>BFF: Submit OCR<br/>dossierId + mediaId + documentType
-        BFF->>DOSSIER: Authenticated request
-        DOSSIER->>DOSSIER: Authorize hồ sơ<br/>kiểm tra media FINALIZED
-        DOSSIER->>VERIFY: Create verification job<br/>authorized mediaRef + idempotencyKey
-        VERIFY->>VERIFY: Sinh verificationId<br/>persist QUEUED + enqueue
-        VERIFY-->>DOSSIER: verificationId + QUEUED
-        DOSSIER-->>BFF: 202 + statusUrl
-        BFF-->>CLIENT: 202 + verificationId + statusUrl
-    end
+    CLIENT -->|"Submit OCR · GET status"| BFF
+    BFF -->|"Authenticated request"| DOSSIER
+    DOSSIER -->|"Create job · Query status"| VERIFY
 
-    rect rgb(245, 245, 245)
-        Note over VERIFY,PROVIDER: B. Worker xử lý bất đồng bộ
-        VERIFY->>VERIFY: Consume job<br/>chuyển PROCESSING
-        VERIFY->>MEDIA: GET finalized object
-        MEDIA-->>VERIFY: Object stream
-        VERIFY->>PROVIDER: Init session + OCR request
-        PROVIDER-->>VERIFY: Provider result
-        VERIFY->>VERIFY: Persist Canonical Result<br/>SUCCEEDED/PARTIAL/FAILED
-    end
+    VERIFY -->|"Worker: GET media"| MEDIA
+    VERIFY ==>|"Worker: OCR/eKYC request"| PROVIDER
+    PROVIDER ==>|"Provider result"| VERIFY
+    VERIFY <-->|"Persist/read job"| DB
 
-    rect rgb(240, 250, 240)
-        Note over CLIENT,VERIFY: C. Client lấy trạng thái/kết quả
-        loop Poll đến khi có trạng thái kết thúc
-            CLIENT->>BFF: GET statusUrl
-            BFF->>DOSSIER: Authorized status query
-            DOSSIER->>VERIFY: GET status/result
-            VERIFY-->>DOSSIER: Status/progress/Canonical Result
-            DOSSIER-->>BFF: Status/result
-            BFF-->>CLIENT: Status/result
-        end
-    end
+    VERIFY -.->|"202 QUEUED · Status · Result"| DOSSIER
+    DOSSIER -.->|"Authorized response"| BFF
+    BFF -.->|"Response"| CLIENT
 ```
+
+Đường liền thể hiện request/xử lý; đường nét đứt thể hiện response `202`, trạng thái và kết quả. Chart này chỉ mô tả thành phần và hướng dữ liệu; thứ tự xử lý chi tiết được thể hiện tại sequence diagram trong phần **Cách hoạt động**.
 
 Request tạo OCR chỉ chờ đến khi `vhm-verification-service` persist job và trả `verificationId + QUEUED`; việc đọc object và gọi provider diễn ra trong worker. Mobile/Web không giữ kết nối chờ provider mà tra cứu trạng thái/kết quả qua `vhm-agent-api` và `vhm-dossier-core`.
 
