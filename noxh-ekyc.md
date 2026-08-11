@@ -18,8 +18,8 @@ IDENTITY_EKYC:
 Create eKYC context → SDK bootstrap
 → FPT SDK capture document/liveness
 → SDK gọi synchronous vhm-verification-service → FPT AI Backend
-→ FPT callback/provider result → normalize Canonical Result
-→ Mobile/Web query → confirm/apply
+→ vhm-verification-service persist Canonical Result → trả response ngay cho SDK
+→ Mobile/Web confirm/apply
 ```
 
 OCR tài liệu nghiệp vụ vẫn dùng **backend API + outbox/queue/worker**. Chỉ eKYC định danh dùng **FPT SDK qua `vhm-verification-service`** để tận dụng capture UX, kiểm tra chất lượng đầu vào, liveness và device capability của SDK nhưng không cho SDK gọi trực tiếp FPT.
@@ -56,9 +56,9 @@ OCR chỉ hỗ trợ số hóa/gợi ý dữ liệu. eKYC hỗ trợ kiểm tra 
 | `vhm-media-service` | Chỉ tham gia upload OCR tài liệu; trả `presignHeaders + presignedUrl + s3PathFile` |
 | Verification API | Control-plane API và eKYC SDK streaming endpoint: create/bootstrap/status/result, validate SDK context, inject FPT credential và forward allowlisted request |
 | FPT Callback API | Xác thực callback, bind `client_uuid=verificationId`, persist Inbox idempotently |
-| Outbox Publisher + Job Queue | Dispatch OCR job và async result/finalization event; không nằm trên eKYC SDK request path |
+| Outbox Publisher + Job Queue | Dispatch OCR job và event hậu xử lý sau commit; không gọi FPT hoặc final hóa eKYC trên happy path |
 | OCR Worker pool | Xử lý một logical document và gọi FPT OCR flow |
-| eKYC Result Processor/Reconciliation | Normalize callback/result, xử lý duplicate/out-of-order và chủ động Get Result khi thiếu callback |
+| eKYC Result Processor/Reconciliation | Chỉ phục hồi/đối soát callback, timeout hoặc unknown outcome ngoài happy path |
 | Provider Adapter | OCR Worker: map provider API; eKYC SDK endpoint: inject credential và giữ wire contract tương thích SDK |
 | Result Normalizer/Policy | Tạo Canonical Result và outcome ổn định |
 | Verification Database | Lưu aggregate, SDK/session binding, provider attempts, callback Inbox, results và outbox |
@@ -77,8 +77,10 @@ QUEUED → PROCESSING → COMPLETED
 
 eKYC:
 CREATED → IN_PROGRESS (SDK_INIT → OCR → LIVENESS)
-        → FINALIZING (callback/result normalization)
         → COMPLETED
+
+Exceptional recovery:
+IN_PROGRESS → FINALIZING (timeout/unknown → callback/Get Result) → COMPLETED
 ```
 
 | **Status** | **Ý nghĩa** |
@@ -87,7 +89,7 @@ CREATED → IN_PROGRESS (SDK_INIT → OCR → LIVENESS)
 | `QUEUED` | OCR verification và outbox đã commit, chờ worker claim |
 | `PROCESSING` | OCR Worker đang xử lý hoặc chờ retry step |
 | `IN_PROGRESS` | SDK đang thực hiện init/OCR/liveness qua `vhm-verification-service` |
-| `FINALIZING` | Đã nhận provider result qua synchronous response/callback và đang đối soát, normalize hoặc chờ callback trong SLA |
+| `FINALIZING` | Chỉ dùng khi synchronous outcome không xác định và đang phục hồi bằng callback/Get Result |
 | `COMPLETED` | Đã có outcome cuối, kể cả provider error sau hết recovery budget |
 | `CANCELLED` | Bị hủy trước khi hoàn tất |
 | `EXPIRED` | Quá processing deadline |
@@ -105,7 +107,7 @@ CREATED → IN_PROGRESS (SDK_INIT → OCR → LIVENESS)
 
 Với OCR, Verification API ghi verification, media refs và outbox trong cùng transaction rồi trả `202`. Outbox Publisher đưa job đã commit vào Queue; OCR Worker claim bằng status + lease/CAS trước khi đọc media hoặc gọi FPT.
 
-Với eKYC, create API commit `CREATED` rồi trả SDK bootstrap. SDK gọi eKYC SDK endpoint của `vhm-verification-service` bằng token ngắn hạn bind `verificationId`, domain, subject, flow và expiry. Service stream request tới FPT và trả response ngay cho SDK; không buffer toàn bộ body, không mở DB transaction trong lúc truyền media và không enqueue trước khi trả response. Provider attempt/checkpoint được ghi ngoài streaming transaction; callback được persist bằng Inbox rồi result processor normalize bất đồng bộ.
+Với eKYC, create API commit `CREATED` rồi trả SDK bootstrap. SDK gọi eKYC SDK endpoint của `vhm-verification-service` bằng token ngắn hạn bind `verificationId`, domain, subject, flow và expiry. Service stream request tới FPT; khi nhận response cuối đầy đủ, service persist provider attempt, `COMPLETED + outcome + Canonical Result` trong transaction ngắn rồi trả response tương thích ngay cho SDK. Không có eKYC Worker/Queue và không giữ DB transaction trong lúc truyền media. Callback/Result Processor chỉ phục hồi timeout hoặc unknown outcome ngoài happy path.
 
 ## 3. Luồng OCR
 
@@ -304,33 +306,33 @@ sequenceDiagram
 
 ### 4.1. SDK bootstrap và provider flow
 
-`vhm-verification-service` đồng thời đóng vai trò **VHM Proxy Server** trong mô hình tích hợp FPT SDK. Đây là một capability/service duy nhất nhưng tách thành các workload: Verification API cho control-plane, eKYC Proxy cho synchronous streaming data-plane và Callback/Result Processor cho finalization.
+`vhm-verification-service` trực tiếp cung cấp các endpoint để FPT SDK gọi `init-session`, OCR định danh và liveness. Service validate context, bổ sung credential/header được FPT cho phép, forward request tới FPT và trả response tương thích SDK; không có service trung gian riêng.
 
-Mobile/Web không upload document/liveness qua API nghiệp vụ. Sau khi domain authorize và tạo eKYC context, ứng dụng nhận SDK bootstrap rồi khởi chạy FPT SDK. SDK capture media, kiểm tra chất lượng và gọi ba endpoint Proxy allowlisted:
+Mobile/Web không upload document/liveness qua API nghiệp vụ. Sau khi domain authorize và tạo eKYC context, ứng dụng nhận SDK bootstrap rồi khởi chạy FPT SDK. SDK capture media, kiểm tra chất lượng và gọi ba endpoint allowlisted của `vhm-verification-service`:
 
 ```text
-POST VHM Proxy /init-session → FPT /init_session
-POST VHM Proxy /ocr          → FPT OCR định danh trong phiên eKYC
-POST VHM Proxy /liveness     → FPT face/liveness
+POST vhm-verification-service /v1/ekyc-sdk/init-session → FPT /init_session
+POST vhm-verification-service /v1/ekyc-sdk/ocr          → FPT OCR định danh trong phiên eKYC
+POST vhm-verification-service /v1/ekyc-sdk/liveness     → FPT face/liveness
 ```
 
-Proxy validate SDK token ngắn hạn, bind request với `verificationId`, bổ sung/thay credential hoặc header đúng contract FPT đã phê duyệt và stream multipart request/response. SDK hoặc caller không được truyền upstream URL hay FPT API key. `verificationId` do VHM sinh được cấu hình vào SDK làm `client_uuid`; Proxy validate giá trị này để correlate response, callback và reconciliation, không parse/rebuild body để tự thay UUID.
+`vhm-verification-service` validate SDK token ngắn hạn, bind request với `verificationId`, bổ sung/thay credential hoặc header đúng contract FPT đã phê duyệt và stream multipart request/response. SDK hoặc caller không được truyền upstream URL hay FPT API key. `verificationId` do VHM sinh được cấu hình vào SDK làm `client_uuid`; service validate giá trị này để correlate response, callback và reconciliation, không parse/rebuild body để tự thay UUID.
 
-Biên customization theo tài liệu SDK public hiện tại:
+Biên cấu hình endpoint theo tài liệu SDK public hiện tại:
 
-| **Nền tảng** | **Cấu hình Proxy SDK công bố** | **Quyết định** |
+| **Nền tảng** | **Cấu hình SDK công bố** | **Quyết định** |
 | --- | --- | --- |
-| Android | `BASE_URL` khi dùng Proxy và custom headers | SDK tạo request; VHM forward body, chỉ xử lý header/credential được FPT cho phép |
+| Android | `BASE_URL` và custom headers | Trỏ `BASE_URL` về `vhm-verification-service`; SDK tạo request và service forward body |
 | Web | URL/header riêng cho init/OCR/liveness; một số multipart `form_names` | Chỉ cấu hình các field SDK công bố, không tạo arbitrary payload |
-| iOS | Tài liệu public chưa thể hiện rõ base URL/Proxy override | FPT phải cung cấp exact SDK build/config và sign-off contract trước implementation |
+| iOS | Tài liệu public chưa thể hiện rõ base URL override | FPT phải cung cấp exact SDK build/config và sign-off contract trước implementation |
 
-Nếu SDK build bắt buộc nhúng FPT API key thật trên thiết bị hoặc không cho route qua VHM Proxy thì build đó không đạt baseline bảo mật này; FPT phải cung cấp Proxy mode cho phép dùng VHM token/custom header và inject provider credential ở server.
+Nếu SDK build bắt buộc nhúng FPT API key thật trên thiết bị hoặc không cho trỏ endpoint về `vhm-verification-service` thì build đó không đạt baseline bảo mật này; FPT phải cung cấp build/config cho phép dùng VHM token/custom header và inject provider credential ở server.
 
 `flowCode` và SDK configuration do backend resolve theo domain/use case, không nhận arbitrary step list từ Mobile. Baseline hỗ trợ `FULL_EKYC_V1`; flow bỏ OCR hoặc liveness chỉ được mở khi FPT xác nhận exact SDK/session prerequisite và policy VHM cho phép.
 
-Kết quả SDK trả về ứng dụng chỉ phục vụ UX tức thời. Trusted provider response quan sát trực tiếp tại Proxy có thể final hóa Canonical Result khi response contract chứa đủ outcome; callback đã xác thực là nguồn xác nhận/phục hồi độc lập. Nếu response Proxy chưa đủ hoặc outcome không xác định, backend chờ callback trong SLA rồi mới dùng `GET result` để reconciliation. Không lấy result closure trên thiết bị làm nguồn apply nghiệp vụ.
+Trusted provider response đi qua `vhm-verification-service` là nguồn hoàn tất chính. Với response cuối chứa đủ outcome, service normalize và commit `COMPLETED + Canonical Result` trước khi trả response tương thích cho SDK; ứng dụng nhận kết quả ngay, không chờ worker hoặc callback. Callback đã xác thực và `GET result` chỉ dùng để đối soát/phục hồi khi synchronous outcome thiếu, timeout hoặc `UNKNOWN`. Không lấy result do ứng dụng gửi ngược lên làm nguồn apply nghiệp vụ.
 
-eKYC SDK/Proxy chỉ xử lý giấy tờ định danh và liveness theo input limit FPT. PDF/tài liệu nghiệp vụ dung lượng lớn không đi qua Proxy này mà dùng luồng OCR tại mục 3.
+eKYC SDK endpoint chỉ xử lý giấy tờ định danh và liveness theo input limit FPT. PDF/tài liệu nghiệp vụ dung lượng lớn không đi qua endpoint này mà dùng luồng OCR tại mục 3.
 
 ### 4.2. Kiến trúc tổng quan
 
@@ -353,20 +355,20 @@ Authorize · Apply result`"]
         direction TB
         API["`**Verification API**
 Create · Bootstrap · Status · Result`"]
-        PROXY["`**eKYC Proxy workload**
+        SDK_API["`**eKYC SDK API**
 SDK token · Pass-through streaming · Credential injection`"]
         CALLBACK["`**FPT Callback API**
 Authenticate · Inbox · Deduplicate`"]
-        PROCESSOR["`**Result Processor/Reconciliation**
-Normalize · Policy · Get Result fallback`"]
+        PROCESSOR["`**Reconciliation**
+Callback · Get Result fallback khi unknown`"]
         DB[("`**Verification Database**
 Context · Session · Attempt · Inbox · Result`")]
 
         API <-->|"Persist/read"| DB
-        PROXY -->|"Attempt/result checkpoint"| DB
+        SDK_API -->|"Attempt · Canonical Result"| DB
         CALLBACK -->|"Persist Inbox"| DB
         CALLBACK --> PROCESSOR
-        PROCESSOR -->|"Canonical Result"| DB
+        PROCESSOR -->|"Recovery result"| DB
     end
 
     FPT["`**FPT AI Backend**
@@ -374,13 +376,13 @@ Session · OCR · Face/Liveness · Callback`"]
 
     DOMAIN <-->|"Private control-plane"| API
     CLIENT -->|"FPT SDK multipart"| BFF
-    BFF -->|"Dedicated streaming route"| PROXY
-    PROXY <-->|"Synchronous provider wire contract"| FPT
+    BFF -->|"Dedicated streaming route"| SDK_API
+    SDK_API <-->|"Synchronous provider wire contract"| FPT
     FPT -->|"Authenticated callback"| CALLBACK
     PROCESSOR -.->|"Get Result khi reconciliation"| FPT
 ```
 
-`vhm-agent-api` và eKYC Proxy đều phải streaming end-to-end, không buffer toàn bộ multipart body. Tách eKYC Proxy thành deployment/autoscaling unit riêng không tạo microservice mới; nó vẫn dùng codebase, database, ownership và `verificationId` của `vhm-verification-service`.
+`vhm-agent-api` và `vhm-verification-service` phải streaming end-to-end, không buffer toàn bộ multipart body. Các eKYC SDK endpoint dùng chung service, deployment ownership, database và `verificationId` với Verification API; route-level bulkhead/admission control bảo vệ control-plane và OCR processing khỏi lưu lượng streaming.
 
 ### 4.3. Luồng xử lý trong `vhm-verification-service`
 
@@ -390,15 +392,15 @@ flowchart LR
 Authorize · Consent · flowCode`"]
     BOOTSTRAP["`**SDK bootstrap**
 verificationId · short-lived token · endpoints`"]
-    INIT["`**SDK → Proxy: init**
+    INIT["`**SDK → Verification Service: init**
 Validate binding · approved header injection`"]
-    OCR["`**SDK → Proxy: ID OCR**
+    OCR["`**SDK → Verification Service: ID OCR**
 Stream document · checkpoint result`"]
     DOC_CHECK{"`**Document đạt?**`"}
-    LIVE["`**SDK → Proxy: liveness**
+    LIVE["`**SDK → Verification Service: liveness**
 Stream selfie/video · face match`"]
-    FINAL["`**Proxy/Callback finalization**
-Trusted result · Inbox · normalize · policy`"]
+    FINAL["`**Synchronous finalization**
+Normalize · Persist · Return SDK response`"]
     DONE["`**COMPLETED**
 Canonical Result · Outcome`"]
     RETRY["`**SDK retry/exit**
@@ -421,7 +423,7 @@ sequenceDiagram
     participant BFF as vhm-agent-api
     participant DOMAIN as vhm-dossier-core
     participant API as Verification API
-    participant PROXY as eKYC Proxy<br/>(vhm-verification-service)
+    participant EKYC_API as vhm-verification-service<br/>eKYC SDK API
     participant FPT as FPT AI Backend
     participant CALLBACK as Callback API
     participant DB as Verification Database
@@ -436,50 +438,45 @@ sequenceDiagram
     DB-->>API: Committed
     API-->>DOMAIN: 201 + SDK bootstrap
     DOMAIN-->>BFF: Authorized bootstrap projection
-    BFF-->>APP: verificationId + SDK token + Proxy endpoints
+    BFF-->>APP: verificationId + SDK token + eKYC endpoints
     APP->>SDK: Initialize approved flow/config
     end
 
     rect rgb(250, 250, 235)
-    Note over APP,DB: B. SDK interactive data-plane qua VHM Proxy
-    SDK->>BFF: POST Proxy init-session<br/>Bearer SDK token
-    BFF->>PROXY: Stream authenticated request
-    PROXY->>PROXY: Validate token, route và client_uuid binding<br/>inject approved credential/header
-    PROXY->>FPT: POST init_session
-    FPT-->>PROXY: session-id + config
-    PROXY->>DB: Checkpoint IN_PROGRESS<br/>currentStep=OCR + session binding
-    PROXY-->>BFF: Provider-compatible response
+    Note over APP,DB: B. SDK interactive data-plane qua vhm-verification-service
+    SDK->>BFF: POST eKYC init-session<br/>Bearer SDK token
+    BFF->>EKYC_API: Stream authenticated request
+    EKYC_API->>EKYC_API: Validate token, route và client_uuid binding<br/>inject approved credential/header
+    EKYC_API->>FPT: POST init_session
+    FPT-->>EKYC_API: session-id + config
+    EKYC_API->>DB: Checkpoint IN_PROGRESS<br/>currentStep=OCR + session binding
+    EKYC_API-->>BFF: Provider-compatible response
     BFF-->>SDK: session response
 
     SDK->>SDK: Capture document + on-device quality checks
-    SDK->>BFF: POST Proxy ID OCR<br/>multipart giấy tờ định danh
-    BFF->>PROXY: Stream request body
-    PROXY->>FPT: Stream OCR request
-    FPT-->>PROXY: OCR/document result
-    PROXY->>DB: Persist attempt/checkpoint<br/>currentStep=LIVENESS
-    PROXY-->>BFF: Provider-compatible response
+    SDK->>BFF: POST eKYC ID OCR<br/>multipart giấy tờ định danh
+    BFF->>EKYC_API: Stream request body
+    EKYC_API->>FPT: Stream OCR request
+    FPT-->>EKYC_API: OCR/document result
+    EKYC_API->>DB: Persist attempt/checkpoint<br/>currentStep=LIVENESS
+    EKYC_API-->>BFF: Provider-compatible response
     BFF-->>SDK: OCR result/next SDK screen
 
     SDK->>SDK: Capture liveness media
-    SDK->>BFF: POST Proxy liveness<br/>multipart selfie/video
-    BFF->>PROXY: Stream request body
-    PROXY->>FPT: Stream face/liveness request
-    FPT-->>PROXY: Liveness + face-match response
-    PROXY->>DB: Persist trusted provider result/checkpoint<br/>FINALIZING hoặc COMPLETED theo contract
-    PROXY-->>BFF: Provider-compatible response
+    SDK->>BFF: POST eKYC liveness<br/>multipart selfie/video
+    BFF->>EKYC_API: Stream request body
+    EKYC_API->>FPT: Stream face/liveness request
+    FPT-->>EKYC_API: Liveness + face-match response
+    EKYC_API->>EKYC_API: Normalize trusted result + apply policy
+    EKYC_API->>DB: Commit COMPLETED + outcome<br/>Canonical Result
+    EKYC_API-->>BFF: Provider-compatible response
     BFF-->>SDK: SDK result for UX
     SDK-->>APP: Flow finished locally
     end
 
     rect rgb(240, 250, 245)
-    Note over APP,DB: C. Backend finalization và apply nghiệp vụ
-    FPT->>CALLBACK: Signed/authenticated callback<br/>client_uuid=verificationId
-    CALLBACK->>DB: Insert callback Inbox idempotently
-    CALLBACK-->>FPT: 2xx sau durable commit
-    CALLBACK->>CALLBACK: Normalize + apply policy<br/>hoặc dispatch result processor
-    CALLBACK->>DB: Finalize nếu chưa final<br/>hoặc đối soát với result đã khóa
-
-    APP->>BFF: GET eKYC status/result
+    Note over APP,DB: C. SDK trả kết quả và application confirm
+    APP->>BFF: GET eKYC result hoặc dùng completion signal
     BFF->>DOMAIN: Authorized query
     DOMAIN->>API: GET verificationId
     API->>DB: Read final result
@@ -492,15 +489,21 @@ sequenceDiagram
     BFF->>DOMAIN: Apply confirmed eKYC result
     DOMAIN->>DOMAIN: Update domain in local transaction
     end
+
+    opt Callback đối soát/phục hồi ngoài happy path
+        FPT->>CALLBACK: Authenticated callback<br/>client_uuid=verificationId
+        CALLBACK->>DB: Insert Inbox idempotently<br/>recover UNKNOWN hoặc compare final result
+        CALLBACK-->>FPT: 2xx sau durable commit
+    end
 ```
 
-Sequence trên mô tả trường hợp backend cần callback để final hóa. Nếu liveness response qua Proxy đã chứa result đầy đủ, Result Processor có thể normalize và commit `COMPLETED` trước callback; callback đến sau chỉ deduplicate/đối soát, không tạo quyết định mới. Callback có thể duplicate, đến trước/sau Proxy response hoặc bị trễ; Inbox và finalization guard phải xử lý idempotently. Nếu cả Proxy outcome và callback chưa xác định sau SLA, Reconciliation dùng `verificationId/client_uuid` để query Get Result, không lấy SDK result trên thiết bị làm nguồn quyết định nghiệp vụ.
+Sequence trên là happy path đồng bộ: mỗi call init/OCR/liveness trả response trực tiếp, và call liveness cuối commit Canonical Result trước khi trả SDK. Callback không nằm trên critical path; callback đến sau chỉ deduplicate/đối soát, không tạo quyết định mới. Chỉ khi synchronous request timeout hoặc outcome `UNKNOWN`, verification chuyển `FINALIZING`, chờ callback trong SLA rồi dùng `verificationId/client_uuid` để query Get Result nếu cần.
 
 ## 5. API contract
 
 ### 5.1. Danh sách API
 
-API theo use case vẫn tách để contract rõ, nhưng đều map vào verification aggregate. Proxy endpoint là data-plane của chính `vhm-verification-service`, được publish cho SDK qua dedicated streaming route của `vhm-agent-api`.
+API theo use case vẫn tách để contract rõ, nhưng đều thuộc `vhm-verification-service`. eKYC SDK endpoint được publish qua dedicated streaming route của `vhm-agent-api`.
 
 | **Use case** | **Scope** | **API** | **Response** |
 | --- | --- | --- | --- |
@@ -510,15 +513,15 @@ API theo use case vẫn tách để contract rõ, nhưng đều map vào verific
 | Retry OCR | Private control-plane | `POST /v1/ocr-verifications/{verificationId}/retries` | `202`, verification mới |
 | Tạo eKYC/bootstrap SDK | Private control-plane | `POST /v1/ekyc-verifications` | `201 + verificationId + sdkBootstrap` |
 | Refresh SDK bootstrap | Private control-plane | `POST /v1/ekyc-verifications/{verificationId}/sdk-bootstrap` | Token/endpoints mới nếu session còn hợp lệ |
-| SDK init session | SDK streaming data-plane | `POST /v1/ekyc-sdk-proxy/init-session` | Provider-compatible response |
-| SDK OCR định danh trong eKYC | SDK streaming data-plane | `POST /v1/ekyc-sdk-proxy/ocr` | Provider-compatible response |
-| SDK liveness | SDK streaming data-plane | `POST /v1/ekyc-sdk-proxy/liveness` | Provider-compatible response |
+| SDK init session | SDK streaming data-plane | `POST /v1/ekyc-sdk/init-session` | Provider-compatible synchronous response |
+| SDK OCR định danh trong eKYC | SDK streaming data-plane | `POST /v1/ekyc-sdk/ocr` | Provider-compatible synchronous response |
+| SDK liveness | SDK streaming data-plane | `POST /v1/ekyc-sdk/liveness` | Provider-compatible synchronous response + persist final result |
 | FPT callback | Provider ingress | `POST /v1/provider-callbacks/fpt-ekyc` | `2xx` sau khi Inbox commit |
 | Lấy eKYC | Private control-plane | `GET /v1/ekyc-verifications/{verificationId}` | Status/step/outcome/next action |
 | Lấy eKYC result | Private control-plane | `GET /v1/ekyc-verifications/{verificationId}/result` | eKYC Canonical Result |
 | Retry eKYC | Private control-plane | `POST /v1/ekyc-verifications/{verificationId}/retries` | `201`, verification/session mới |
 
-Tên/path Proxy cuối cùng phải khớp cấu hình endpoint mà FPT SDK hỗ trợ trên từng nền tảng. Proxy không expose generic relay và không nhận upstream URL từ request.
+Tên/path eKYC SDK cuối cùng phải khớp cấu hình endpoint mà FPT SDK hỗ trợ trên từng nền tảng. `vhm-verification-service` không expose generic relay và không nhận upstream URL từ request.
 
 ### 5.2. Tạo OCR
 
@@ -580,9 +583,9 @@ Content-Type: application/json
     "flowCode": "FULL_EKYC_V1",
     "documentType": "IDR",
     "endpoints": {
-      "initSession": "/v1/ekyc-sdk-proxy/init-session",
-      "ocr": "/v1/ekyc-sdk-proxy/ocr",
-      "liveness": "/v1/ekyc-sdk-proxy/liveness"
+      "initSession": "/v1/ekyc-sdk/init-session",
+      "ocr": "/v1/ekyc-sdk/ocr",
+      "liveness": "/v1/ekyc-sdk/liveness"
     }
   }
 }
@@ -590,12 +593,12 @@ Content-Type: application/json
 
 SDK bootstrap không chứa FPT API key, provider base URL hoặc raw policy bí mật. Token phải bind tối thiểu `verificationId`, authorized subject/domain, flow, platform, audience và expiry; refresh chỉ cấp khi verification chưa terminal và business authorization còn hiệu lực.
 
-### 5.4. SDK Proxy contract
+### 5.4. eKYC SDK forwarding contract
 
-SDK gọi Proxy qua `vhm-agent-api` bằng token trong bootstrap. Ví dụ logical request; exact multipart field/header phải giữ theo contract của FPT SDK:
+SDK gọi `vhm-verification-service` qua `vhm-agent-api` bằng token trong bootstrap. Ví dụ logical request; exact multipart field/header phải giữ theo contract của FPT SDK:
 
 ```http
-POST /v1/ekyc-sdk-proxy/ocr
+POST /v1/ekyc-sdk/ocr
 Authorization: Bearer <sdk-token>
 Content-Type: multipart/form-data; boundary=<sdk-boundary>
 X-Correlation-Id: <request-id>
@@ -603,16 +606,16 @@ X-Correlation-Id: <request-id>
 <FPT SDK multipart body streamed without transformation>
 ```
 
-Proxy xử lý theo thứ tự:
+`vhm-verification-service` xử lý theo thứ tự:
 
 1. Xác thực token và bind request với verification đang active.
 2. Chỉ cho phép operation/path, method, content type, size và flow transition đã khai báo.
 3. Ghi correlation/attempt `STARTED` nhưng không giữ transaction trong lúc stream.
 4. Stream nguyên body tới fixed FPT upstream; chỉ bổ sung/thay credential/header đã được FPT xác nhận. `client_uuid` do SDK gửi phải khớp `verificationId` đã bind.
-5. Stream response tương thích SDK về client; không log body hoặc credential.
-6. Checkpoint attempt/current step sau response; khi outcome không xác định, đánh dấu `UNKNOWN` để reconciliation thay vì blind retry.
+5. Với response trung gian, checkpoint attempt/current step; với liveness response cuối đầy đủ, normalize và commit Canonical Result.
+6. Stream response tương thích SDK về client; khi outcome không xác định, đánh dấu `UNKNOWN` để reconciliation thay vì blind retry.
 
-Proxy không parse/rebuild multipart body hoặc normalize/mutate business result trên interactive response. Customization chỉ giới hạn ở base URL/endpoint, header và multipart field name mà từng SDK version công bố. Canonical mapping và policy chạy ở backend finalization để SDK protocol và quyết định nghiệp vụ không trộn lẫn. Exact Android/iOS/Web request/response contract phải được FPT sign-off trước implementation; đặc biệt iOS cần SDK build có hỗ trợ Proxy endpoint.
+Service không parse/rebuild multipart request body hoặc mutate business response mà SDK cần đọc. Customization chỉ giới hạn ở base URL/endpoint, header và multipart field name mà từng SDK version công bố. Response JSON nhỏ có thể được đọc để normalize/persist Canonical Result rồi vẫn trả đúng wire contract cho SDK. Exact Android/iOS/Web request/response contract phải được FPT sign-off trước implementation; đặc biệt iOS cần SDK build có hỗ trợ endpoint override.
 
 ### 5.5. Create/status response
 
@@ -661,7 +664,7 @@ eKYC status trong lúc SDK đang chạy:
 }
 ```
 
-Khi Proxy đã nhận response cuối nhưng callback chưa được final hóa, status là `FINALIZING` và `nextAction=POLL`. `nextAction` được tính từ `type + status + currentStep + outcome`; với eKYC, SDK điều khiển capture screen nên application API không trả `CAPTURE_LIVENESS`.
+Happy path chuyển thẳng sang `COMPLETED` khi liveness response được persist; không chờ callback và không poll giữa các step. `FINALIZING + nextAction=POLL` chỉ dùng cho timeout/unknown outcome cần recovery. Với eKYC, SDK điều khiển capture screen nên application API không trả `CAPTURE_LIVENESS`.
 
 ### 5.6. Canonical Result
 
@@ -724,22 +727,22 @@ Chỉ trả field nằm trong allowlist của `documentType`. Không trả raw p
 | `409` | Idempotency conflict, verification/session/step binding sai hoặc result chưa sẵn sàng |
 | `413/415/422` | Media vượt giới hạn, sai loại, thiếu role hoặc sai document contract |
 | `429` | Admission control/quota nội bộ; trả `Retry-After` |
-| `502/504` | Proxy không nhận được provider response hợp lệ hoặc upstream timeout; response phải theo envelope SDK chấp nhận |
-| `503` | Không thể persist/enqueue an toàn hoặc Proxy admission/circuit breaker đang đóng |
+| `502/504` | `vhm-verification-service` không nhận được provider response hợp lệ hoặc upstream timeout; response phải theo envelope SDK chấp nhận |
+| `503` | Không thể persist/enqueue an toàn hoặc eKYC admission/circuit breaker đang đóng |
 
-OCR provider error phát sinh trong worker được lưu vào attempt/outcome để Mobile/Web nhận khi poll. Trên eKYC data-plane, Proxy giữ HTTP/body tương thích SDK cho provider business error nhưng không lộ credential, internal upstream hoặc stack trace; Canonical Result không trả raw FPT payload/error.
+OCR provider error phát sinh trong worker được lưu vào attempt/outcome để Mobile/Web nhận khi poll. Trên eKYC data-plane, `vhm-verification-service` giữ HTTP/body tương thích SDK cho provider business error nhưng không lộ credential, internal upstream hoặc stack trace; Canonical Result không trả raw FPT payload/error.
 
 ## 6. Schema dữ liệu
 
 ### 6.1. Mô hình logic
 
-Dùng sáu bảng cho aggregate OCR/eKYC; `callback_inbox` cung cấp nguồn xác nhận/phục hồi độc lập bên cạnh trusted provider response quan sát tại Proxy:
+Dùng sáu bảng cho aggregate OCR/eKYC; `callback_inbox` cung cấp nguồn xác nhận/phục hồi độc lập bên cạnh trusted provider response đi qua `vhm-verification-service`:
 
 | **Bảng** | **Mục đích** |
 | --- | --- |
 | `verifications` | Aggregate chung: lifecycle, OCR worker lease hoặc eKYC flow/SDK/session binding |
 | `verification_media_refs` | Durable media ref của OCR; eKYC chỉ có row khi VHM bật policy lưu media riêng |
-| `provider_attempts` | Từng call qua OCR Worker, SDK Proxy hoặc Reconciliation |
+| `provider_attempts` | Từng call qua OCR Worker, eKYC SDK API hoặc Reconciliation |
 | `callback_inbox` | Callback FPT đã xác thực, mã hóa payload và deduplicate trước khi xử lý |
 | `verification_results` | Canonical Result cuối, không lưu raw SDK/provider response |
 | `outbox_events` | OCR job dispatch và domain/result event sau commit; không dispatch SDK call |
@@ -751,7 +754,7 @@ Aggregate · lifecycle · worker/SDK binding`"]
     MEDIA["`**verification_media_refs**
 1:N · durable media refs khi áp dụng`"]
     ATTEMPT["`**provider_attempts**
-1:N · worker/proxy/reconciliation calls`"]
+1:N · worker/sdk/reconciliation calls`"]
     INBOX["`**callback_inbox**
 1:N · authenticated provider events`"]
     RESULT["`**verification_results**
@@ -883,7 +886,7 @@ CREATE TABLE provider_attempts (
     operation                VARCHAR(30) NOT NULL CHECK (operation IN
                                 ('INIT_SESSION', 'OCR', 'LIVENESS', 'GET_RESULT')),
     transport               VARCHAR(30) NOT NULL CHECK (transport IN
-                                ('OCR_WORKER', 'SDK_PROXY', 'RECONCILIATION')),
+                                ('OCR_WORKER', 'EKYC_SDK_API', 'RECONCILIATION')),
     attempt_no               INTEGER NOT NULL CHECK (attempt_no > 0),
     provider_request_id      VARCHAR(150),
     session_id_ciphertext    BYTEA,
@@ -963,11 +966,11 @@ CREATE INDEX ix_outbox_lease_recovery
 Quy ước schema:
 
 - OCR insert một `verification_results` với `version=1`, `is_final=true` khi hoàn tất.
-- eKYC Proxy checkpoint attempt/session/current step và có thể final hóa từ trusted provider response đầy đủ; không dùng raw result do ứng dụng gửi lại. Callback hoặc reconciled Get Result xác nhận/phục hồi khi Proxy outcome thiếu hoặc `UNKNOWN`.
+- eKYC SDK API checkpoint attempt/session/current step và final hóa đồng bộ từ trusted provider response đầy đủ; không dùng raw result do ứng dụng gửi lại. Callback hoặc reconciled Get Result chỉ xác nhận/phục hồi khi synchronous outcome thiếu hoặc `UNKNOWN`.
 - Callback payload được mã hóa trong Inbox, deduplicate bằng fingerprint và xóa theo retention policy; raw payload không đi vào outbox/log.
 - Result update dùng compare-and-set theo `version`; row đã `is_final=true` không được update. Retry eKYC tạo `verificationId`, provider session và SDK token mới.
 - Raw SDK token không persist; chỉ lưu hash của token identifier và expiry. Provider session ID phải mã hóa at rest.
-- `verification_media_refs` mặc định chỉ dùng cho OCR. Nếu eKYC cần giữ media tại VHM, phải có policy/purpose/retention rõ và pipeline riêng tạo `SDK_MEDIA_PERSISTENCE`; Proxy không buffer body để ghi file trong request transaction.
+- `verification_media_refs` mặc định chỉ dùng cho OCR. Nếu eKYC cần giữ media tại VHM, phải có policy/purpose/retention rõ và pipeline riêng tạo `SDK_MEDIA_PERSISTENCE`; `vhm-verification-service` không buffer body để ghi file trong request transaction.
 - Outbox/message chỉ chứa ID/reference tối thiểu, không chứa PII, media path, binary, callback payload hoặc Canonical Result.
 
 ## 7. Tin cậy, timeout và vận hành
@@ -983,24 +986,24 @@ Quy ước schema:
 - Final result, `DONE + COMPLETED + outcome` commit cùng transaction.
 - Outbox Publisher claim `NEW/FAILED → PUBLISHING` bằng lease; stale `PUBLISHING` được phục hồi sau lease expiry.
 
-### 7.2. eKYC Proxy synchronous critical path
+### 7.2. eKYC synchronous critical path
 
-- eKYC Proxy là workload thuộc `vhm-verification-service`, không phải microservice riêng; production tách deployment/autoscaling unit khỏi Verification API và OCR Worker.
-- `vhm-agent-api` và eKYC Proxy phải stream end-to-end, giữ backpressure và không buffer toàn bộ document/video trong memory hoặc local disk.
-- Không đặt Queue, Outbox Publisher hoặc eKYC Worker giữa SDK và FPT. Queue chỉ dùng sau callback/checkpoint cho normalization, notification hoặc reconciliation.
-- Proxy chỉ relay fixed endpoint đã allowlist. Android/Web/iOS SDK contract, method, headers, multipart field names, response body và error behavior phải được FPT sign-off theo exact SDK version.
-- Request body do SDK tạo được forward nguyên trạng. Proxy chỉ thêm/thay credential/header được phê duyệt; không parse rồi rebuild multipart và không sửa business response mà SDK cần đọc.
-- FPT phải xác nhận Proxy mode không yêu cầu nhúng provider API key thật trên Mobile/Web; SDK chỉ mang short-lived VHM token/custom header và Proxy inject credential server-side.
-- `verificationId` được truyền vào SDK làm `client_uuid`; Proxy validate token/UUID/session/step binding và từ chối cross-verification request.
-- Admission check phải hoàn tất trước khi đọc body lớn. Khi DB/token service không sẵn sàng, fail fast trước khi mở upstream stream.
-- Khi stream đã gửi tới FPT nhưng checkpoint DB lỗi, Proxy không được che provider response đã có; attempt được đánh dấu/recover bằng callback hoặc reconciliation theo `client_uuid`.
+- FPT SDK gọi trực tiếp eKYC SDK endpoint của `vhm-verification-service` qua route streaming của `vhm-agent-api`; không có service trung gian riêng.
+- `vhm-agent-api` và `vhm-verification-service` phải stream request end-to-end, giữ backpressure và không buffer toàn bộ document/video trong memory hoặc local disk.
+- Không đặt Queue, Outbox Publisher hoặc eKYC Worker giữa SDK và FPT. Init/OCR/liveness đều là synchronous request/response; liveness response cuối được persist trước khi trả SDK.
+- Service chỉ forward fixed endpoint đã allowlist. Android/Web/iOS SDK contract, method, headers, multipart field names, response body và error behavior phải được FPT sign-off theo exact SDK version.
+- Request body do SDK tạo được forward nguyên trạng. Service chỉ thêm/thay credential/header được phê duyệt; không parse rồi rebuild multipart và không sửa business response mà SDK cần đọc.
+- FPT phải xác nhận SDK không yêu cầu nhúng provider API key thật trên Mobile/Web; SDK chỉ mang short-lived VHM token/custom header và `vhm-verification-service` inject credential server-side.
+- `verificationId` được truyền vào SDK làm `client_uuid`; service validate token/UUID/session/step binding và từ chối cross-verification request.
+- Admission check phải hoàn tất trước khi đọc body. Khi DB/token service không sẵn sàng, fail fast trước khi mở upstream stream.
+- Khi FPT đã trả result đầy đủ, service commit attempt/Canonical Result rồi trả response SDK. Nếu đã gửi request nhưng outcome hoặc DB checkpoint không xác định, chuyển `FINALIZING` và phục hồi bằng callback/Get Result; không đưa sang eKYC Worker.
 
 ### 7.3. Retry, unknown outcome và callback
 
-| **Tình huống** | **OCR Worker** | **eKYC SDK/Proxy** |
+| **Tình huống** | **OCR Worker** | **eKYC synchronous SDK API** |
 | --- | --- | --- |
 | Chưa gửi request/body tới FPT | Retry giới hạn với backoff | Trả SDK-compatible technical error; SDK/user có thể retry theo policy |
-| FPT trả `429/5xx` rõ ràng | Retry khi operation được xác nhận retry-safe | Relay provider-compatible error; Proxy không tự retry mutation nếu FPT chưa xác nhận an toàn |
+| FPT trả `429/5xx` rõ ràng | Retry khi operation được xác nhận retry-safe | Relay provider-compatible error; service không tự retry mutation nếu FPT chưa xác nhận an toàn |
 | Timeout sau khi body có thể đã gửi | Ghi attempt `UNKNOWN`; không POST lại mù | Ghi `UNKNOWN`, chuyển/giữ `FINALIZING` và reconcile bằng `client_uuid`; không replay body mù |
 | Input/chất lượng không đạt | Map `NEED_RETRY/NEED_REVIEW` | Relay cho SDK để hướng dẫn capture lại; backend chỉ final outcome theo policy |
 | Session hết hạn | Tạo verification mới theo retry policy | SDK bootstrap/provider session mới; không reuse session hết hạn |
@@ -1009,7 +1012,7 @@ Quy ước schema:
 - Whole-attempt retry tạo `verificationId`, `client_uuid`, provider session và SDK token mới; link `retry_of` để audit.
 - Callback chỉ trả `2xx` sau khi payload đã được authenticate, bind đúng environment/client UUID và commit Inbox bền vững.
 - Duplicate callback cùng fingerprint không tạo result version mới. Callback out-of-order chỉ được apply nếu transition hợp lệ; final result đã khóa không bị downgrade.
-- Callback quá SLA hoặc Proxy attempt `UNKNOWN` tạo reconciliation task. `GET Result` là fallback có bounded retry, không phải polling happy path.
+- Callback quá SLA hoặc synchronous attempt `UNKNOWN` tạo reconciliation task. `GET Result` là fallback có bounded retry, không phải polling happy path.
 - Hết recovery budget chuyển `COMPLETED + PROVIDER_ERROR` hoặc `EXPIRED` theo policy để client không poll vô hạn.
 
 ### 7.4. Timeout và cancellation
@@ -1017,42 +1020,42 @@ Quy ước schema:
 Timeout phải thỏa quan hệ:
 
 ```text
-FPT outbound timeout < eKYC Proxy deadline < vhm-agent-api/SDK request timeout
+FPT outbound timeout < vhm-verification-service deadline < vhm-agent-api/SDK request timeout
 ```
 
-Mỗi operation `INIT_SESSION`, `OCR`, `LIVENESS` có connect timeout, response-header timeout, streaming idle timeout và hard deadline riêng theo contract FPT. Client disconnect phải propagate cancellation xuống Proxy/FPT khi transport cho phép, nhưng disconnect không chứng minh provider chưa xử lý; attempt vẫn có thể là `UNKNOWN`.
+Mỗi operation `INIT_SESSION`, `OCR`, `LIVENESS` có connect timeout, response-header timeout, streaming idle timeout và hard deadline riêng theo contract FPT. Client disconnect phải propagate cancellation xuống FPT khi transport cho phép, nhưng disconnect không chứng minh provider chưa xử lý; attempt vẫn có thể là `UNKNOWN`.
 
 OCR outbound timeout phải ngắn hơn worker lease còn lại. OCR Worker renew lease giữa các step nếu cần; hard timeout phải hủy outbound request trước khi mất lease.
 
 ### 7.5. Quota, scaling và observability
 
 - OCR dùng queue, worker concurrency và token bucket theo quota OCR.
-- eKYC Proxy dùng admission control theo active streams, request/byte rate, tenant/flow và quota FPT; không dùng queue để giữ request tương tác.
-- OCR Worker, eKYC Proxy, Verification API và Callback/Result Processor có connection pool, HPA và resource limit riêng. eKYC Proxy tối thiểu multi-AZ và stateless ngoài DB/session binding.
+- eKYC SDK route dùng admission control theo active streams, request/byte rate, tenant/flow và quota FPT; không dùng queue để giữ request tương tác.
+- `vhm-verification-service` có route-level connection/concurrency limit và bulkhead giữa control-plane, eKYC streaming path, callback processing và OCR Worker để cùng service nhưng không tranh hết tài nguyên.
 - Circuit breaker OCR dừng claim job mới và dời `available_at`. Circuit breaker eKYC từ chối trước khi đọc body, trả lỗi SDK-compatible và không giữ connection treo.
-- Metric/alert tối thiểu: OCR queue age/depth, outbox lag, Proxy active streams/bytes/latency/error/429/502/504, callback auth failure/lag/duplicate, reconciliation due, stale OCR lease và terminal outcome rate.
+- Metric/alert tối thiểu: OCR queue age/depth, outbox lag, eKYC active streams/bytes/latency/error/429/502/504, callback auth failure/lag/duplicate, reconciliation due, stale OCR lease và terminal outcome rate.
 - Không dùng `verificationId`, subject/business ref hoặc PII làm metric label.
 
 ### 7.6. Bảo mật và lưu media eKYC
 
 - SDK token ngắn hạn, audience-restricted và bind verification/domain/subject/flow/platform/expiry; không dùng application access token dài hạn làm provider credential.
-- FPT credential chỉ tồn tại trong secret manager/runtime của eKYC Proxy; không trả về SDK, BFF response hoặc log.
+- FPT credential chỉ tồn tại trong secret manager/runtime của `vhm-verification-service`; không trả về SDK, BFF response hoặc log.
 - TLS bắt buộc ở cả hai hop; callback cần cơ chế authentication/signature, replay protection và environment binding do FPT xác nhận.
-- Proxy enforce method/path/content type/file count/size/timeout trước hoặc trong streaming; không là open proxy và không chấp nhận upstream URL từ client.
+- `vhm-verification-service` enforce method/path/content type/file count/size/timeout trước hoặc trong streaming; không cung cấp generic relay và không chấp nhận upstream URL từ client.
 - Không log request/response body, multipart boundary content, FPT API key, session ID, ảnh giấy tờ, selfie/video hoặc raw callback payload.
-- Baseline không persist raw eKYC media chỉ vì media đi qua Proxy. Nếu VHM cần lưu media cho audit/manual review, phải có consent/purpose/retention và pipeline lưu riêng bằng streaming hoặc presigned upload; không buffer media trong DB transaction hay local disk của Proxy.
+- Baseline không persist raw eKYC media chỉ vì media đi qua service. Nếu VHM cần lưu media cho audit/manual review, phải có consent/purpose/retention và pipeline lưu riêng bằng streaming hoặc presigned upload; không buffer media trong DB transaction hay local disk của service.
 
 ## 8. Kế hoạch triển khai và kiểm thử
 
 ### 8.1. Thứ tự triển khai
 
-1. Chốt với FPT exact Android/iOS/Web SDK version hỗ trợ Proxy, base URL/endpoint override, request/response wire contract, callback authentication và Get Result API.
+1. Chốt với FPT exact Android/iOS/Web SDK version hỗ trợ trỏ base URL/endpoint về `vhm-verification-service`, request/response wire contract, callback authentication và Get Result API.
 2. Chốt hai policy độc lập: OCR `documentType → model/input limit`; eKYC `flowCode → SDK config/document/liveness/session TTL`.
 3. Xây schema, Verification API core, create/bootstrap/token binding, Inbox/Outbox và Canonical Result guard.
 4. Xây OCR upload/worker/provider flow như mục 3.
-5. Tích hợp SDK trên từng nền tảng với `verificationId` làm UUID và short-lived Proxy token/header.
-6. Xây eKYC Proxy module trong `vhm-verification-service`; deploy streaming workload riêng sau route của `vhm-agent-api`.
-7. Xây Callback API, Result Processor, reconciliation và policy mapping.
+5. Tích hợp SDK trên từng nền tảng với `verificationId` làm UUID và short-lived VHM token/header.
+6. Xây eKYC SDK endpoint đồng bộ ngay trong `vhm-verification-service`, sau streaming route của `vhm-agent-api`.
+7. Persist Canonical Result trước khi trả liveness response; xây Callback API/Get Result reconciliation cho trường hợp unknown.
 8. Tích hợp status/result/confirm/apply với domain; không lấy SDK device result làm nguồn apply.
 9. Contract/load/security/resilience test và chốt timeout, active stream, bandwidth, quota, SLO/alert trước production.
 
@@ -1061,16 +1064,16 @@ OCR outbound timeout phải ngắn hơn worker lease còn lại. OCR Worker rene
 | **Lớp test** | **Phạm vi** |
 | --- | --- |
 | Unit | Type/status/step guard, SDK token binding, idempotency, callback final guard, canonical mapping |
-| FPT SDK contract | Exact Android/iOS/Web base URL, headers, multipart field/body, response/error parsing qua Proxy |
+| FPT SDK contract | Exact Android/iOS/Web base URL, headers, multipart field/body và response/error parsing qua `vhm-verification-service` |
 | Provider contract | Init/OCR/liveness/Get Result success, business error, malformed response, 429, 5xx và timeout |
 | Database | CHECK/unique/index, optimistic lock, Inbox dedupe, final result guard, outbox/worker lease recovery |
 | Queue/Outbox | OCR duplicate/redelivery, publish-before-mark và worker restart; xác nhận SDK path không enqueue provider call |
-| Proxy integration | End-to-end streaming/backpressure/cancellation, no-buffer memory profile, size limit, credential injection và fixed upstream allowlist |
+| eKYC synchronous integration | End-to-end streaming/backpressure/cancellation, no-buffer request memory profile, sync result persistence, size limit, credential injection và fixed upstream allowlist |
 | OCR end-to-end | Upload → create `202` → OCR Worker → result → confirm/apply |
-| eKYC end-to-end | Create/bootstrap → SDK init/OCR/liveness qua Proxy → callback → Canonical Result → confirm/apply |
-| Callback/Reconciliation | Duplicate/out-of-order/invalid callback, callback trước/sau Proxy response, callback missing và Get Result recovery |
-| Security | Token tamper/expiry/replay, UUID/session swap, cross-domain IDOR, open-proxy attempt, malicious multipart và PII-safe logs |
-| Resilience | Proxy/provider outage, disconnect giữa upload, unknown-after-send, DB checkpoint failure, SDK resume và session expiry |
-| Performance | Active streams, bandwidth, p95/p99 từng operation, Proxy memory, Callback lag và OCR queue burst độc lập |
+| eKYC end-to-end | Create/bootstrap → SDK init/OCR/liveness qua `vhm-verification-service` → synchronous Canonical Result → confirm/apply |
+| Callback/Reconciliation | Duplicate/out-of-order/invalid callback, callback trước/sau synchronous response, callback missing và Get Result recovery |
+| Security | Token tamper/expiry/replay, UUID/session swap, cross-domain IDOR, generic-relay attempt, malicious multipart và PII-safe logs |
+| Resilience | Service/provider outage, disconnect giữa upload, unknown-after-send, DB checkpoint failure, SDK resume và session expiry |
+| Performance | Active streams, bandwidth, p95/p99 từng operation, service memory, Callback lag và OCR queue burst độc lập |
 
-`vhm-verification-service` sở hữu cả OCR control/worker path và eKYC SDK Proxy/control/callback path, provider isolation và Canonical Result. Việc tách eKYC Proxy thành workload chỉ là deployment boundary để scale và cô lập failure, không phải service mới. Domain Service chịu trách nhiệm authorization, bind hồ sơ/chủ thể, xác nhận người dùng và apply kết quả nghiệp vụ.
+`vhm-verification-service` sở hữu cả OCR control/worker path và eKYC SDK synchronous/control/callback path, provider isolation và Canonical Result. eKYC được xử lý đồng bộ ngay trong service, không có eKYC Worker riêng. Domain Service chịu trách nhiệm authorization, bind hồ sơ/chủ thể, xác nhận người dùng và apply kết quả nghiệp vụ.
