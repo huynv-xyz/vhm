@@ -1,4 +1,4 @@
-# Vấn đề 6: Thiết kế tích hợp OCR và eKYC tập trung
+# Vấn đề 10: Thiết kế tích hợp OCR và eKYC tập trung
 
 ## 1. Phạm vi và quyết định kiến trúc
 
@@ -11,7 +11,9 @@ Baseline dùng hai execution path tách biệt theo capability:
 ```text
 DOCUMENT_OCR:
 Upload document → create OCR → 202 QUEUED
-→ OCR Worker → FPT session/init → OCR
+→ OCR Worker submit OCR → FPT trả provider_job_id
+→ WAITING_PROVIDER → delayed poll jobs
+→ FPT terminal success → fetch result nếu cần → normalize
 → Canonical Result → Mobile/Web poll → confirm/apply
 
 IDENTITY_EKYC:
@@ -23,6 +25,8 @@ Mobile tự cấu hình flow, Proxy Base URL và custom VHM auth header cho FPT 
 ```
 
 OCR tài liệu nghiệp vụ vẫn dùng **backend API + outbox/queue/worker**. Chỉ eKYC định danh dùng **FPT SDK qua `vhm-ocr-ekyc`** để tận dụng capture UX, kiểm tra chất lượng đầu vào, liveness và device capability của SDK nhưng không cho SDK gọi trực tiếp FPT.
+
+FPT OCR xử lý bất đồng bộ theo cơ chế polling. OCR Worker chỉ thực hiện từng call submit/status/result ngắn, checkpoint `provider_job_id` và trạng thái provider rồi giải phóng lease. Khi FPT chưa terminal, transaction chuyển verification sang `WAITING_PROVIDER`, đặt `available_at` và ghi delayed poll outbox; worker không giữ thread hoặc `sleep` chờ FPT.
 
 Các eKYC SDK endpoint synchronous của `vhm-ocr-ekyc` nằm trên critical path của SDK; request init/OCR định danh/liveness không đi qua Queue hoặc eKYC Worker. Mobile tự chọn và cấu hình SDK flow. `vhm-agent-api` xác thực request; `vhm-ocr-ekyc` inject FPT credential, forward request/response và audit response, không cấp SDK config, không tạo FPT session và không điều phối step.
 
@@ -55,9 +59,9 @@ OCR chỉ hỗ trợ số hóa/gợi ý dữ liệu. eKYC hỗ trợ kiểm tra 
 | Domain service, ví dụ `vhm-dossier-core` | Authorize `businessRef`, media path và apply kết quả OCR |
 | `vhm-media-service` | Chỉ tham gia upload OCR tài liệu; trả `presignHeaders + presignedUrl + s3PathFile` |
 | Verification API | OCR command/query và các endpoint forward request từ FPT SDK |
-| Outbox Publisher + Job Queue | Chỉ dispatch OCR job và event hậu xử lý sau commit; không dùng cho eKYC SDK call |
-| OCR Worker pool | Xử lý một logical document và gọi FPT OCR flow |
-| Provider Adapter | OCR Worker: map provider API; eKYC SDK endpoint: inject credential và giữ wire contract tương thích SDK |
+| Outbox Publisher + Job Queue | Dispatch OCR submit/poll job và event hậu xử lý sau commit; không dùng cho eKYC SDK call |
+| OCR Worker pool | Thực hiện từng step ngắn: submit, poll status, fetch result nếu cần và normalize |
+| Provider Adapter | OCR Worker: map FPT submit/status/result contract; eKYC SDK endpoint: inject credential và giữ wire contract tương thích SDK |
 | Result Normalizer/Policy | Tạo Canonical Result và outcome ổn định cho OCR |
 | Verification Database | Lưu OCR state/result và eKYC request metadata/response audit trong `provider_attempts` |
 
@@ -71,18 +75,24 @@ OCR Worker và eKYC SDK request path phải có bulkhead/capacity guard riêng. 
 
 ```text
 OCR:
-QUEUED → PROCESSING → COMPLETED
+QUEUED → PROCESSING (SUBMIT_PROVIDER)
+       → WAITING_PROVIDER
+       → PROCESSING (POLL_PROVIDER)
+       → WAITING_PROVIDER ...
+       → PROCESSING (FETCH_RESULT/NORMALIZE)
+       → COMPLETED
 ```
 
 | **Status** | **Ý nghĩa** |
 | --- | --- |
 | `QUEUED` | OCR verification và outbox đã commit, chờ worker claim |
-| `PROCESSING` | OCR Worker đang xử lý hoặc chờ retry step |
+| `PROCESSING` | OCR Worker đang giữ lease để thực hiện một step submit/poll/fetch/normalize ngắn |
+| `WAITING_PROVIDER` | FPT chưa terminal; đã giải phóng worker lease và lên lịch poll tiếp theo tại `available_at` |
 | `COMPLETED` | Đã có outcome cuối, kể cả provider error sau hết recovery budget |
 | `CANCELLED` | Bị hủy trước khi hoàn tất |
 | `EXPIRED` | Quá processing deadline |
 
-`currentStep` phục vụ OCR Worker resume. Mỗi eKYC request tạo một row `provider_attempts`, sau đó cập nhật response vào cùng row.
+`currentStep` phục vụ OCR Worker resume, gồm `VALIDATE_MEDIA`, `SUBMIT_PROVIDER`, `POLL_PROVIDER`, `FETCH_RESULT`, `NORMALIZE`, `DONE`. `FETCH_RESULT` chỉ dùng nếu contract FPT tách status và result thành hai API. Mỗi eKYC request tạo một row `provider_attempts`, sau đó cập nhật response vào cùng row.
 
 `outcome` chỉ có khi `status=COMPLETED` và được kiểm tra theo `type`:
 
@@ -92,7 +102,7 @@ QUEUED → PROCESSING → COMPLETED
 
 ### 2.3. Hai execution path
 
-Với OCR, Verification API ghi verification, media refs và outbox trong cùng transaction rồi trả `202`. Outbox Publisher đưa job đã commit vào Queue; OCR Worker claim bằng status + lease/CAS trước khi đọc media hoặc gọi FPT.
+Với OCR, Verification API ghi verification, media refs và outbox trong cùng transaction rồi trả `202`. Outbox Publisher đưa job đã commit vào Queue; OCR Worker claim bằng status + lease/CAS trước từng step. Submit thành công phải checkpoint `provider_job_id`; poll non-terminal phải commit `WAITING_PROVIDER + available_at + outbox`, xóa lease rồi kết thúc worker invocation. Mobile/Web chỉ poll API của VHM và không nhận provider job ID.
 
 Với eKYC, Mobile tự cấu hình và khởi chạy SDK. SDK gọi init/OCR/liveness qua eKYC endpoint của `vhm-ocr-ekyc`; service stream request tới FPT, audit response rồi forward nguyên response về SDK. Không có API bootstrap/config eKYC, eKYC lifecycle API, Worker/Queue hoặc backend orchestration giữa các step.
 
@@ -144,22 +154,24 @@ Authorize · Apply result`"]
             API["`**Verification API**
 Create · Status · Result`"]
             QUEUE[("`**Job Queue**
-OCR jobs`")]
+Submit · Poll jobs`")]
             WORKER["`**OCR Worker pool**
-Internal workload`"]
+Short-lived step`"]
             ADAPTER["`**Provider Adapter**
-Session · OCR`"]
+Submit · Status · Result`"]
             NORMALIZE["`**Result Normalizer**
 Canonical Result`"]
             API -->|"Publish committed job"| QUEUE
-            QUEUE --> WORKER --> ADAPTER --> NORMALIZE
+            QUEUE --> WORKER --> ADAPTER
+            ADAPTER -->|"Terminal success"| NORMALIZE
         end
 
         DB[("`**Verification Database**
-State · Attempt · Result · Outbox`")]
+State · Provider job · Result · Outbox`")]
 
         API <-->|"Persist/read"| DB
-        WORKER -->|"Lease · progress"| DB
+        WORKER -->|"Short lease · progress"| DB
+        ADAPTER -->|"Checkpoint job/status"| DB
         NORMALIZE -->|"Final result"| DB
     end
 
@@ -168,11 +180,11 @@ State · Attempt · Result · Outbox`")]
     STORAGE[("`**Private Object Storage**
 OCR document`")]
     FPT["`**FPT AI Backend**
-Session API · OCR API`"]
+Submit · Status · Result`"]
 
     DOMAIN <-->|"Private OCR command/query"| API
     WORKER -->|"HEAD/GET OCR_DOCUMENT"| STORAGE
-    ADAPTER <-->|"Synchronous provider APIs"| FPT
+    ADAPTER <-->|"Polling provider contract"| FPT
 ```
 
 ### 3.3. Luồng xử lý trong `vhm-ocr-ekyc`
@@ -194,36 +206,44 @@ verificationId · resourceUri`"]
     subgraph DISPATCH["B. Phân phối job"]
         direction LR
         PUBLISHER["`**Outbox Publisher**
-Publish committed job`"]
+Publish submit/poll job`"]
         QUEUE[("`**Job Queue**
-OCR job`")]
+Submit · Poll`")]
         WORKER["`**OCR Worker pool**
-Claim lease · PROCESSING`"]
+Claim short lease · PROCESSING`"]
 
         PUBLISHER --> QUEUE --> WORKER
     end
 
-    subgraph EXECUTE["C. Xử lý document"]
+    subgraph EXECUTE["C. Submit và poll FPT"]
         direction LR
         READ["`**Storage Reader**
 HEAD/GET document`"]
         ADAPTER["`**Provider Adapter**
-Session · OCR`"]
+Submit · Status · Result`"]
         FPT["`**FPT AI Backend**
-/session/init · /ocr`"]
+Polling OCR APIs`"]
+        CHECKPOINT[("`**Provider attempt**
+provider_job_id · provider_status`")]
+        WAIT[("`**WAITING_PROVIDER**
+available_at · delayed outbox`")]
         NORMALIZE["`**Result Normalizer**
 Canonical fields · warnings`"]
         DONE[("`**Verification Database**
 COMPLETED · outcome · result`")]
 
         READ --> ADAPTER
-        ADAPTER <-->|"Synchronous request/result"| FPT
-        ADAPTER --> NORMALIZE --> DONE
+        ADAPTER <-->|"Submit/status/result"| FPT
+        ADAPTER --> CHECKPOINT
+        CHECKPOINT -->|"PENDING/PROCESSING"| WAIT
+        CHECKPOINT -->|"COMPLETED"| NORMALIZE --> DONE
+        CHECKPOINT -->|"FAILED/EXPIRED/deadline"| DONE
     end
 
     DB_ACCEPT --> PUBLISHER
-    WORKER --> READ
-    WORKER -->|"Progress · attempt"| DONE
+    WORKER -->|"SUBMIT_PROVIDER"| READ
+    WORKER -->|"POLL_PROVIDER"| ADAPTER
+    WAIT -->|"Poll khi đến hạn"| PUBLISHER
 ```
 
 ### 3.4. Sequence end-to-end
@@ -255,23 +275,42 @@ sequenceDiagram
     end
 
     rect rgb(250, 250, 235)
-    Note over CLIENT,DB: B. Worker xử lý nền
+    Note over CLIENT,DB: B. Submit OCR sang FPT
     DB-->>QUEUE: Outbox Publisher<br/>OCR_JOB_CREATED
     QUEUE-->>WORKER: verificationId
-    WORKER->>DB: Claim lease + PROCESSING
+    WORKER->>DB: Claim short lease<br/>PROCESSING + SUBMIT_PROVIDER
     WORKER->>STORAGE: HEAD/GET OCR_DOCUMENT
     STORAGE-->>WORKER: Metadata + document stream
     WORKER->>WORKER: Validate path + MIME + size
-    WORKER->>FPT: POST /session/init
-    FPT-->>WORKER: session-id
-    WORKER->>FPT: POST /ocr<br/>session-id + document-type + file
-    FPT-->>WORKER: OCR result
-    WORKER->>WORKER: Normalize provider result
-    WORKER->>DB: COMPLETED + outcome<br/>Canonical Result
+    WORKER->>DB: Create logical provider_attempt
+    WORKER->>FPT: Submit OCR<br/>exact contract theo FPT
+    FPT-->>WORKER: provider_job_id + provider_status
+    WORKER->>DB: Checkpoint provider_job_id<br/>WAITING_PROVIDER + available_at<br/>clear lease + OCR_POLL_DUE outbox
+    end
+
+    rect rgb(255, 248, 235)
+    Note over CLIENT,DB: C. Poll FPT bằng delayed job
+    loop Khi provider status chưa terminal
+        DB-->>QUEUE: Outbox Publisher<br/>OCR_POLL_DUE khi available_at tới hạn
+        QUEUE-->>WORKER: verificationId
+        WORKER->>DB: Claim short lease<br/>PROCESSING + POLL_PROVIDER
+        WORKER->>FPT: Poll status<br/>provider_job_id
+        FPT-->>WORKER: provider_status
+        alt PENDING hoặc PROCESSING
+            WORKER->>DB: Update poll_count/status<br/>WAITING_PROVIDER + next available_at<br/>clear lease + delayed poll outbox
+        else COMPLETED
+            WORKER->>FPT: Fetch result nếu contract tách riêng
+            FPT-->>WORKER: Final OCR result
+            WORKER->>WORKER: Normalize provider result
+            WORKER->>DB: COMPLETED + outcome<br/>Canonical Result
+        else FAILED, EXPIRED hoặc quá deadline
+            WORKER->>DB: COMPLETED<br/>NEED_RETRY hoặc PROVIDER_ERROR
+        end
+    end
     end
 
     rect rgb(240, 250, 245)
-    Note over CLIENT,DB: C. Poll và apply kết quả
+    Note over CLIENT,DB: D. Mobile/Web poll VHM và apply kết quả
     loop Khi status chưa kết thúc
         CLIENT->>BFF: GET statusUrl
         BFF->>DOMAIN: Authorized query
@@ -336,8 +375,8 @@ Ví dụ status:
 {
   "verificationId": "ver-123",
   "type": "OCR",
-  "status": "PROCESSING",
-  "currentStep": "OCR",
+  "status": "WAITING_PROVIDER",
+  "currentStep": "POLL_PROVIDER",
   "outcome": null,
   "resultAvailable": false,
   "nextAction": "POLL",
@@ -366,6 +405,8 @@ Ví dụ Canonical Result:
 ```
 
 `nextAction` và progress được tính từ `type + status + currentStep + outcome`, không persist. OCR provider error được lưu vào attempt/outcome để Mobile/Web nhận khi poll.
+
+Có hai lớp polling độc lập: Mobile/Web poll status/result của `vhm-ocr-ekyc`; OCR Worker poll FPT bằng `provider_job_id`. Provider job ID và raw provider status là dữ liệu nội bộ, không trả cho Mobile/Web hoặc domain service.
 
 ## 4. Luồng eKYC
 
@@ -488,7 +529,7 @@ Giữ năm bảng dùng chung; eKYC chỉ dùng `provider_attempts` để audit 
 | --- | --- |
 | `verifications` | Business mapping, lifecycle và worker lease của OCR |
 | `verification_media_refs` | Durable media ref của `DOCUMENT_OCR` |
-| `provider_attempts` | OCR provider call và audit request metadata/response từng eKYC SDK call |
+| `provider_attempts` | Theo dõi một logical FPT OCR job xuyên suốt submit–poll; đồng thời audit request metadata/response của từng eKYC SDK call |
 | `verification_results` | OCR Canonical Result cuối |
 | `outbox_events` | OCR job dispatch và domain event sau commit |
 
@@ -499,7 +540,7 @@ OCR business mapping · lifecycle`"]
     MEDIA["`**verification_media_refs**
 1:N · OCR media refs`"]
     ATTEMPT["`**provider_attempts**
-OCR calls · eKYC request/response audit`"]
+OCR provider job/poll · eKYC request/response audit`"]
     RESULT["`**verification_results**
 0:1 · final canonical result`"]
     OUTBOX["`**outbox_events**
@@ -528,15 +569,16 @@ CREATE TABLE verifications (
                                 ('ANDROID', 'IOS', 'WEB')),
     document_type           VARCHAR(50) NOT NULL,
     status                  VARCHAR(30) NOT NULL CHECK (status IN
-                                ('QUEUED', 'PROCESSING', 'COMPLETED',
+                                ('QUEUED', 'PROCESSING', 'WAITING_PROVIDER', 'COMPLETED',
                                  'CANCELLED', 'EXPIRED')),
     current_step            VARCHAR(30) CHECK (current_step IN
-                                ('VALIDATE_MEDIA', 'INIT_SESSION', 'OCR',
-                                 'NORMALIZE', 'DONE')),
+                                ('VALIDATE_MEDIA', 'SUBMIT_PROVIDER', 'POLL_PROVIDER',
+                                 'FETCH_RESULT', 'NORMALIZE', 'DONE')),
     outcome                 VARCHAR(30),
 
     attempt_count           INTEGER NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
     available_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
+    processing_deadline_at  TIMESTAMPTZ NOT NULL,
     lease_owner             VARCHAR(100),
     lease_until             TIMESTAMPTZ,
     last_error_code         VARCHAR(80),
@@ -572,7 +614,7 @@ CREATE INDEX ix_verification_business
     ON verifications (business_type, business_ref, created_at DESC);
 CREATE INDEX ix_ocr_dispatch
     ON verifications (status, available_at)
-    WHERE type = 'OCR' AND status IN ('QUEUED', 'PROCESSING');
+    WHERE type = 'OCR' AND status IN ('QUEUED', 'WAITING_PROVIDER');
 CREATE INDEX ix_ocr_lease_recovery
     ON verifications (lease_until)
     WHERE type = 'OCR' AND status = 'PROCESSING';
@@ -601,7 +643,12 @@ CREATE TABLE provider_attempts (
     attempt_no               INTEGER NOT NULL CHECK (attempt_no > 0),
     correlation_id           VARCHAR(150),
     provider_request_id      VARCHAR(150),
+    provider_job_id          VARCHAR(150),
+    provider_status          VARCHAR(50),
     provider_http_status     INTEGER,
+    poll_count               INTEGER NOT NULL DEFAULT 0 CHECK (poll_count >= 0),
+    last_polled_at           TIMESTAMPTZ,
+    provider_completed_at    TIMESTAMPTZ,
     response_payload_ciphertext BYTEA,
     payload_key_version      VARCHAR(40),
     status                   VARCHAR(20) NOT NULL CHECK (status IN
@@ -627,6 +674,9 @@ CREATE INDEX ix_provider_attempt_verification
 CREATE INDEX ix_provider_attempt_correlation
     ON provider_attempts (correlation_id, operation, attempt_no DESC)
     WHERE transport = 'EKYC_SDK_API';
+CREATE UNIQUE INDEX uq_provider_attempt_job
+    ON provider_attempts (provider, provider_job_id)
+    WHERE provider_job_id IS NOT NULL;
 
 CREATE TABLE verification_results (
     verification_id         UUID PRIMARY KEY REFERENCES verifications(id),
@@ -671,6 +721,10 @@ Quy ước schema:
 
 - OCR insert một `verification_results` với `version=1`, `is_final=true` khi hoàn tất.
 - Result OCR update dùng compare-and-set theo `version`; row đã `is_final=true` không được update.
+- Mỗi lần submit OCR logic tạo một row `provider_attempts` với `operation=OCR` và `transport=OCR_WORKER`. Row giữ `status=STARTED` trong thời gian FPT còn xử lý; submit và các lần poll cập nhật cùng row bằng `provider_job_id`, `provider_status`, `provider_http_status`, `poll_count` và `last_polled_at`. Chỉ khi FPT terminal mới cập nhật `status=SUCCEEDED|FAILED`, `provider_completed_at` và `finished_at`; không tạo một row audit mới cho từng HTTP poll.
+- Raw response FPT cần đối soát có thể lưu mã hóa trong `provider_attempts` theo retention policy; Canonical Result cuối cho nghiệp vụ chỉ lưu trong `verification_results`.
+- `verifications.available_at` là thời điểm poll tiếp theo. Checkpoint non-terminal phải commit `WAITING_PROVIDER`, cập nhật provider attempt, xóa lease và ghi delayed poll outbox trong cùng transaction.
+- `processing_deadline_at` giới hạn toàn bộ thời gian submit–poll; `provider_job_id` không được trả ra ngoài `vhm-ocr-ekyc`.
 - `verification_media_refs` chỉ dùng cho OCR. Baseline eKYC không persist request media; service chỉ forward stream và audit response.
 - eKYC response cần audit được lưu mã hóa trong `provider_attempts`, giới hạn quyền truy cập và áp dụng retention theo chính sách dữ liệu định danh.
 - Không lưu VHM token hoặc FPT credential trong database/log.
@@ -683,9 +737,12 @@ Quy ước schema:
 - Create OCR insert verification, media ref và outbox trong một transaction ngắn.
 - Cùng `Idempotency-Key` và request fingerprint trả resource cũ; cùng key nhưng fingerprint khác trả `409 IDEMPOTENCY_CONFLICT`.
 - Queue xử lý theo at-least-once; message chỉ chứa reference/routing tối thiểu và OCR Worker phải idempotent.
-- Worker claim aggregate bằng lease/CAS; không gọi lại operation đã có provider attempt terminal thành công.
+- Worker claim aggregate bằng lease/CAS cho từng step ngắn; không giữ lease, thread hoặc connection trong thời gian chờ provider xử lý.
 - Object Storage và provider calls luôn nằm ngoài DB transaction.
-- Lỗi retry-safe đưa OCR về `QUEUED`, tăng attempt, đặt `available_at`, xóa lease và ghi outbox mới trong cùng transaction.
+- Submit thành công phải checkpoint `provider_job_id` trước khi phát poll job. Worker không submit lại khi đã có logical provider attempt với job ID.
+- Poll non-terminal cập nhật cùng provider attempt, tăng `poll_count`, chuyển `WAITING_PROVIDER`, đặt `available_at`, xóa lease và ghi delayed poll outbox trong cùng transaction.
+- Poll job duplicate chỉ được gọi status cho cùng `provider_job_id`; checkpoint dùng row version/CAS để một poll result thắng.
+- Lỗi retry-safe trước khi submit đưa OCR về `QUEUED`; lỗi retry-safe khi poll giữ `WAITING_PROVIDER`, áp dụng backoff/jitter và không tạo provider job mới.
 - Final result, `DONE + COMPLETED + outcome` commit cùng transaction.
 - Outbox Publisher claim `NEW/FAILED → PUBLISHING` bằng lease; stale `PUBLISHING` được phục hồi sau lease expiry.
 
@@ -702,6 +759,10 @@ Quy ước schema:
 
 ### 6.3. Error và retry
 
+- OCR submit lỗi chắc chắn trước khi gửi có thể retry. Nếu timeout/disconnect sau khi request có thể đã tới FPT, ghi attempt `UNKNOWN`; chỉ resume bằng provider idempotency/lookup contract đã được FPT xác nhận, không submit lại mù.
+- Provider status `PENDING/PROCESSING` không phải lỗi. Worker checkpoint và lên lịch poll tiếp theo theo interval/backoff của FPT.
+- Poll gặp 429/5xx/network error được retry bằng backoff + jitter nhưng không vượt `processing_deadline_at`. Cách xử lý 404/job expiry phải theo contract FPT.
+- Provider terminal `FAILED/EXPIRED` hoặc quá deadline được map thành `NEED_RETRY` hay `PROVIDER_ERROR` theo policy và không poll tiếp.
 - Provider business/error response được forward theo contract để SDK tự hiển thị hoặc retry flow.
 - `vhm-ocr-ekyc` không tự retry init/OCR/liveness mutation vì SDK sở hữu session và retry behavior.
 - Nếu timeout sau khi request có thể đã gửi, ghi attempt `UNKNOWN` và trả lỗi tương thích SDK; không replay body mù.
@@ -711,20 +772,23 @@ Quy ước schema:
 Timeout phải thỏa quan hệ:
 
 ```text
-FPT outbound timeout < vhm-ocr-ekyc deadline < vhm-agent-api/SDK request timeout
+OCR: FPT submit/status/result call timeout < OCR worker lease
+     poll interval/backoff < processing_deadline_at
+
+eKYC: FPT outbound timeout < vhm-ocr-ekyc deadline < vhm-agent-api/SDK request timeout
 ```
 
-Mỗi operation `INIT_SESSION`, `OCR`, `LIVENESS` có connect timeout, response-header timeout, streaming idle timeout và hard deadline riêng theo contract FPT. Client disconnect phải propagate cancellation xuống FPT khi transport cho phép, nhưng disconnect không chứng minh provider chưa xử lý; attempt vẫn có thể là `UNKNOWN`.
+Mỗi OCR submit/status/result call có connect timeout và response deadline ngắn. Tổng vòng đời provider job bị chặn bởi `processing_deadline_at`; worker không `sleep`, không giữ lease và không giữ DB transaction giữa hai lần poll. Khi verification bị cancel/expire, không phát poll mới; provider cancellation chỉ gọi nếu FPT có contract tương ứng.
 
-OCR outbound timeout phải ngắn hơn worker lease còn lại. OCR Worker renew lease giữa các step nếu cần; hard timeout phải hủy outbound request trước khi mất lease.
+Mỗi eKYC operation `INIT_SESSION`, `OCR`, `LIVENESS` có connect timeout, response-header timeout, streaming idle timeout và hard deadline riêng theo contract FPT. Client disconnect phải propagate cancellation xuống FPT khi transport cho phép, nhưng disconnect không chứng minh provider chưa xử lý; attempt vẫn có thể là `UNKNOWN`.
 
 ### 6.5. Quota, scaling và observability
 
 - OCR dùng queue, worker concurrency và token bucket theo quota OCR.
 - eKYC SDK route dùng admission control theo active streams, request/byte rate, tenant/flow và quota FPT; không dùng queue để giữ request tương tác.
 - `vhm-ocr-ekyc` có route-level connection/concurrency limit giữa control-plane, eKYC streaming path và OCR Worker để cùng service nhưng không tranh hết tài nguyên.
-- Circuit breaker OCR dừng claim job mới và dời `available_at`. Circuit breaker eKYC từ chối trước khi đọc body, trả lỗi SDK-compatible và không giữ connection treo.
-- Metric/alert tối thiểu: OCR queue age/depth, outbox lag, eKYC active streams/bytes/latency/error/429/502/504, stale OCR lease và terminal outcome rate.
+- Circuit breaker OCR dừng submit mới nhưng vẫn phải có policy cho status poll của job đã nhận; poll bị trì hoãn phải cập nhật `available_at` mà không tạo provider job mới. Circuit breaker eKYC từ chối trước khi đọc body, trả lỗi SDK-compatible và không giữ connection treo.
+- Metric/alert tối thiểu: OCR submit/poll latency, pending age, poll count, provider terminal status, due-poll queue age/depth, outbox lag, stale OCR lease, terminal outcome rate và eKYC active streams/bytes/latency/error/429/502/504.
 - Không dùng `verificationId`, subject/business ref hoặc PII làm metric label.
 
 ### 6.6. Bảo mật và lưu media eKYC
@@ -741,9 +805,9 @@ OCR outbound timeout phải ngắn hơn worker lease còn lại. OCR Worker rene
 ### 7.1. Thứ tự triển khai
 
 1. Chốt với FPT exact Android/iOS SDK version hỗ trợ trỏ Proxy Base URL về `vhm-ocr-ekyc` và request/response wire contract.
-2. Chốt hai policy độc lập: OCR `documentType → model/input limit`; eKYC SDK config trên Mobile, document/liveness mode và input limit.
-3. Xây OCR schema/Verification API và mở rộng `provider_attempts` cho eKYC audit.
-4. Xây OCR upload/worker/provider flow như mục 3.
+2. Chốt FPT OCR polling contract: submit response/job ID, status/result API, terminal status, poll interval, rate limit, idempotency/lookup và job TTL; đồng thời chốt `documentType → model/input limit`.
+3. Xây OCR schema/Verification API, checkpoint provider job/poll state và mở rộng `provider_attempts` cho eKYC audit.
+4. Xây OCR upload, submit worker, delayed poll worker và provider adapter như mục 3.
 5. Tích hợp SDK trên Android/iOS; Mobile tự cấu hình flow, Proxy Base URL, custom VHM auth header và nhận SDK callback.
 6. Xây eKYC SDK endpoint đồng bộ ngay trong `vhm-ocr-ekyc`, sau streaming route của `vhm-agent-api`.
 7. Kiểm tra audit response eKYC và SDK callback success/failure.
@@ -753,16 +817,16 @@ OCR outbound timeout phải ngắn hơn worker lease còn lại. OCR Worker rene
 
 | **Lớp test** | **Phạm vi** |
 | --- | --- |
-| Unit | OCR type/status/idempotency/canonical mapping và eKYC audit mapping |
+| Unit | OCR submit–poll state machine, idempotency, deadline, canonical mapping và eKYC audit mapping |
 | FPT SDK contract | Exact Android/iOS Proxy Base URL, headers, multipart field/body và response/error parsing qua `vhm-ocr-ekyc` |
-| Provider contract | Init/OCR/liveness success, business error, malformed response, 429, 5xx và timeout |
-| Database | CHECK/unique/index, optimistic lock, final result guard và outbox/worker lease recovery |
-| Queue/Outbox | OCR duplicate/redelivery, publish-before-mark và worker restart; xác nhận SDK path không enqueue provider call |
+| Provider contract | OCR submit/status/result với pending/terminal/404/429/5xx/timeout; eKYC init/OCR/liveness success và error contract |
+| Database | CHECK/unique/index, provider job checkpoint, optimistic lock, final result guard và outbox/worker lease recovery |
+| Queue/Outbox | OCR submit/poll duplicate, delayed poll, publish-before-mark và worker restart; xác nhận SDK path không enqueue provider call |
 | eKYC synchronous integration | End-to-end SDK init/OCR/liveness forwarding, streaming/backpressure, response audit, credential injection và fixed upstream allowlist |
-| OCR end-to-end | Upload → create `202` → OCR Worker → result → confirm/apply |
+| OCR end-to-end | Upload → create `202` → submit FPT → nhiều poll non-terminal → terminal result → confirm/apply |
 | eKYC end-to-end | Mobile config → init SDK → SDK chạy init/OCR/liveness qua `vhm-ocr-ekyc` → audit response → SDK callback |
 | Security | Token tamper/expiry/replay, session/context swap, cross-domain IDOR, generic-relay attempt, malicious multipart và PII-safe logs |
-| Resilience | Service/provider outage, disconnect giữa upload, unknown-after-send, DB checkpoint failure, SDK resume và session expiry |
-| Performance | Active streams, bandwidth, p95/p99 từng operation, service memory và OCR queue burst độc lập |
+| Resilience | Unknown-after-submit, provider outage, lost/delayed poll, duplicate poll, job expiry, DB checkpoint failure, SDK resume và session expiry |
+| Performance | Poll amplification/rate limit, provider pending age, OCR queue burst, active eKYC streams, bandwidth, p95/p99 và service memory |
 
 `vhm-ocr-ekyc` sở hữu OCR control/worker path. Với eKYC, Mobile tự cấu hình FPT SDK; backend chỉ forward đồng bộ, inject FPT credential và audit response, không bootstrap config, không orchestration và không có eKYC Worker.
