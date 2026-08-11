@@ -64,7 +64,7 @@ OCR chỉ hỗ trợ số hóa/gợi ý dữ liệu. eKYC hỗ trợ kiểm tra 
 | Result Normalizer/Policy | Tạo Canonical Result và outcome ổn định |
 | Verification Database | Lưu aggregate, SDK/session binding, provider attempts, callback Inbox, results và outbox |
 
-Verification API, eKYC Proxy, Callback API, OCR Worker, Result Processor/Reconciliation, Provider Adapter và Result Normalizer/Policy thuộc cùng capability `vhm-verification-service` nhưng được deploy thành workload phù hợp. Chỉ eKYC Proxy và Callback API cần provider/client-facing ingress; Verification API vẫn private.
+Verification API, eKYC Proxy, Callback API, OCR Worker, Result Processor/Reconciliation, Provider Adapter và Result Normalizer/Policy thuộc cùng capability `vhm-verification-service` nhưng được deploy thành workload phù hợp. eKYC Proxy chỉ được publish cho SDK qua dedicated streaming route của `vhm-agent-api`; Callback API có provider-facing ingress riêng và Verification API vẫn private.
 
 OCR Worker và eKYC Proxy không chia sẻ capacity. OCR backlog không được chiếm connection, memory hoặc FPT quota dành cho luồng eKYC tương tác; ngược lại, burst eKYC không làm chậm OCR queue.
 
@@ -311,7 +311,7 @@ Mobile/Web không upload document/liveness qua API nghiệp vụ. Sau khi domain
 
 ```text
 POST VHM Proxy /init-session → FPT /init_session
-POST VHM Proxy /ocr          → FPT OCR
+POST VHM Proxy /ocr          → FPT OCR định danh trong phiên eKYC
 POST VHM Proxy /liveness     → FPT face/liveness
 ```
 
@@ -393,7 +393,7 @@ Authorize · Consent · flowCode`"]
 verificationId · short-lived token · endpoints`"]
     INIT["`**SDK → Proxy: init**
 Validate binding · approved header injection`"]
-    OCR["`**SDK → Proxy: OCR**
+    OCR["`**SDK → Proxy: ID OCR**
 Stream document · checkpoint result`"]
     DOC_CHECK{"`**Document đạt?**`"}
     LIVE["`**SDK → Proxy: liveness**
@@ -453,7 +453,7 @@ sequenceDiagram
     BFF-->>SDK: session response
 
     SDK->>SDK: Capture document + on-device quality checks
-    SDK->>BFF: POST Proxy OCR<br/>multipart document
+    SDK->>BFF: POST Proxy ID OCR<br/>multipart giấy tờ định danh
     BFF->>PROXY: Stream request body
     PROXY->>FPT: Stream OCR request
     FPT-->>PROXY: OCR/document result
@@ -512,7 +512,7 @@ API theo use case vẫn tách để contract rõ, nhưng đều map vào verific
 | Tạo eKYC/bootstrap SDK | Private control-plane | `POST /v1/ekyc-verifications` | `201 + verificationId + sdkBootstrap` |
 | Refresh SDK bootstrap | Private control-plane | `POST /v1/ekyc-verifications/{verificationId}/sdk-bootstrap` | Token/endpoints mới nếu session còn hợp lệ |
 | SDK init session | SDK streaming data-plane | `POST /v1/ekyc-sdk-proxy/init-session` | Provider-compatible response |
-| SDK OCR định danh | SDK streaming data-plane | `POST /v1/ekyc-sdk-proxy/ocr` | Provider-compatible response |
+| SDK OCR định danh trong eKYC | SDK streaming data-plane | `POST /v1/ekyc-sdk-proxy/ocr` | Provider-compatible response |
 | SDK liveness | SDK streaming data-plane | `POST /v1/ekyc-sdk-proxy/liveness` | Provider-compatible response |
 | FPT callback | Provider ingress | `POST /v1/provider-callbacks/fpt-ekyc` | `2xx` sau khi Inbox commit |
 | Lấy eKYC | Private control-plane | `GET /v1/ekyc-verifications/{verificationId}` | Status/step/outcome/next action |
