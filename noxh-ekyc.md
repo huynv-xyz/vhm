@@ -15,27 +15,27 @@ Upload document → create OCR → 202 QUEUED
 → Canonical Result → Mobile/Web poll → confirm/apply
 
 IDENTITY_EKYC:
-Mobile/Web tự cấu hình client_uuid, flow, base URL và header cho FPT SDK
+Mobile tự cấu hình flow, client_uuid, Proxy Base URL và custom VHM auth header cho FPT SDK
 → SDK tự điều phối init session → OCR → liveness
 → mỗi request đi qua vhm-verification-service → FPT AI Backend
 → vhm-verification-service audit response và forward nguyên response về SDK
-→ SDK trả kết quả cho Mobile/Web
+→ SDK trả kết quả cho Mobile
 ```
 
 OCR tài liệu nghiệp vụ vẫn dùng **backend API + outbox/queue/worker**. Chỉ eKYC định danh dùng **FPT SDK qua `vhm-verification-service`** để tận dụng capture UX, kiểm tra chất lượng đầu vào, liveness và device capability của SDK nhưng không cho SDK gọi trực tiếp FPT.
 
-Các eKYC SDK endpoint synchronous của `vhm-verification-service` nằm trên critical path của SDK; request init/OCR định danh/liveness không đi qua Queue hoặc eKYC Worker. Mobile/Web tự chọn và cấu hình SDK flow. Service chỉ xác thực request, inject FPT credential, forward request/response và audit response; không cấp SDK config, không tạo FPT session và không điều phối step.
+Các eKYC SDK endpoint synchronous của `vhm-verification-service` nằm trên critical path của SDK; request init/OCR định danh/liveness không đi qua Queue hoặc eKYC Worker. Mobile tự chọn và cấu hình SDK flow. Service chỉ xác thực request, inject FPT credential, forward request/response và audit response; không cấp SDK config, không tạo FPT session và không điều phối step.
 
 ### 1.2. So sánh các hướng tích hợp FPT
 
-FPT SDK là thư viện chạy trên ứng dụng Mobile/Web để hướng dẫn capture và điều phối các bước eKYC. SDK không chạy trong Verification API hoặc worker. Nếu chọn SDK, kiến trúc client và đường truyền media phải thay đổi tương ứng.
+FPT SDK là thư viện chạy trên ứng dụng Mobile để hướng dẫn capture và điều phối các bước eKYC. SDK không chạy trong Verification API hoặc worker. Nếu chọn SDK, kiến trúc client và đường truyền media phải thay đổi tương ứng.
 
 | **Hướng tiếp cận** | **Luồng chính** | **Ưu điểm** | **Nhược điểm** | **Lựa chọn** |
 | --- | --- | --- | --- | --- |
 | Backend API tại từng domain | Mobile/Web gọi domain backend; mỗi domain tự quản lý media, session và gọi FPT API | Không cần thêm capability/service tập trung; domain chủ động tùy chỉnh luồng theo nghiệp vụ riêng | Lặp code tích hợp ở nhiều domain; phân tán credential, session, retry, quota và audit; kết quả/error contract dễ không đồng nhất; mỗi lần đổi provider phải sửa nhiều service | No |
 | Backend API qua `vhm-verification-service` | Mobile/Web upload vào S3; domain gọi Verification API; Queue phân phối job để worker đọc media và gọi FPT API | Phù hợp tài liệu nghiệp vụ, file lớn và xử lý nền; domain không tự quản provider credential/session/retry; latency, quota và backlog được cô lập | Phải vận hành database, queue, Outbox Publisher và worker; VHM tự xây upload/capture UX | **Yes — chỉ `DOCUMENT_OCR`** |
-| FPT SDK gọi trực tiếp FPT | SDK trên Mobile/Web capture và gửi dữ liệu thẳng tới FPT; VHM nhận kết quả theo cơ chế tích hợp của FPT | Tích hợp eKYC phía VHM đơn giản hơn; ít hop và độ trễ truyền tải thấp; tận dụng capture UI, kiểm tra chất lượng thời gian thực, liveness và các capability SDK hỗ trợ | VHM không kiểm soát đường truyền media trước khi tới FPT; phụ thuộc SDK trên từng nền tảng và cơ chế nhận/đối soát kết quả; khó áp dụng contract upload/worker hiện tại; không phù hợp OCR tài liệu nghiệp vụ tổng quát | No |
-| FPT SDK qua `vhm-verification-service` | Mobile/Web tự cấu hình SDK gọi eKYC endpoint của `vhm-verification-service`; service inject credential, forward request/response với FPT và audit response | Tận dụng capture UX và kiểm tra chất lượng của SDK; VHM kiểm soát data flow và có dữ liệu audit; Mobile không giữ FPT credential | `vhm-verification-service` nằm trên synchronous streaming path nên phải HA, kiểm soát latency/bandwidth và tương thích chặt SDK protocol; không dùng queue để che lỗi trên interactive path | **Yes — chỉ `IDENTITY_EKYC`** |
+| FPT SDK gọi trực tiếp FPT | SDK trên Mobile capture và gửi dữ liệu thẳng tới FPT; VHM nhận kết quả theo cơ chế tích hợp của FPT | Tích hợp eKYC phía VHM đơn giản hơn; ít hop và độ trễ truyền tải thấp; tận dụng capture UI, kiểm tra chất lượng thời gian thực, liveness và các capability SDK hỗ trợ | VHM không kiểm soát đường truyền media trước khi tới FPT; phụ thuộc SDK trên từng nền tảng và cơ chế nhận/đối soát kết quả; khó áp dụng contract upload/worker hiện tại; không phù hợp OCR tài liệu nghiệp vụ tổng quát | No |
+| FPT SDK qua `vhm-verification-service` | Mobile tự cấu hình SDK gọi eKYC endpoint của `vhm-verification-service`; service inject credential, forward request/response với FPT và audit response | Tận dụng capture UX và kiểm tra chất lượng của SDK; VHM kiểm soát data flow và có dữ liệu audit; Mobile không giữ FPT credential | `vhm-verification-service` nằm trên synchronous streaming path nên phải HA, kiểm soát latency/bandwidth và tương thích chặt SDK protocol; không dùng queue để che lỗi trên interactive path | **Yes — chỉ `IDENTITY_EKYC`** |
 
 Không chọn backend riêng tại từng domain vì phần tích hợp FPT là capability kỹ thuật lặp lại, không phải nghiệp vụ riêng của từng domain. `vhm-verification-service` quản lý provider contract và credential; eKYC response đi qua service chỉ được lưu phục vụ audit, chưa normalize hoặc apply vào nghiệp vụ trong baseline này.
 
@@ -49,7 +49,7 @@ OCR chỉ hỗ trợ số hóa/gợi ý dữ liệu. eKYC hỗ trợ kiểm tra 
 
 | **Thành phần** | **Trách nhiệm** |
 | --- | --- |
-| Mobile/Web | OCR: upload tài liệu và poll; eKYC: tự cấu hình flow/base URL/header/client UUID, khởi chạy SDK và nhận kết quả SDK |
+| Mobile/Web | OCR: upload tài liệu và poll; eKYC chỉ trên Mobile: cấu hình flow, client UUID, Proxy Base URL và custom VHM auth header, khởi chạy SDK và nhận kết quả SDK |
 | FPT eKYC SDK | Capture giấy tờ định danh/liveness, kiểm tra chất lượng trên thiết bị và gọi đúng eKYC endpoint của `vhm-verification-service` |
 | `vhm-agent-api` | Xác thực/routing; authorize upload OCR và publish streaming route eKYC; không giữ FPT credential |
 | Domain service, ví dụ `vhm-dossier-core` | Authorize `businessRef`, media path và apply kết quả OCR |
@@ -94,7 +94,7 @@ QUEUED → PROCESSING → COMPLETED
 
 Với OCR, Verification API ghi verification, media refs và outbox trong cùng transaction rồi trả `202`. Outbox Publisher đưa job đã commit vào Queue; OCR Worker claim bằng status + lease/CAS trước khi đọc media hoặc gọi FPT.
 
-Với eKYC, Mobile/Web tự cấu hình và khởi chạy SDK. SDK gọi init/OCR/liveness qua eKYC endpoint của `vhm-verification-service`; service stream request tới FPT, audit response rồi forward nguyên response về SDK. Không có API bootstrap/config eKYC, eKYC lifecycle API, Worker/Queue hoặc backend orchestration giữa các step.
+Với eKYC, Mobile tự cấu hình và khởi chạy SDK. SDK gọi init/OCR/liveness qua eKYC endpoint của `vhm-verification-service`; service stream request tới FPT, audit response rồi forward nguyên response về SDK. Không có API bootstrap/config eKYC, eKYC lifecycle API, Worker/Queue hoặc backend orchestration giữa các step.
 
 ## 3. Luồng OCR
 
@@ -371,9 +371,9 @@ Ví dụ Canonical Result:
 
 ### 4.1. Phân chia trách nhiệm
 
-Mobile/Web tự cấu hình SDK, gồm flow cần chạy, `client_uuid`, base URL và VHM auth header. Ở chế độ full eKYC, SDK điều khiển UI và chuỗi init session → OCR → liveness; nếu dùng OCR-only hoặc liveness-only thì Mobile/Web chọn SDK mode tương ứng.
+Mobile khởi tạo FPT SDK với flow, `client_uuid`, Proxy Base URL của VHM và custom VHM auth header. Ở chế độ full eKYC, SDK điều khiển UI và chuỗi init session → OCR → liveness; nếu dùng OCR-only hoặc liveness-only thì Mobile chọn SDK mode tương ứng.
 
-`client_uuid` do Mobile/Web tạo và truyền vào SDK để correlation/audit. Khi SDK chạy, từng request đi theo cùng một cơ chế:
+`client_uuid` do Mobile tạo và truyền vào SDK để correlation/audit. Khi SDK chạy, từng request đi theo cùng một cơ chế:
 
 ```text
 FPT SDK
@@ -384,9 +384,9 @@ FPT SDK
 → trả nguyên response về FPT SDK
 ```
 
-`vhm-verification-service` chỉ xác thực VHM request, forward đúng wire contract, inject FPT credential ở server và audit response. Request body do SDK tạo không được parse/rebuild; response trả SDK không được normalize hoặc thay đổi contract FPT.
+`vhm-verification-service` xác thực request, forward dữ liệu SDK tới FPT, audit response và trả response về SDK. Chi tiết xử lý request/response được mô tả tại mục 4.4.
 
-Android công bố cấu hình `BASE_URL` và custom headers; Web công bố endpoint/header riêng cho init/OCR/liveness. iOS cần FPT cung cấp exact SDK build/config có endpoint override. Nếu SDK bắt buộc nhúng FPT API key thật trên thiết bị thì SDK build đó không phù hợp baseline này.
+Android công bố cấu hình `BASE_URL` và custom headers. iOS cần FPT cung cấp exact SDK build/config có endpoint override. Nếu SDK bắt buộc nhúng FPT API key thật trên thiết bị thì SDK build đó không phù hợp baseline này.
 
 PDF/tài liệu nghiệp vụ không đi qua SDK eKYC mà tiếp tục dùng luồng OCR tại mục 3.
 
@@ -394,8 +394,8 @@ PDF/tài liệu nghiệp vụ không đi qua SDK eKYC mà tiếp tục dùng lu�
 
 ```mermaid
 flowchart LR
-    APP["`**Mobile/Web App**
-Config flow · client_uuid · base URL · header`"]
+    APP["`**Mobile App**
+Config flow · client_uuid · Proxy Base URL · auth header`"]
     SDK["`**FPT eKYC SDK**
 UI · Init session · OCR · Liveness`"]
     BFF["`**vhm-agent-api**
@@ -420,23 +420,24 @@ Session · OCR · Liveness`"]
 ```mermaid
 sequenceDiagram
     autonumber
-    participant APP as Mobile/Web App
+    participant APP as Mobile App
     participant SDK as FPT eKYC SDK
     participant BFF as vhm-agent-api
     participant VERIFY as vhm-verification-service
     participant FPT as FPT AI eKYC Backend
     participant DB as Verification Database
 
-    APP->>APP: Configure flow, client_uuid,<br/>VHM base URL/header
+    APP->>APP: Configure flow, client_uuid,<br/>Proxy Base URL + VHM auth header
     APP->>SDK: Initialize/start SDK
 
     loop Flow do FPT SDK tự điều phối
         SDK->>BFF: Init/OCR/Liveness request
         BFF->>VERIFY: Stream request
         VERIFY->>VERIFY: Authenticate + inject FPT credential
+        VERIFY->>DB: Store request metadata<br/>không lưu media/body
         VERIFY->>FPT: Forward SDK request
         FPT-->>VERIFY: Provider response
-        VERIFY->>DB: Store provider_attempts audit
+        VERIFY->>DB: Update provider_attempts<br/>status/error + encrypted response
         VERIFY-->>BFF: Forward provider-compatible response
         BFF-->>SDK: Response
     end
@@ -466,15 +467,22 @@ X-Correlation-Id: <request-id>
 <FPT SDK multipart body streamed without transformation>
 ```
 
-`vhm-verification-service` xử lý mỗi request:
+Khi nhận request từ SDK, `vhm-verification-service`:
 
 1. Xác thực VHM token và lấy `client_uuid` phục vụ correlation/audit.
-2. Allowlist operation/path, method, content type và input size.
-3. Stream nguyên body tới fixed FPT upstream; inject FPT credential/header đúng contract.
-4. Ghi response audit vào `provider_attempts`.
-5. Trả nguyên response tương thích về SDK.
+2. Kiểm tra operation/path, method, content type và input size theo contract đã allowlist.
+3. Ghi metadata vào `provider_attempts`: `client_uuid`, operation, correlation ID, thời điểm bắt đầu và trạng thái gửi.
+4. Stream request body tới FPT và inject provider credential/header theo contract.
+5. Không lưu request body, ảnh giấy tờ hoặc selfie/video.
 
-Service không điều phối thứ tự init/OCR/liveness và không parse/rebuild multipart request body. Exact Android/iOS/Web contract phải được FPT sign-off; đặc biệt iOS cần SDK build có endpoint override.
+Khi nhận response từ FPT, `vhm-verification-service`:
+
+1. Cập nhật `provider_attempts` với provider request ID, HTTP status, error code, thời gian hoàn tất và trạng thái xử lý.
+2. Mã hóa response cần audit vào `response_payload_ciphertext` theo retention policy.
+3. Trả nguyên HTTP status, header và body tương thích về SDK.
+4. Không normalize eKYC response và không ghi vào `verification_results`.
+
+Service không điều phối thứ tự init/OCR/liveness và không parse/rebuild multipart request body. Exact Android/iOS contract phải được FPT sign-off; đặc biệt iOS cần SDK build có endpoint override.
 
 Baseline eKYC không có create/status/result API. Provider business/error response được audit và forward theo contract để SDK xử lý; không lộ credential, internal upstream hoặc stack trace.
 
@@ -695,10 +703,10 @@ Quy ước schema:
 - FPT SDK gọi trực tiếp eKYC SDK endpoint của `vhm-verification-service` qua route streaming của `vhm-agent-api`; không có service trung gian riêng.
 - `vhm-agent-api` và `vhm-verification-service` phải stream request end-to-end, giữ backpressure và không buffer toàn bộ document/video trong memory hoặc local disk.
 - Không đặt Queue, Outbox Publisher hoặc eKYC Worker giữa SDK và FPT. Init/OCR/liveness đều là synchronous request/response.
-- Service chỉ forward fixed endpoint đã allowlist. Android/Web/iOS SDK contract, method, headers, multipart field names, response body và error behavior phải được FPT sign-off theo exact SDK version.
+- Service chỉ forward fixed endpoint đã allowlist. Android/iOS SDK contract, method, headers, multipart field names, response body và error behavior phải được FPT sign-off theo exact SDK version.
 - Request body do SDK tạo được forward nguyên trạng. Service chỉ thêm/thay credential/header được phê duyệt; không parse rồi rebuild multipart và không sửa business response mà SDK cần đọc.
-- FPT phải xác nhận SDK không yêu cầu nhúng provider API key thật trên Mobile/Web; SDK chỉ mang VHM auth header và `vhm-verification-service` inject credential server-side.
-- `client_uuid` do Mobile/Web cấu hình và được service dùng để correlation/audit.
+- FPT phải xác nhận SDK không yêu cầu nhúng provider API key thật trên Mobile; SDK chỉ mang VHM auth header và `vhm-verification-service` inject credential server-side.
+- `client_uuid` do Mobile cấu hình và được service dùng để correlation/audit.
 - Admission check phải hoàn tất trước khi đọc body. Khi DB/token service không sẵn sàng, fail fast trước khi mở upstream stream.
 - Khi FPT trả response, service lưu audit data cần thiết rồi forward nguyên response tương thích về SDK.
 
@@ -707,7 +715,7 @@ Quy ước schema:
 - Provider business/error response được forward theo contract để SDK tự hiển thị hoặc retry flow.
 - `vhm-verification-service` không tự retry init/OCR/liveness mutation vì SDK sở hữu session và retry behavior.
 - Nếu timeout sau khi request có thể đã gửi, ghi attempt `UNKNOWN` và trả lỗi tương thích SDK; không replay body mù.
-- Khi người dùng chạy lại toàn bộ eKYC flow, Mobile/Web tạo `client_uuid` mới.
+- Khi người dùng chạy lại toàn bộ eKYC flow, Mobile tạo `client_uuid` mới.
 
 ### 6.4. Timeout và cancellation
 
@@ -732,7 +740,7 @@ OCR outbound timeout phải ngắn hơn worker lease còn lại. OCR Worker rene
 
 ### 6.6. Bảo mật và lưu media eKYC
 
-- SDK request dùng VHM auth header do Mobile/Web cấu hình; VHM credential không được dùng thay provider credential ở upstream.
+- SDK request dùng VHM auth header do Mobile cấu hình; VHM credential không được dùng thay provider credential ở upstream.
 - FPT credential chỉ tồn tại trong secret manager/runtime của `vhm-verification-service`; không trả về SDK, BFF response hoặc log.
 - TLS bắt buộc ở cả hai hop.
 - `vhm-verification-service` enforce method/path/content type/file count/size/timeout trước hoặc trong streaming; không cung cấp generic relay và không chấp nhận upstream URL từ client.
@@ -743,11 +751,11 @@ OCR outbound timeout phải ngắn hơn worker lease còn lại. OCR Worker rene
 
 ### 7.1. Thứ tự triển khai
 
-1. Chốt với FPT exact Android/iOS/Web SDK version hỗ trợ trỏ base URL/endpoint về `vhm-verification-service` và request/response wire contract.
-2. Chốt hai policy độc lập: OCR `documentType → model/input limit`; eKYC SDK config trên Mobile/Web, document/liveness mode và input limit.
+1. Chốt với FPT exact Android/iOS SDK version hỗ trợ trỏ Proxy Base URL về `vhm-verification-service` và request/response wire contract.
+2. Chốt hai policy độc lập: OCR `documentType → model/input limit`; eKYC SDK config trên Mobile, document/liveness mode và input limit.
 3. Xây OCR schema/Verification API và eKYC response audit store.
 4. Xây OCR upload/worker/provider flow như mục 3.
-5. Tích hợp SDK trên từng nền tảng; Mobile/Web tự cấu hình flow, `client_uuid`, VHM base URL/header và nhận SDK callback.
+5. Tích hợp SDK trên Android/iOS; Mobile tự cấu hình flow, `client_uuid`, Proxy Base URL, custom VHM auth header và nhận SDK callback.
 6. Xây eKYC SDK endpoint đồng bộ ngay trong `vhm-verification-service`, sau streaming route của `vhm-agent-api`.
 7. Kiểm tra audit response eKYC và SDK callback success/failure.
 8. Contract/load/security/resilience test và chốt timeout, active stream, bandwidth, quota, SLO/alert trước production.
@@ -757,15 +765,15 @@ OCR outbound timeout phải ngắn hơn worker lease còn lại. OCR Worker rene
 | **Lớp test** | **Phạm vi** |
 | --- | --- |
 | Unit | OCR type/status/idempotency/canonical mapping và eKYC audit mapping |
-| FPT SDK contract | Exact Android/iOS/Web base URL, headers, multipart field/body và response/error parsing qua `vhm-verification-service` |
+| FPT SDK contract | Exact Android/iOS Proxy Base URL, headers, multipart field/body và response/error parsing qua `vhm-verification-service` |
 | Provider contract | Init/OCR/liveness success, business error, malformed response, 429, 5xx và timeout |
 | Database | CHECK/unique/index, optimistic lock, final result guard và outbox/worker lease recovery |
 | Queue/Outbox | OCR duplicate/redelivery, publish-before-mark và worker restart; xác nhận SDK path không enqueue provider call |
 | eKYC synchronous integration | End-to-end SDK init/OCR/liveness forwarding, streaming/backpressure, response audit, credential injection và fixed upstream allowlist |
 | OCR end-to-end | Upload → create `202` → OCR Worker → result → confirm/apply |
-| eKYC end-to-end | Mobile/Web config → init SDK → SDK chạy init/OCR/liveness qua `vhm-verification-service` → audit response → SDK callback |
+| eKYC end-to-end | Mobile config → init SDK → SDK chạy init/OCR/liveness qua `vhm-verification-service` → audit response → SDK callback |
 | Security | Token tamper/expiry/replay, UUID/session swap, cross-domain IDOR, generic-relay attempt, malicious multipart và PII-safe logs |
 | Resilience | Service/provider outage, disconnect giữa upload, unknown-after-send, DB checkpoint failure, SDK resume và session expiry |
 | Performance | Active streams, bandwidth, p95/p99 từng operation, service memory và OCR queue burst độc lập |
 
-`vhm-verification-service` sở hữu OCR control/worker path. Với eKYC, Mobile/Web tự cấu hình FPT SDK; backend chỉ forward đồng bộ, inject FPT credential và audit response, không bootstrap config, không orchestration và không có eKYC Worker.
+`vhm-verification-service` sở hữu OCR control/worker path. Với eKYC, Mobile tự cấu hình FPT SDK; backend chỉ forward đồng bộ, inject FPT credential và audit response, không bootstrap config, không orchestration và không có eKYC Worker.
