@@ -82,7 +82,7 @@ QUEUED → PROCESSING → COMPLETED
 | `CANCELLED` | Bị hủy trước khi hoàn tất |
 | `EXPIRED` | Quá processing deadline |
 
-`currentStep` phục vụ OCR Worker resume. eKYC không dùng lifecycle/state machine này; mỗi response chỉ tạo một audit record theo `client_uuid`, operation và correlation ID.
+`currentStep` phục vụ OCR Worker resume. Mỗi eKYC response tạo một audit record theo `client_uuid`, operation và correlation ID.
 
 `outcome` chỉ có khi `status=COMPLETED` và được kiểm tra theo `type`:
 
@@ -373,7 +373,7 @@ Ví dụ Canonical Result:
 
 Mobile/Web tự cấu hình SDK, gồm flow cần chạy, `client_uuid`, base URL và VHM auth header. Ở chế độ full eKYC, SDK điều khiển UI và chuỗi init session → OCR → liveness; nếu dùng OCR-only hoặc liveness-only thì Mobile/Web chọn SDK mode tương ứng.
 
-`client_uuid` do Mobile/Web tạo và truyền vào SDK để correlation/audit; đây không phải FPT session ID. Khi SDK chạy, từng request đi theo cùng một cơ chế:
+`client_uuid` do Mobile/Web tạo và truyền vào SDK để correlation/audit. Khi SDK chạy, từng request đi theo cùng một cơ chế:
 
 ```text
 FPT SDK
@@ -511,7 +511,7 @@ OCR calls · eKYC response audit`"]
     VERIFICATION --> OUTBOX
 ```
 
-eKYC rows trong `provider_attempts` được correlation bằng `client_uuid`, không tạo quan hệ điều phối step với `verifications`.
+eKYC rows trong `provider_attempts` được correlation bằng `client_uuid`.
 
 ### 5.2. DDL baseline
 
@@ -698,7 +698,7 @@ Quy ước schema:
 - Service chỉ forward fixed endpoint đã allowlist. Android/Web/iOS SDK contract, method, headers, multipart field names, response body và error behavior phải được FPT sign-off theo exact SDK version.
 - Request body do SDK tạo được forward nguyên trạng. Service chỉ thêm/thay credential/header được phê duyệt; không parse rồi rebuild multipart và không sửa business response mà SDK cần đọc.
 - FPT phải xác nhận SDK không yêu cầu nhúng provider API key thật trên Mobile/Web; SDK chỉ mang VHM auth header và `vhm-verification-service` inject credential server-side.
-- `client_uuid` do Mobile/Web cấu hình; service dùng giá trị này để correlation/audit, không quản state machine hoặc provider session thay SDK.
+- `client_uuid` do Mobile/Web cấu hình và được service dùng để correlation/audit.
 - Admission check phải hoàn tất trước khi đọc body. Khi DB/token service không sẵn sàng, fail fast trước khi mở upstream stream.
 - Khi FPT trả response, service lưu audit data cần thiết rồi forward nguyên response tương thích về SDK.
 
@@ -707,7 +707,7 @@ Quy ước schema:
 - Provider business/error response được forward theo contract để SDK tự hiển thị hoặc retry flow.
 - `vhm-verification-service` không tự retry init/OCR/liveness mutation vì SDK sở hữu session và retry behavior.
 - Nếu timeout sau khi request có thể đã gửi, ghi attempt `UNKNOWN` và trả lỗi tương thích SDK; không replay body mù.
-- Khi người dùng chạy lại toàn bộ eKYC flow, Mobile/Web tạo `client_uuid` mới; backend không reuse hoặc quản FPT session.
+- Khi người dùng chạy lại toàn bộ eKYC flow, Mobile/Web tạo `client_uuid` mới.
 
 ### 6.4. Timeout và cancellation
 
