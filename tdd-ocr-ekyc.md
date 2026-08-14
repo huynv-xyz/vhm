@@ -8,7 +8,7 @@
 | **Trường** | **Nội dung** |
 | --- | --- |
 | **Trạng thái** | **ĐANG THẨM ĐỊNH (UNDER REVIEW)** |
-| **Phiên bản & Lịch sử thay đổi** | `v0.9.23` — 14/08/2026 — Loại đường dẫn tài liệu local, chỉ giữ tham chiếu chính thức phục vụ thẩm định |
+| **Phiên bản & Lịch sử thay đổi** | `v0.9.24` — 15/08/2026 — Bổ sung contract API proxy eKYC theo tài liệu FPT SDK/API chính thức |
 | **Chủ sở hữu tài liệu** | TBD — một cá nhân chịu trách nhiệm tài liệu |
 | **Chủ sở hữu hệ thống** | TBD |
 | **Hệ thống** | `vhm-ocr-ekyc` — năng lực OCR/eKYC dùng chung |
@@ -63,7 +63,7 @@
 
 | **Tài liệu L3** | **Trạng thái** | **Chủ sở hữu** | **Cổng bắt buộc** | **Liên kết** |
 | --- | --- | --- | --- | --- |
-| Đặc tả OpenAPI — OCR/eKYC/Upload | PLANNED | Trưởng nhóm Backend | Trước khi duyệt API | `/v3/api-docs` runtime; tài liệu xuất bản TBD |
+| Đặc tả OpenAPI — OCR/eKYC/Upload | DRAFT | Trưởng nhóm Backend | Trước khi duyệt API | `/v3/api-docs` runtime; tài liệu xuất bản chính thức TBD |
 | Contract eKYC FPT & Ma trận tương thích kênh | DRAFT | Tích hợp/Mobile/Web | Trước production eKYC | TBD |
 | Bộ kiểm thử contract FPT Sale OCR | DRAFT | Tích hợp/QA | Trước production Sale OCR | Tài liệu API OCR FPT tại mục B; cần bổ sung fixture tự động |
 | Đặc tả Upload/Download media & Lưu giữ | PLANNED | Backend/ANBM/Quyền riêng tư | Trước khi duyệt media production | TBD |
@@ -548,7 +548,7 @@ tập trung, kết quả OCR chuẩn, lưu kết quả eKYC, media riêng tư v�
 | EVT-01 | Điều phối OCR sau khi tiếp nhận | `vhm.ocr-ekyc.job.created.v1` | OCR API | OCR Processor qua Kafka | Kafka | Bất đồng bộ | Chỉ định danh OCR |
 | FPT-01 | Nhận dạng một tài liệu | Contract FPT được quản lý nội bộ | OCR Processor | FPT | HTTPS/multipart | Đồng bộ bên trong luồng OCR bất đồng bộ | Media tài liệu và kết quả FPT |
 | FPT-02 | Gửi và thăm dò hồ sơ Sale | Contract FPT được quản lý nội bộ | OCR Processor | FPT | HTTPS/multipart/JSON | Bất đồng bộ theo nghiệp vụ | Ba tài liệu, mã giao dịch nội bộ và kết quả FPT |
-| EKYC-01 | Proxy các thao tác do FPT SDK điều phối | Contract theo phiên bản SDK hỗ trợ | FPT SDK qua BFF | FPT qua `vhm-ocr-ekyc` | HTTPS/JSON hoặc multipart | Đồng bộ | Request SDK và toàn bộ HTTP status, headers, body của FPT |
+| EKYC-01 | Proxy các thao tác do FPT SDK điều phối | Nhóm API tại mục 6.5 | FPT SDK qua BFF | FPT qua `vhm-ocr-ekyc` | HTTPS/JSON hoặc multipart | Đồng bộ | Request SDK và toàn bộ HTTP status, headers, body của FPT |
 
 ## 6.2 Contract API OCR VHM
 
@@ -679,13 +679,35 @@ Service làm proxy đồng bộ tới FPT, quản lý credential phía server v�
 thứ tự các bước thay SDK. Response FPT được chuyển tiếp đầy đủ về SDK, đồng thời kết
 quả eKYC được lưu trong PostgreSQL schema `ocr_ekyc` theo chính sách bảo mật và lưu giữ.
 
+### 6.5.1 Danh mục API eKYC VHM
+
+Các đường dẫn dưới đây là contract giữa BFF và `vhm-ocr-ekyc`; đây không phải
+endpoint OCR document bất đồng bộ tại mục 6.2 và không công bố địa chỉ downstream
+của FPT.
+
+| **Thao tác** | **API VHM** | **Đầu vào chính từ FPT SDK** | **Vai trò trong phiên** |
+| --- | --- | --- | --- |
+| Khởi tạo phiên | `POST /v1/ekyc-sdk/init_session` | JSON metadata thiết bị; `device-type`; tùy chọn `client_uuid`, `only-engine`, `sdk-version` | Nhận cấu hình SDK, thời hạn và `session-id` cho hành trình eKYC. |
+| OCR giấy tờ eKYC | `POST /v1/ekyc-sdk/ocr` | Multipart `files`; `session-id`, `device-type`, `document-type`; tùy chọn `side-type`, `lang`, `get-detail-response`, `sdk-version` | Trích xuất giấy tờ trong phiên; hai mặt phải giữ thứ tự mặt trước rồi mặt sau. |
+| Liveness và face match | `POST /v1/ekyc-sdk/face/liveness` | Multipart dùng `selfies` hoặc `video`; `session-id`, `device-type`; tùy chọn `auto`, `lang`, `sdk-version` | Kiểm tra sống và đối sánh khuôn mặt với giấy tờ đã OCR trong cùng phiên. |
+| Kiểm tra NFC | `POST /v1/ekyc-sdk/check_chip` | JSON các data group NFC; `session-id`, `device-type`, `auto`; tùy chọn `lang`, `sdk-version` | Kiểm tra dữ liệu chip trong phiên trên kênh Mobile được hỗ trợ. |
+
+`api-key` FPT không thuộc contract BFF và không được gửi từ Mobile/Web. Thông tin
+xác thực này được `vhm-ocr-ekyc` bổ sung ở biên tích hợp. Bốn thao tác trên là đồng
+bộ; SDK quyết định thứ tự gọi và xử lý response.
+
+Baseline không công bố callback hoặc API lấy lại kết quả eKYC. Kết quả đi qua proxy
+được lưu trong PostgreSQL đồng thời với việc trả response FPT về SDK.
+
+### 6.5.2 Quy tắc request/response
+
 | **Chiều truyền** | **Contract bắt buộc** |
 | --- | --- |
 | SDK → BFF → service → FPT | Chuyển tiếp request theo đúng method, path logic, headers và body/multipart mà phiên bản SDK yêu cầu; service chỉ bổ sung/thay credential phía server. |
 | FPT → service → BFF → SDK | Trả đầy đủ HTTP status, headers và body của FPT; không lọc theo danh sách header, không bọc envelope VHM, không đổi mã lỗi và không chuẩn hóa payload. |
 | Lưu trữ | Lưu kết quả eKYC trong `ocr_ekyc.ocr_ekyc_results`; metadata lần gọi được quản lý trong `ocr_ekyc.ocr_ekyc_provider_calls`. Dữ liệu nhạy cảm phải được mã hóa và không ghi vào log. Lỗi lưu không được bọc, thay thế hoặc che response FPT đã nhận. |
 
-### INT-01 — Nguyên tắc tương thích phiên FPT eKYC
+### 6.5.3 INT-01 — Nguyên tắc tương thích phiên FPT eKYC
 
 Một hành trình eKYC do FPT SDK điều phối và phải giữ thống nhất ngữ cảnh phiên giữa
 các bước khởi tạo, OCR giấy tờ và kiểm tra sống/đối sánh khuôn mặt.
