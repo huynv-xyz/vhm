@@ -8,13 +8,13 @@
 | **Trường** | **Nội dung** |
 | --- | --- |
 | **Trạng thái** | **ĐANG THẨM ĐỊNH (UNDER REVIEW)** |
-| **Phiên bản & Lịch sử thay đổi** | `v0.9.0` — 14/08/2026 — Mốc L2 theo code, Flyway, tài liệu luồng và contract FPT |
+| **Phiên bản & Lịch sử thay đổi** | `v0.9.1` — 14/08/2026 — Bản L2 phục vụ thẩm định kiến trúc, đối chiếu code, tài liệu luồng và contract FPT |
 | **Chủ sở hữu tài liệu** | TBD — một cá nhân chịu trách nhiệm tài liệu |
 | **Chủ sở hữu hệ thống** | TBD |
-| **Hệ thống/Artifact** | `vhm-ocr-ekyc` / Maven artifact `vn.vhm:vhm-ocr-ekyc:0.1.0` |
+| **Hệ thống** | `vhm-ocr-ekyc` — năng lực OCR/eKYC dùng chung |
 | **Đội ngũ/PIC** | Backend: TBD · Kiến trúc: TBD · Tích hợp: TBD · ANBM: TBD · Quyền riêng tư dữ liệu: TBD · Vận hành: TBD |
 | **Người rà soát / Phê duyệt** | Sản phẩm: TBD · Kiến trúc: TBD · Tích hợp: TBD · ANBM: TBD · Quyền riêng tư/Pháp chế: TBD · Vận hành: TBD |
-| **Mốc triển khai** | Source tree, `pom.xml`, `V1__initialize.sql`, cấu hình ứng dụng và kiểm thử tự động tại ngày 14/08/2026 |
+| **Mốc triển khai** | Mã nguồn, PostgreSQL schema `ocr_ekyc`, cấu hình ứng dụng và kiểm thử tự động tại ngày 14/08/2026 |
 | **Tài liệu L1** | `../noxh-ocr-ekyc.md`, `../orc-ekyc-full.md`; liên kết Confluence chính thức: TBD |
 | **Tài liệu L3** | Theo Danh mục sản phẩm L3 tại mục 0.2 |
 | **Tiêu chuẩn tham chiếu** | `docs/ttd-mau-chuan.md`; tiêu chuẩn VHM về IAM/ANBM/Quyền riêng tư dữ liệu/Quan sát hệ thống: phiên bản TBD |
@@ -72,7 +72,7 @@
 | Contract wire eKYC FPT & Ma trận tương thích SDK | BLOCKED | Tích hợp/Mobile/Web | Trước production eKYC | TBD |
 | Bộ kiểm thử contract FPT Sale OCR | DRAFT | Tích hợp/QA | Trước production Sale OCR | PDF tại mục B; cần bổ sung fixture tự động |
 | Đặc tả Upload/Download media & Lưu giữ | PLANNED | Backend/ANBM/Quyền riêng tư | Trước khi duyệt media production | TBD |
-| Contract Kafka/Outbox & Runbook phục hồi | PLANNED | Backend/Vận hành | Trước khi duyệt độ tin cậy | TBD |
+| Contract Kafka & Runbook phục hồi | PLANNED | Backend/Vận hành | Trước khi duyệt độ tin cậy | TBD |
 | Runbook migration & phục hồi CSDL | PLANNED | DBA/Vận hành | Trước OAT | TBD |
 | Runbook dashboard, cảnh báo & sự cố | PLANNED | Vận hành | Trước go-live | TBD |
 
@@ -109,7 +109,8 @@
 
 Tài liệu phân biệt rõ **OCR document** và **eKYC**:
 
-- OCR tài liệu là tài nguyên bất đồng bộ của VHM, có DB/outbox/Kafka/worker, hỗ trợ
+- OCR tài liệu là tài nguyên bất đồng bộ của VHM, sử dụng PostgreSQL schema
+  `ocr_ekyc`, Kafka và worker, hỗ trợ
   OCR một tài liệu, CCCD hai mặt và hồ sơ Sale ba tài liệu.
 - eKYC là façade đồng bộ cho `init-session`, OCR định danh và liveness/face match;
   không tạo tài nguyên OCR, không đưa vào hàng đợi và không tự thử lại mutation.
@@ -142,7 +143,7 @@ liệu nhạy cảm sang từng ứng dụng.
 ### 1.1.2 Mục tiêu
 
 - Cung cấp OCR tài liệu bất đồng bộ với contract tạo/trạng thái/kết quả ổn định.
-- Bảo đảm tạo OCR và outbox commit nguyên tử, xử lý thông điệp at-least-once an toàn.
+- Bảo đảm tạo OCR và phát sự kiện xử lý nhất quán, xử lý thông điệp trùng an toàn.
 - Tích hợp tập trung FPT qua adapter; cố định nhà cung cấp trên tài nguyên OCR.
 - Chuẩn hóa OCR thường thành kết quả chuẩn; chỉ công bố các trường thuộc danh sách cho phép.
 - Hỗ trợ FPT Sale OCR gửi/thăm dò mà không giữ luồng worker khi provider đang xử lý.
@@ -157,7 +158,7 @@ liệu nhạy cảm sang từng ứng dụng.
 | --- | --- | --- |
 | OCR một tài liệu | Presigned upload/reference → FPT bất đồng bộ → kết quả chuẩn | `HIỆN TRẠNG` |
 | OCR hồ sơ Sale | CCCD trước/sau + PLHĐ; FPT `/sale-ocr/register` và thăm dò kết quả | `HIỆN TRẠNG` — cần gia cố production |
-| OCR status/result | Tài nguyên VHM, polling, kết quả AES-GCM | `HIỆN TRẠNG` |
+| OCR status/result | Tài nguyên VHM, polling, kết quả được mã hóa | `HIỆN TRẠNG` |
 | eKYC init/OCR/liveness | Ba API đồng bộ, response tương thích provider và audit mã hóa | `HIỆN TRẠNG` — compatibility chưa sign-off |
 | File Management | Chuẩn bị upload, kiểm tra tồn tại, chuẩn bị download | `HIỆN TRẠNG` khi bật tính năng |
 | Admin metadata UI/API | Danh sách metadata OCR/kết quả, không giải mã kết quả | `HIỆN TRẠNG` khi `vhm.admin-ui.enabled=true` |
@@ -182,7 +183,7 @@ liệu nhạy cảm sang từng ứng dụng.
 | A-01 | OCR luôn bất đồng bộ từ góc nhìn bên gọi, kể cả khi lời gọi provider đồng bộ | Quyết định kiến trúc | API trả `202`; client thăm dò VHM. |
 | A-02 | eKYC init/OCR/liveness đồng bộ và không tự thử lại mutation | Quyết định kiến trúc | Timeout/không rõ sau khi gửi phải trả lỗi, không phát lại mù. |
 | A-03 | File Management quản lý object riêng tư và trả presigned URL ngắn hạn | Phụ thuộc | Thiếu prepare-download thì worker không đọc được media. |
-| A-04 | Kafka chuyển phát at-least-once; consumer phải idempotent | Giả định nền tảng | Thông điệp trùng không gọi nhà cung cấp sau trạng thái kết thúc/đã claim. |
+| A-04 | Kafka chuyển phát at-least-once; consumer phải idempotent | Giả định nền tảng | Thông điệp trùng không gọi FPT sau khi OCR đã được nhận xử lý hoặc đã kết thúc. |
 | A-05 | FPT Sale giữ kết quả 30 ngày, poll tối thiểu mỗi 3 giây, processing tối đa 5 phút | `BÊN NGOÀI` theo PDF v0.2.0 | Cần kiểm thử contract/SLA chính thức trước production. |
 | A-06 | Mỗi file Sale ≤20 MB; đúng 3 file; provider tổng request ≤60 MB | `BÊN NGOÀI` | Bộ nhớ/dung lượng phải được tính theo ba file. |
 | A-07 | Luồng phiên FPT eKYC cần cùng `session-id`, `device-type` và endpoint/header đúng phiên bản | `BÊN NGOÀI` | Code hiện tại chưa forward đủ header; `BLOCKING`. |
@@ -208,10 +209,10 @@ liệu nhạy cảm sang từng ứng dụng.
 | --- | --- | --- | --- |
 | Ảnh CCCD/CMND/PLHĐ | OCR, đối chiếu hồ sơ | Private object qua File Management; worker tải transiently | Private, TLS, size/type/checksum, retention và purge. |
 | Video khuôn mặt/ảnh `cmnd` | Liveness/face match | Multipart đi qua service tới FPT; không persist raw body trong DB | Biometric-purpose consent, bounded memory, no log, DPA. |
-| OCR fields/confidence/warnings | Autofill/review | AES-GCM ciphertext trong `ocr_results` | Fixed field allowlist, mask, key rotation, retention. |
-| Response eKYC FPT | Audit/xử lý sự cố provider | Bản mã AES-GCM trong `provider_attempts` nếu không quá 2 MB | Hạn chế truy cập, TTL/xóa, không log body ở production. |
+| Trường OCR/confidence/cảnh báo | Tự động điền/rà soát | Dữ liệu mã hóa trong PostgreSQL schema `ocr_ekyc` | Danh sách trường cố định, che dữ liệu, quản lý khóa và lưu giữ. |
+| Response eKYC FPT | Audit/xử lý sự cố FPT | Dữ liệu mã hóa trong PostgreSQL schema `ocr_ekyc` | Hạn chế truy cập, TTL/xóa, không log body ở production. |
 | Tham chiếu nghiệp vụ/người dùng | Tương quan/phân quyền | Bản rõ trong `ocrs` | Dạng opaque, truy cập theo phạm vi, không nhúng PII. |
-| ID job/request của provider | Tương quan nội bộ | `provider_attempts` | Không lộ ra API/event/log. |
+| ID job/request của FPT | Tương quan nội bộ | PostgreSQL schema `ocr_ekyc` | Không lộ ra API/event/log. |
 
 `subjectRef` hiện được DTO tiếp nhận và tham gia dấu vân tay idempotency nhưng chưa
 được lưu vào bảng `ocrs`; vì vậy chưa thể dùng làm bằng chứng tương quan/phân quyền
@@ -233,15 +234,15 @@ Lỗi OCR/eKYC không được tự biến thành quyết định nghiệp vụ 
 | **Mã kiểm soát** | **Nguyên tắc** |
 | --- | --- |
 | ARCH-01 | Tách luồng điều khiển/worker OCR bất đồng bộ khỏi luồng eKYC đồng bộ. |
-| ARCH-02 | Tạo OCR, các bản ghi media và outbox được commit trong một transaction ngắn. |
-| ARCH-03 | Không giữ transaction DB hoặc lease worker trong lúc chờ FPT Sale xử lý; thăm dò bằng delayed outbox. |
+| ARCH-02 | Trạng thái OCR và tham chiếu media được lưu nhất quán trong PostgreSQL schema `ocr_ekyc`. |
+| ARCH-03 | Worker không giữ tài nguyên xử lý trong lúc chờ FPT Sale; việc thăm dò được thực hiện theo lịch. |
 | ARCH-04 | Adapter FPT cô lập endpoint/xác thực/payload; nhà cung cấp được lưu trên OCR. |
-| ARCH-05 | Kafka/outbox chỉ chứa tham chiếu tối thiểu, không chứa đường dẫn media/PII/kết quả. |
+| ARCH-05 | Kafka chỉ chứa định danh OCR tối thiểu, không chứa đường dẫn media/PII/kết quả. |
 | ARCH-06 | eKYC không đưa vào hàng đợi và không tự động thử lại thao tác init/OCR/liveness. |
-| ARCH-07 | Response FPT/kết quả chuẩn nhạy cảm phải được mã hóa; phiên bản khóa được lưu. |
+| ARCH-07 | Response FPT/kết quả chuẩn nhạy cảm phải được mã hóa theo tiêu chuẩn VHM. |
 | ARCH-08 | Thông tin xác thực, provider job ID và payload thô không thuộc contract công khai/nghiệp vụ. |
-| ARCH-09 | Flyway chỉ chạy khi ứng dụng khởi động; processor/worker không tự quản lý migration. |
-| ARCH-10 | Kafka consumer, outbox publisher và audit response FPT phải idempotent và có khả năng phục hồi. |
+| ARCH-09 | Thay đổi PostgreSQL schema phải được quản lý bằng migration có phiên bản và có phương án rollback. |
+| ARCH-10 | Consumer Kafka và audit response FPT phải idempotent và có khả năng phục hồi. |
 
 ## 2.2 Sơ đồ kiến trúc ứng dụng
 
@@ -274,53 +275,42 @@ flowchart LR
 
 ```mermaid
 flowchart TB
-    subgraph APP[Một ứng dụng Spring Boot]
-        API[Controller OCR / Media / eKYC]
-        OCRS[OcrService]
-        PROXY[EkycProxyService]
-        OUT[OcrOutboxPublisher]
-        LISTENER[OcrJobListener]
-        WORKER[OcrWorker]
-        ROUTER[OcrAdapterRouter]
-        NORMALIZER[OcrResultNormalizer]
-        REPO[jOOQ / Spring Data JDBC repositories]
+    subgraph APP[vhm-ocr-ekyc]
+        API[Khối API<br/>OCR · Media · eKYC]
+        PROCESSOR[Khối xử lý OCR bất đồng bộ]
+        INTEGRATION[Khối tích hợp FPT]
+        DATA[Khối quản lý dữ liệu]
 
-        API --> OCRS --> REPO
-        API --> PROXY --> REPO
-        OUT --> REPO
-        LISTENER --> WORKER --> ROUTER
-        WORKER --> NORMALIZER --> REPO
-        WORKER --> REPO
+        API --> DATA
+        API --> INTEGRATION
+        PROCESSOR --> INTEGRATION
+        PROCESSOR --> DATA
     end
 
-    DB[(PostgreSQL)] <--> REPO
-    KAFKA[(Kafka)] <--> OUT
-    KAFKA --> LISTENER
-    FILE[File Management] --> WORKER
-    ROUTER --> FPT[FPT]
-    PROXY --> FPT
+    DB[(PostgreSQL<br/>schema ocr_ekyc)] <--> DATA
+    KAFKA[(Kafka)] --> PROCESSOR
+    API --> KAFKA
+    FILE[File Management] --> PROCESSOR
+    INTEGRATION --> FPT[FPT]
 ```
 
 ### 2.2.3 Phân định trách nhiệm module
 
-| **Module logic** | **Package/lớp hiện tại** | **Trách nhiệm sở hữu** |
+| **Khối logic** | **Trách nhiệm sở hữu** | **Ranh giới chính** |
 | --- | --- | --- |
-| API | `controller`, `service.OcrService`, `service.EkycProxyService` | Lệnh/truy vấn, chuyển tiếp eKYC đồng bộ, audit response và envelope lỗi. |
-| Processor | `service.OcrOutboxPublisher`, `kafka.OcrJobListener`, `worker.OcrWorker` | Phát/nhận thông điệp, gửi/thăm dò FPT và chuẩn hóa OCR. |
-| Dùng chung | `adapter`, `repository`, `storage`, `security`, `common`, `util`, `client` | Trừu tượng hóa FPT, lưu trữ, mã hóa và contract sự kiện/lỗi/client. |
-
-Cây mã nguồn hiện chưa tách package `vn.vhm.ocrekyc.api` và
-`vn.vhm.ocrekyc.processor` theo ranh giới sở hữu mục tiêu trong `AGENTS.md`; đây là `TD-002`.
+| API | Tiếp nhận lệnh/truy vấn OCR, chuyển tiếp eKYC đồng bộ và trả contract VHM. | Không thực hiện xử lý OCR dài trong request. |
+| Xử lý OCR | Nhận công việc từ Kafka, gửi/thăm dò FPT và chuẩn hóa kết quả. | Không xử lý request eKYC SDK. |
+| Tích hợp FPT | Quản lý contract, thông tin xác thực, timeout và ánh xạ lỗi FPT. | Không công bố payload thô cho miền nghiệp vụ. |
+| Dữ liệu dùng chung | Quản lý vòng đời OCR, tham chiếu media, kết quả và audit. | PostgreSQL schema `ocr_ekyc` là nguồn dữ liệu chính. |
 
 ### 2.2.4 Hai luồng thực thi
 
 ```mermaid
 flowchart LR
     subgraph OCR[OCR TÀI LIỆU — bất đồng bộ]
-        C[Tạo OCR] --> T[(Transaction DB<br/>OCR + media + outbox)]
+        C[Tạo OCR] --> T[(PostgreSQL<br/>schema ocr_ekyc)]
         T -->|202| P[Client thăm dò VHM]
-        T --> O[Outbox Publisher]
-        O --> K[(Kafka)] --> W[OCR Worker]
+        T --> K[(Kafka)] --> W[OCR Worker]
         W --> PR[FPT]
         PR --> N[Chuẩn hóa / mã hóa kết quả]
         N --> P
@@ -338,7 +328,7 @@ flowchart LR
 
 | **Ranh giới** | **Mức tin cậy** | **Kiểm soát bắt buộc** | **Hiện trạng** |
 | --- | --- | --- | --- |
-| Mobile/Web → BFF | Không tin cậy | OIDC/JWT, phân quyền object, giới hạn tần suất/body | Ngoài repository |
+| Mobile/Web → BFF | Không tin cậy | OIDC/JWT, phân quyền object, giới hạn tần suất/body | Ngoài phạm vi mã nguồn này |
 | BFF → `vhm-ocr-ekyc` | Zero Trust nội bộ | Danh tính workload/mTLS/JWT, audience/scope, chống phát lại | `KHOẢNG TRỐNG`: chưa có Spring Security |
 | Client → kho riêng tư | Đầu vào media không tin cậy | Presigned PUT chính xác, hạn ngắn, checksum, không đọc/liệt kê | Một phần qua File Management |
 | Service/worker → File Management/kho lưu trữ | Hạn chế | Thông tin xác thực Basic/workload, danh sách cho phép, TLS, giới hạn byte | `HIỆN TRẠNG`; mục tiêu là danh tính workload |
@@ -351,12 +341,12 @@ flowchart LR
 
 ```mermaid
 stateDiagram-v2
-    [*] --> QUEUED: create + outbox commit
-    QUEUED --> PROCESSING: claim SUBMIT_PROVIDER
+    [*] --> QUEUED: tạo OCR thành công
+    QUEUED --> PROCESSING: worker nhận xử lý
     PROCESSING --> COMPLETED: synchronous provider success/failure
-    PROCESSING --> WAITING_PROVIDER: FPT Sale accepted + delayed outbox
-    WAITING_PROVIDER --> PROCESSING: claim POLL_PROVIDER
-    PROCESSING --> WAITING_PROVIDER: provider QUEUED/PROCESSING or retryable poll error
+    PROCESSING --> WAITING_PROVIDER: FPT Sale đã tiếp nhận
+    WAITING_PROVIDER --> PROCESSING: đến lịch thăm dò
+    PROCESSING --> WAITING_PROVIDER: FPT đang xử lý hoặc lỗi thăm dò có thể thử lại
     PROCESSING --> COMPLETED: provider COMPLETED/FAILED/EXPIRED/deadline
     QUEUED --> CANCELLED: target only
     WAITING_PROVIDER --> EXPIRED: target only
@@ -367,9 +357,9 @@ stateDiagram-v2
 
 | **Trạng thái** | **Ngữ nghĩa hiện tại** |
 | --- | --- |
-| `QUEUED` | OCR/media/outbox đã commit; chờ Kafka worker. |
-| `PROCESSING` | Worker đã claim bằng CAS và đang gửi/thăm dò/gọi FPT. |
-| `WAITING_PROVIDER` | Chỉ dùng FPT Sale; delayed outbox đã lên lịch poll tiếp. |
+| `QUEUED` | OCR và tham chiếu media đã được ghi nhận; chờ Kafka worker. |
+| `PROCESSING` | Worker đã nhận quyền xử lý và đang gửi/thăm dò FPT. |
+| `WAITING_PROVIDER` | Chỉ dùng FPT Sale; hệ thống chờ lịch thăm dò tiếp theo. |
 | `COMPLETED` | Trạng thái kết thúc cho cả thành công và thất bại; phân biệt bằng `outcome`/`errorCode`. |
 | `CANCELLED`, `EXPIRED` | Có trong schema/enum nhưng chưa có chuyển trạng thái/API tương ứng. |
 
@@ -388,41 +378,33 @@ stateDiagram-v2
   `PROCESSING_TIMEOUT`.
 - HTTP timeout: FPT OCR 10 phút mặc định; FPT Sale 30 giây; connect timeout 2 giây.
 
-## 2.4 Concurrency, Idempotency và Transaction
+## 2.4 Tính nhất quán và Idempotency
 
 ### 2.4.1 Tạo tài nguyên và idempotency
 
 - Header `Idempotency-Key` bắt buộc ở mọi request tạo OCR.
-- Unique DB `(source, idempotency_key)`.
-- `request_fingerprint = SHA-256(JSON request)`; CCCD hai mặt bao gồm back path;
-  Sale bao gồm đủ ba path.
-- Cùng key/fingerprint trả resource hiện hữu; cùng key khác fingerprint trả
+- PostgreSQL schema `ocr_ekyc` bảo đảm một khóa idempotency duy nhất trong từng nguồn.
+- Dấu vân tay request bao gồm toàn bộ tham chiếu media của use case tương ứng.
+- Cùng khóa/cùng request trả tài nguyên hiện hữu; cùng khóa khác request trả
   HTTP `409`, mã `40901`.
-- Tranh chấp giữa `findIdempotent` và insert vẫn dựa vào unique constraint nhưng chưa ánh xạ
-  lỗi vi phạm duy nhất thành response idempotent (`TD-004`).
+- Xử lý tạo đồng thời phải trả kết quả idempotent nhất quán (`TD-004`).
 
-### 2.4.2 Outbox/Kafka/worker
+### 2.4.2 Kafka và worker
 
-- Create lưu `ocrs`, `ocr_media`, `outbox_events` trong cùng transaction.
-- Publisher claim tối đa 20 bản ghi bằng `FOR UPDATE SKIP LOCKED`, lease 30 giây, gửi
-  Kafka đồng bộ rồi đánh dấu `PUBLISHED`; lỗi lên lịch lại sau 5 giây.
-- Thông điệp Kafka hiện chỉ là UUID OCR ở key/value. `EventEnvelope` tồn tại nhưng
-  chưa được publisher dùng (`TD-005`).
-- Worker claim bằng conditional update `QUEUED/WAITING_PROVIDER → PROCESSING`.
-  Thông điệp trùng sau khi claim/trạng thái kết thúc sẽ bị bỏ qua.
-- OCR row chưa có worker lease; pod chết ở `PROCESSING` sẽ làm job treo (`AR-004`).
-- FPT Sale poll non-terminal commit `WAITING_PROVIDER` và delayed outbox, không
-  `sleep`, không giữ DB transaction trong thời gian chờ provider.
+- Thông điệp Kafka chỉ chứa định danh OCR, không chứa media hoặc PII.
+- Worker chỉ xử lý khi chuyển trạng thái OCR thành công; thông điệp trùng không
+  được tạo thêm lời gọi FPT sau khi OCR đã được nhận xử lý hoặc đã kết thúc.
+- Cần cơ chế phục hồi OCR bị treo ở `PROCESSING` khi worker dừng đột ngột (`AR-004`).
+- Khi FPT Sale chưa hoàn tất, worker trả tài nguyên và hệ thống lên lịch thăm dò tiếp.
 
-### 2.4.3 Transaction boundary
+### 2.4.3 Ranh giới nhất quán
 
-| **Thao tác** | **Trong transaction DB** | **Ngoài transaction** |
+| **Thao tác** | **Yêu cầu nhất quán** | **Nguyên tắc** |
 | --- | --- | --- |
-| Tạo OCR | OCR, tham chiếu media, outbox | Kiểm tra file tồn tại xảy ra trước transaction service |
-| Claim | Conditional status/step update, read persisted refs | — |
-| Gọi FPT | Không được giữ transaction DB | Tải media, gửi/thăm dò FPT qua HTTP |
-| Sale checkpoint | Attempt/job/status + OCR waiting + delayed outbox | Provider call đã kết thúc |
-| Hoàn tất | Chèn kết quả mã hóa nếu chưa có + cập nhật OCR kết thúc | Chuẩn hóa xảy ra trước commit |
+| Tạo OCR | Tài nguyên OCR và tham chiếu media cùng trạng thái | Không tạo bản ghi nghiệp vụ dở dang. |
+| Nhận xử lý | Chỉ một worker được quyền xử lý tại một thời điểm | Thông điệp trùng phải an toàn. |
+| Gọi FPT | Không giữ transaction PostgreSQL trong khi chờ mạng | Giới hạn timeout và tài nguyên. |
+| Hoàn tất | Kết quả và trạng thái kết thúc phải nhất quán | Không ghi đè kết quả đã kết thúc. |
 
 <a id="muc-3"></a>
 
@@ -434,7 +416,7 @@ stateDiagram-v2
 | --- | --- | --- | --- |
 | FR-001 | Chuẩn bị media | Kiểm tra role/MIME/size, tạo path do server kiểm soát, trả contract presign | `HIỆN TRẠNG` — `OcrMediaService` |
 | FR-002 | Media sẵn sàng | Chỉ chấp nhận managed path tồn tại trước khi tạo OCR | `HIỆN TRẠNG`; còn thiếu kiểm tra metadata/checksum |
-| FR-003 | Tạo OCR | Persist tài nguyên/media/outbox, trả `202 + Retry-After: 3` | `HIỆN TRẠNG` |
+| FR-003 | Tạo OCR | Lưu tài nguyên và tham chiếu media, phát công việc xử lý, trả `202 + Retry-After: 3` | `HIỆN TRẠNG` |
 | FR-004 | Idempotency | Cùng key/payload trả tài nguyên cũ; khác payload trả xung đột | `HIỆN TRẠNG` với khoảng trống xử lý đồng thời |
 | FR-005 | Định tuyến provider | FPT là provider duy nhất trong phạm vi tài liệu và được persist trên OCR | `HIỆN TRẠNG` mặc định; production không cho caller tự đổi provider |
 | FR-006 | Hồ sơ Sale | Đúng ba refs; FPT submit/poll 3 giây; deadline 5 phút | `HIỆN TRẠNG` |
@@ -471,7 +453,7 @@ stateDiagram-v2
 | **Trạng thái** | Đọc trạng thái | Đọc kết quả | Worker gửi | Worker thăm dò | Hành động client |
 | --- | --- | --- | --- | --- | --- |
 | `QUEUED` | Có | `409` | Claim một lần | Không | Thăm dò |
-| `PROCESSING` | Có | `409` | Không claim trùng | Không claim trùng | Thăm dò |
+| `PROCESSING` | Có | `409` | Không nhận xử lý trùng | Không thăm dò trùng | Thăm dò |
 | `WAITING_PROVIDER` | Có | `409` | Không | Claim một lần | Thăm dò |
 | `COMPLETED + OCR_COMPLETED` | Có | Có | Không | Không | Xác nhận/áp dụng |
 | `COMPLETED + PROVIDER_ERROR` | Có | `409` | Không | Không | Tạo request/key mới; chưa có API retry |
@@ -496,13 +478,13 @@ stateDiagram-v2
 | NFR-002 | Độ trễ tiếp nhận OCR | Không gọi FPT khi tạo; mục tiêu p95 theo SLO API VHM | Kiến trúc đã đáp ứng; mục tiêu TBD |
 | NFR-003 | Hoàn tất OCR | Sale ≤5 phút theo contract FPT; OCR thường có mục tiêu TBD | Một phần |
 | NFR-004 | Độ trễ eKYC | Timeout FPT < deadline service/BFF/client; mục tiêu theo từng thao tác | Thứ tự TBD; timeout response mặc định hiện tại 10 phút |
-| NFR-005 | Tính toàn vẹn | Transaction DB + idempotency + outbox + loại trùng ở trạng thái kết thúc | Một phần; còn khoảng trống `PROCESSING` quá hạn |
+| NFR-005 | Tính toàn vẹn | Nhất quán PostgreSQL, idempotency và loại trùng ở trạng thái kết thúc | Một phần; còn khoảng trống `PROCESSING` quá hạn |
 | NFR-006 | An toàn thông tin | TLS, xác thực workload, secret manager, endpoint cố định, không log body | Một phần; bằng chứng xác thực/secret là điểm chặn |
 | NFR-007 | Quyền riêng tư | Mã hóa, tối thiểu hóa dữ liệu, lưu giữ/xóa, DPA/DPIA | Đã có mã hóa; còn khoảng trống quản trị/xóa |
-| NFR-008 | Khả năng mở rộng | API stateless, mở rộng Kafka worker, outbox `SKIP LOCKED`, bảo vệ quota FPT | Một phần; chưa có bằng chứng quota/bulkhead |
+| NFR-008 | Khả năng mở rộng | API stateless, mở rộng Kafka worker, bảo vệ quota FPT | Một phần; chưa có bằng chứng quota/bulkhead |
 | NFR-009 | Khả năng quan sát | Health/info/Prometheus, log có cấu trúc, tương quan, metric/cảnh báo nghiệp vụ | Một phần |
-| NFR-010 | Phục hồi | Phục hồi lease outbox, worker treo và sao lưu/khôi phục | Outbox đã có; còn khoảng trống worker/DR |
-| NFR-011 | Khả năng bảo trì | Adapter FPT + DTO chuẩn + Flyway/jOOQ | Hiện có |
+| NFR-010 | Phục hồi | Phục hồi worker treo, sao lưu và khôi phục | Còn khoảng trống worker/DR |
+| NFR-011 | Khả năng bảo trì | Phân tách API, xử lý OCR, tích hợp FPT và contract chuẩn | Hiện có |
 | NFR-012 | Khả năng kiểm thử | Bộ test unit/component/contract/integration/tải/an toàn thông tin | Unit hiện có; các cổng còn lại chưa đóng |
 
 <a id="muc-5"></a>
@@ -511,22 +493,20 @@ stateDiagram-v2
 
 | **Lĩnh vực** | **Giải pháp lựa chọn** | **Cơ sở lựa chọn** | **Đánh đổi/trạng thái** |
 | --- | --- | --- | --- |
-| Runtime | Java 25, Spring Boot 4.1.0, bật virtual thread | Mốc công nghệ của repository, kiểu dữ liệu chặt, tích hợp servlet/Kafka | Body FPT/file vẫn được đệm thành mảng byte. |
-| Build | Maven, một `pom.xml` | Một artifact/cây mã nguồn, build tái lập được | API/processor cùng deployable. |
-| Lưu trữ | PostgreSQL schema `ocr_ekyc`, Spring Data JDBC + jOOQ 3.21.5 | ACID/outbox/CAS, SQL tường minh | Không dùng JPA. |
-| Migration | Flyway khi ứng dụng khởi động | Một chủ thể quản lý migration | Processor không tự chạy migration. |
-| Thông điệp | Kafka, producer idempotent, record ack | OCR bất đồng bộ và gửi trễ | Thăm dò trễ được mô phỏng bằng DB `available_at`. |
-| HTTP | JDK `HttpClient`, Spring `RestClient` | Ít phụ thuộc, timeout tường minh | Đệm multipart/body và khả năng resilience còn hạn chế. |
-| FPT | Các adapter FPT | Cô lập tập trung thông tin xác thực/contract | Client Sale riêng do contract bất đồng bộ đặc thù. |
-| Mã hóa | AES-GCM, nonce ngẫu nhiên 12 byte, phiên bản khóa | Bí mật + toàn vẹn | Chưa có AAD/envelope KMS/migration luân chuyển khóa. |
-| Quan sát hệ thống | Actuator, Micrometer/Prometheus, log ECS | Telemetry tương thích nền tảng | Chưa có đủ metric nghiệp vụ/FPT. |
-| Tài liệu API | Springdoc OpenAPI 3.0.3 | Khám phá API khi chạy | Cần xuất bản đặc tả L3 có phiên bản. |
+| Ứng dụng | Java 25, Spring Boot 4.1.0 | Theo baseline công nghệ của dự án VHM | Một artifact triển khai; cần tách vai trò chạy khi mở rộng. |
+| Cơ sở dữ liệu | PostgreSQL schema `ocr_ekyc` | Nguồn dữ liệu chính cho vòng đời OCR, kết quả và audit | Cần HA, PITR và chính sách lưu giữ được duyệt. |
+| Thông điệp | Kafka | Tách thời gian xử lý OCR khỏi request nghiệp vụ | Yêu cầu consumer idempotent và giám sát độ trễ. |
+| Tích hợp FPT | HTTPS API, contract có phiên bản | Quản lý tập trung thông tin xác thực, timeout và ánh xạ lỗi | Phụ thuộc SLA/quota/tính tương thích FPT. |
+| Lưu trữ media | File Management và kho object riêng tư | Không truyền media qua Kafka hoặc lưu binary trong PostgreSQL | Cần checksum, thời hạn lưu và kiểm soát truy cập. |
+| Mã hóa | Tiêu chuẩn mã hóa và quản lý khóa của VHM | Bảo vệ kết quả OCR và audit eKYC | Cần bằng chứng quản lý/luân chuyển khóa trước production. |
+| Quan sát hệ thống | Metric, log và trace theo nền tảng VHM | Theo dõi API, Kafka, worker và FPT | Không ghi PII hoặc dữ liệu sinh trắc. |
+| Tài liệu API | OpenAPI có phiên bản | Contract giữa VHM, client và dịch vụ | Cần xuất bản đặc tả L3 trước go-live. |
 
 ## 5.1 Tóm tắt ADR
 
-Chỉ mục ADR đầy đủ tại Phụ lục D. Các quyết định trọng yếu: kết hợp bất đồng bộ/đồng bộ,
-transactional outbox, lưu định tuyến FPT, kết quả OCR chuẩn, media qua presigned URL,
-kết quả/audit mã hóa và không thử lại eKYC một cách mù quáng.
+Chỉ mục ADR đầy đủ tại Phụ lục D. Các quyết định trọng yếu: OCR bất đồng bộ,
+eKYC đồng bộ, PostgreSQL schema `ocr_ekyc` là nguồn dữ liệu chính, tích hợp FPT
+tập trung, kết quả OCR chuẩn, media riêng tư và không thử lại eKYC mù quáng.
 
 <a id="muc-6"></a>
 
@@ -540,7 +520,7 @@ kết quả/audit mã hóa và không thử lại eKYC một cách mù quáng.
 | API-02 | BFF/domain → service | `POST /v1/ocrs/sale-profile` | JSON, `Idempotency-Key` | Hiện có |
 | API-03 | BFF/domain → service | `GET /v1/ocrs/{ocrId}` và `/result` | JSON | Hiện có |
 | MEDIA-01 | BFF → service → File Management | `POST /v1/media/prepare-upload`, kiểm tra/tải xuống | JSON + Basic Auth ở hạ nguồn | Có điều kiện/hiện có |
-| EVT-01 | Outbox → Kafka → worker | `vhm.ocr-ekyc.job.created.v1` | UUID key/value | Hiện có |
+| EVT-01 | Dịch vụ OCR → Kafka → worker | `vhm.ocr-ekyc.job.created.v1` | Chỉ truyền định danh OCR | Hiện có |
 | FPT-01 | Worker → FPT IDR | `POST /vision/idr/vnm`, multipart `image` | `api-key` | Adapter đồng bộ hiện có |
 | FPT-02 | Worker → FPT Sale | `POST /sale-ocr/register`, `GET /sale-ocr/result/{id}` | `api_key` | Gửi/thăm dò bất đồng bộ hiện có |
 | EKYC-01 | Client/BFF → service → FPT | `/v1/ekyc-sdk/init-session`, `/ocr`, `/liveness` | Mục tiêu xác thực VHM; chèn khóa FPT | Hiện có nhưng còn khoảng trống tương thích |
@@ -648,7 +628,7 @@ Dữ liệu trạng thái:
 
 | **Thao tác** | **Contract** | **Hành vi worker** |
 | --- | --- | --- |
-| Đăng ký | `POST /sale-ocr/register`; đúng ba trường `id_card_front`, `id_card_back`, `labor_contract` | HTTP 202 + `SUCCESS` + `request_id` → checkpoint |
+| Đăng ký | `POST /sale-ocr/register`; đúng ba trường `id_card_front`, `id_card_back`, `labor_contract` | HTTP 202 + `SUCCESS` + `request_id` → lưu job FPT |
 | Kết quả đơn | `GET /sale-ocr/result/{request_id}` | Thăm dò mỗi 3 giây |
 | Kết quả lô | `POST /sale-ocr/result-batch`, tối đa 100 ID | FPT hỗ trợ; VHM chưa triển khai |
 | Kết thúc | `COMPLETED`, `FAILED`; `EXPIRED` sau thời hạn lưu | Ánh xạ thành công/kết quả hoặc lỗi FPT |
@@ -668,8 +648,8 @@ diễn lại. Cảnh báo chữ ký/con dấu chỉ là bằng chứng hỗ tr�
 | `POST /v1/ekyc-sdk/liveness` | Multipart `video` + `cmnd` | `/dmp/liveness/v3` |
 
 Service chèn `api-key`, không nhận thông tin xác thực từ bên gọi; chỉ sao chép header
-request/response thuộc danh sách cho phép và trả status/body HTTP của FPT. Mỗi lần gọi tạo một
-`provider_attempts` row theo correlation ID.
+request/response thuộc danh sách cho phép và trả status/body HTTP của FPT. Metadata
+audit của mỗi lần gọi được lưu trong PostgreSQL schema `ocr_ekyc` theo correlation ID.
 
 ### INT-01 — Quyết định tương thích FPT (điểm chặn go-live)
 
@@ -742,76 +722,28 @@ Lỗi phía FPT trong OCR bất đồng bộ không trả 5xx cho thao tác tạ
 
 ### 7.1.1 Sở hữu dữ liệu logic
 
-PostgreSQL schema `ocr_ekyc` là nguồn sự thật cho vòng đời OCR, tham chiếu media,
-kết quả chuẩn, lần gọi FPT và outbox. Flyway migration hiện có đúng năm
-bảng; không có entity JPA hoặc bảng job riêng.
+PostgreSQL schema `ocr_ekyc` là nguồn dữ liệu chính cho vòng đời OCR và audit tích
+hợp FPT. TDD L2 chỉ mô tả các nhóm dữ liệu logic; cấu trúc vật lý và câu lệnh
+migration thuộc đặc tả L3 của CSDL.
 
-| **Bảng** | **Chủ sở hữu/mục đích** | **Trường nhạy cảm** | **Kiểm soát hiện tại** |
+| **Nhóm dữ liệu** | **Mục đích** | **Phân loại** | **Kiểm soát kiến trúc** |
 | --- | --- | --- | --- |
-| `ocrs` | Aggregate OCR, ánh xạ nghiệp vụ, FPT, trạng thái/deadline/idempotency | `reference_id`, `request_by`; phải là mã opaque; chưa có `subject_ref` | UUIDv7, ràng buộc kiểm tra, idempotency duy nhất |
-| `ocr_media` | Tham chiếu object riêng tư có thứ tự | `s3_path_file` bản rõ | FK + duy nhất `(ocr_id, position)`; còn khoảng trống mã hóa |
-| `ocr_results` | Một kết quả chuẩn/OCR | `encrypted_result` | AES-GCM + `key_version`; PK/FK `ocr_id` |
-| `provider_attempts` | Job/thăm dò FPT Sale và audit request/response eKYC | ID FPT, response mã hóa | Kiểm tra chủ sở hữu, ciphertext/khóa, provider job duy nhất |
-| `outbox_events` | Điều phối OCR/thăm dò trễ | Payload phải chỉ chứa OCR ID | Kiểm tra trạng thái/lease, partial index |
+| Tài nguyên OCR | Ánh xạ nghiệp vụ, loại tài liệu, FPT, trạng thái và idempotency | Metadata nhạy cảm | Mã tham chiếu opaque, phân quyền theo phạm vi, trạng thái hợp lệ. |
+| Tham chiếu media | Liên kết tới object riêng tư theo đúng thứ tự tài liệu | Dữ liệu nhạy cảm | Không lưu binary/presigned URL; kiểm soát truy cập và thời hạn lưu. |
+| Kết quả OCR | Kết quả chuẩn trả cho miền nghiệp vụ | PII | Mã hóa, danh sách trường cố định, lưu giữ theo mục đích. |
+| Audit FPT | Theo dõi lời gọi, trạng thái và lỗi FPT | Metadata/PII nhạy cảm | Mã hóa nội dung nhạy cảm, hạn chế truy cập, không công bố ID FPT. |
+
+`subjectRef` hiện có trong request nhưng chưa được lưu cùng tài nguyên OCR; đây là
+khoảng trống cần xử lý trước khi dùng trường này cho tương quan hoặc phân quyền (`TD-016`).
 
 ### 7.1.2 Sơ đồ quan hệ dữ liệu logic
 
 ```mermaid
 erDiagram
-    OCRS ||--o{ OCR_MEDIA : has
-    OCRS ||--o| OCR_RESULTS : produces
-    OCRS ||--o{ PROVIDER_ATTEMPTS : tracks
-    OCRS ||--o{ OUTBOX_EVENTS : dispatches
-
-    OCRS {
-      uuid id PK
-      varchar source
-      varchar reference_id
-      varchar selected_provider
-      varchar status
-      varchar current_step
-      varchar outcome
-      varchar idempotency_key UK
-      char request_fingerprint
-      timestamptz processing_deadline_at
-      bigint row_version
-    }
-    OCR_MEDIA {
-      uuid id PK
-      uuid ocr_id FK
-      int position UK
-      text s3_path_file
-    }
-    OCR_RESULTS {
-      uuid ocr_id PK_FK
-      varchar schema_version
-      bytea encrypted_result
-      varchar key_version
-    }
-    PROVIDER_ATTEMPTS {
-      uuid id PK
-      uuid ocr_id FK_nullable
-      varchar transport
-      varchar operation
-      varchar provider_job_id UK_nullable
-      bytea response_payload_ciphertext
-      varchar status
-      varchar delivery_state
-    }
-    OUTBOX_EVENTS {
-      uuid id PK
-      uuid aggregate_id
-      varchar type
-      jsonb payload
-      varchar status
-      timestamptz available_at
-      timestamptz lease_until
-    }
+    OCR ||--o{ MEDIA_REFERENCE : "sử dụng"
+    OCR ||--o| OCR_RESULT : "tạo ra"
+    OCR ||--o{ FPT_AUDIT : "theo dõi"
 ```
-
-Lưu ý: migration hiện không khai báo FK từ `provider_attempts.ocr_id` và
-`outbox_events.aggregate_id` tới `ocrs.id`. Repository tạo đúng reference nhưng
-database chưa ngăn bản ghi mồ côi (`TD-006`).
 
 ## 7.2 Sơ đồ luồng dữ liệu
 
@@ -832,8 +764,8 @@ flowchart LR
     MEDIA -->|presigned URL| CLIENT
     CLIENT ==>|media bytes| STORAGE
     CLIENT -->|tham chiếu opaque + ngữ cảnh| API
-    API -->|OCR/media/outbox| DB
-    DB -->|chỉ OCR ID| KAFKA
+    API -->|trạng thái OCR + tham chiếu media| DB
+    API -->|chỉ OCR ID| KAFKA
     KAFKA -->|chỉ OCR ID| WORKER
     WORKER -->|chuẩn bị tải xuống| MEDIA
     MEDIA -->|URL hạn ngắn| WORKER
@@ -850,7 +782,7 @@ flowchart LR
     CLIENT([Client/BFF])
     SERVICE[Controller / Proxy eKYC]
     FPT[FPT]
-    DB[(provider_attempts)]
+    DB[(PostgreSQL<br/>schema ocr_ekyc)]
 
     CLIENT ==>|init JSON or multipart media| SERVICE
     SERVICE -->|lần gọi STARTED| DB
@@ -860,9 +792,8 @@ flowchart LR
     SERVICE ==>|response tương thích FPT| CLIENT
 ```
 
-Triển khai hiện tại đệm response FPT trong bộ nhớ. Multipart eKYC OCR/liveness đã
-phân tích và các adapter FPT cũng tạo mảng byte; ký hiệu `==>` biểu diễn
-luồng mang media, không khẳng định truyền trực tiếp không sao chép.
+Ký hiệu `==>` biểu diễn luồng có media hoặc response nhạy cảm. Dữ liệu này phải
+được giới hạn kích thước, không ghi log và không lưu ngoài mục đích đã duyệt.
 
 ## 7.3 Quyền riêng tư dữ liệu & PII
 
@@ -878,14 +809,11 @@ luồng mang media, không khẳng định truyền trực tiếp không sao ch�
 
 ### 7.3.2 Danh mục dữ liệu và khoảng trống
 
-- `ocr_results.encrypted_result` và response audit eKYC dùng AES-GCM với nonce
-  ngẫu nhiên và phiên bản khóa (`HIỆN TRẠNG`).
-- `ocr_media.s3_path_file` là bản rõ (`KHOẢNG TRỐNG` so với mục tiêu tham chiếu
-  media mã hóa/opaque). Chuyển sang ciphertext cần ADR và migration mở rộng/backfill/thu hẹp.
-- Mã hóa dùng khóa cấu hình thô và không có AAD. Mục tiêu production là
-  envelope/luân chuyển khóa dựa trên KMS/HSM/Vault, dùng AAD gắn bản ghi/mục đích.
-- Audit eKYC âm thầm bỏ qua body >2 MB nhưng vẫn lưu trạng thái/metadata; chưa có
-  job lưu giữ và xóa.
+- Kết quả OCR và response audit eKYC được mã hóa trong PostgreSQL schema `ocr_ekyc`.
+- Tham chiếu media hiện được lưu bản rõ; cần đánh giá mã hóa hoặc thay bằng định danh
+  opaque theo tiêu chuẩn dữ liệu VHM.
+- Khóa mã hóa phải do nền tảng quản lý và có quy trình luân chuyển/thu hồi.
+- Chưa có chính sách và cơ chế xóa tự động cho dữ liệu OCR/eKYC.
 - Metadata quản trị gồm `referenceId` và `requestBy`; các trường này phải luôn
   opaque, endpoint quản trị phải được phân quyền và audit.
 
@@ -896,8 +824,8 @@ luồng mang media, không khẳng định truyền trực tiếp không sao ch�
 | Kết quả FPT Sale | Tài liệu FPT quy định 30 ngày | FPT quản lý | `BÊN NGOÀI`; cần bằng chứng DPA |
 | DB/kết quả OCR | TBD theo mục đích | Xóa/ẩn danh theo lô định kỳ + chính sách tombstone | `BLOCKING` |
 | Media OCR riêng tư | TBD theo loại tài liệu/mục đích/legal hold | Vòng đời File Management/object + dọn tham chiếu DB | `BLOCKING` |
-| Audit response eKYC | Cửa sổ xử lý sự cố ngắn TBD | Xóa ciphertext/metadata sau TTL | `BLOCKING` |
-| Lần gọi FPT/outbox | Chính sách vận hành/audit TBD | Phân vùng/xóa theo lô sau cửa sổ an toàn | `BLOCKING` |
+| Audit response eKYC | Cửa sổ xử lý sự cố ngắn TBD | Xóa dữ liệu audit sau TTL | `BLOCKING` |
+| Metadata tích hợp FPT | Chính sách vận hành/audit TBD | Xóa theo lô sau cửa sổ an toàn | `BLOCKING` |
 | Log/APM | Tiêu chuẩn VHM TBD | Vòng đời index | `BLOCKING` |
 | Sao lưu/PITR | Chính sách RPO/lưu giữ TBD | Hết hạn bản sao + quét xóa sau phục hồi | `BLOCKING` |
 
@@ -909,7 +837,7 @@ idempotent, có oldest-eligible-age metric và không log PII/path.
 
 | **Kho** | **Dữ liệu** | **Nguồn sự thật** | **Phục hồi** |
 | --- | --- | --- | --- |
-| PostgreSQL | Trạng thái/kết quả/lần gọi/outbox OCR | Có | Mục tiêu Multi-AZ/PITR; diễn tập phục hồi TBD |
+| PostgreSQL schema `ocr_ekyc` | Trạng thái, kết quả và audit OCR/eKYC | Có | Mục tiêu Multi-AZ/PITR; diễn tập phục hồi TBD |
 | Kho object riêng tư | Tài liệu/media đã tải lên | Có đối với byte media | DR File Management/kho lưu trữ + bằng chứng lưu giữ TBD |
 | Kafka | Tham chiếu điều phối OCR | Không | Phát lại an toàn nhờ trạng thái DB; lưu giữ topic TBD |
 | Bộ nhớ tiến trình | Byte media, response FPT, token | Không | Có giới hạn/dọn theo request; cần tính dung lượng bộ nhớ |
@@ -932,6 +860,7 @@ sequenceDiagram
     participant S as Private Storage
     participant A as OCR API
     participant D as PostgreSQL
+    participant K as Kafka
 
     C->>M: prepare-upload(metadata, role, size, MIME)
     M->>M: validate + create server-controlled path
@@ -943,8 +872,9 @@ sequenceDiagram
     C->>A: create OCR + Idempotency-Key + s3PathFile(s)
     A->>F: exists(path(s))
     F-->>A: exists metadata
-    A->>D: transaction OCR + media + outbox
-    D-->>A: committed
+    A->>D: lưu OCR + tham chiếu media
+    A->>K: phát định danh OCR
+    D-->>A: đã ghi nhận
     A-->>C: 202 + Retry-After: 3 + OCR resource
 ```
 
@@ -953,15 +883,15 @@ sequenceDiagram
 ```mermaid
 sequenceDiagram
     autonumber
-    participant D as PostgreSQL/Outbox
+    participant D as PostgreSQL
     participant K as Kafka
     participant W as OCR Worker
     participant F as File Management/Storage
     participant P as FPT
 
-    D-->>K: Publisher sends OCR ID
+    D-->>K: định danh OCR sẵn sàng xử lý
     K-->>W: OCR ID
-    W->>D: CAS QUEUED -> PROCESSING/SUBMIT_PROVIDER
+    W->>D: chuyển QUEUED -> PROCESSING
     alt duplicate/terminal
         W-->>K: no-op success
     else claimed
@@ -979,28 +909,28 @@ sequenceDiagram
 ```mermaid
 sequenceDiagram
     autonumber
-    participant D as PostgreSQL/Outbox
+    participant D as PostgreSQL
     participant K as Kafka
     participant W as OCR Worker
     participant S as Private Storage
     participant F as FPT Sale OCR
 
-    D-->>K: due OCR ID
+    D-->>K: định danh OCR cần xử lý
     K-->>W: OCR ID
-    W->>D: claim QUEUED/SUBMIT_PROVIDER + start attempt
+    W->>D: nhận quyền xử lý + ghi nhận lần gọi
     W->>S: load front + back + labor contract
     W->>F: POST /sale-ocr/register (3 files)
     F-->>W: 202 SUCCESS + request_id + QUEUED
-    W->>D: checkpoint provider job<br/>WAITING_PROVIDER + delayed outbox (3s)
+    W->>D: lưu FPT job<br/>WAITING_PROVIDER + lịch thăm dò 3 giây
 
     loop until terminal/deadline
-        D-->>K: delayed outbox when available_at due
+        D-->>K: định danh OCR đến lịch thăm dò
         K-->>W: OCR ID
-        W->>D: claim WAITING_PROVIDER/POLL_PROVIDER
+        W->>D: chuyển sang trạng thái thăm dò
         W->>F: GET /sale-ocr/result/{request_id}
         F-->>W: QUEUED / PROCESSING / COMPLETED / FAILED / EXPIRED
         alt non-terminal or retryable 429/5xx
-            W->>D: poll count + WAITING_PROVIDER + next delayed outbox
+            W->>D: cập nhật WAITING_PROVIDER + lịch thăm dò tiếp
         else COMPLETED
             W->>D: attempt succeeded + encrypted canonical details + COMPLETED
         else FAILED/EXPIRED/5-minute deadline
@@ -1039,8 +969,8 @@ sequenceDiagram
 | --- | --- | --- |
 | Media thiếu/nằm ngoài prefix | Từ chối tạo với 400 | Audit/giới hạn tần suất hành vi lạm dụng lặp lại. |
 | Kafka trùng thông điệp | Claim thất bại, worker bỏ qua | Duy trì kiểm thử contract. |
-| Publisher dừng sau Kafka ack nhưng trước khi đánh dấu DB | Sự kiện được phát lại | Worker loại trùng; giám sát tỷ lệ trùng. |
-| Worker dừng ở `PROCESSING` | Job bị treo | Thêm lease/reaper worker hoặc đối soát (`P1`). |
+| Phát sự kiện gián đoạn | Sự kiện có thể được phát lại | Worker loại trùng; giám sát tỷ lệ trùng. |
+| Worker dừng ở `PROCESSING` | Job bị treo | Thêm cơ chế phát hiện quá hạn và đối soát (`P1`). |
 | FPT synchronous timeout | OCR đóng với `PROVIDER_ERROR` | Phân loại không rõ sau khi gửi; chính sách thử lại an toàn, hữu hạn theo contract FPT. |
 | Gửi Sale không rõ sau khi gửi | Lần gọi thất bại, OCR kết thúc | Cần idempotency/tra cứu từ FPT để tránh gửi trùng; nếu không phải chấp nhận rủi ro. |
 | Thăm dò Sale gặp 429/5xx | Thăm dò trễ | Thêm exponential backoff/jitter và bảo vệ quota. |
@@ -1072,7 +1002,7 @@ sequenceDiagram
 
 | **Kiểm soát** | **Mục tiêu** | **Hiện trạng/bằng chứng** |
 | --- | --- | --- |
-| Xác thực bên ngoài | OIDC/JWT tại BFF | Ngoài repository |
+| Xác thực bên ngoài | OIDC/JWT tại BFF | Ngoài phạm vi mã nguồn này |
 | Xác thực service | mTLS/workload JWT, issuer/audience/scope | `KHOẢNG TRỐNG`: không có dependency/filter Spring Security |
 | Phân quyền object | Gắn bên gọi/source/reference/prefix media | Đang giả định BFF xử lý; service chỉ kiểm tra prefix quản lý |
 | Xác thực quản trị | Vai trò đặc quyền, giới hạn mạng, audit | `KHOẢNG TRỐNG`; chỉ feature flag là không đủ |
@@ -1086,8 +1016,8 @@ sequenceDiagram
   secret manager/biến môi trường; cấu hình rỗng phải làm readiness thất bại đối với
   năng lực đang bật.
 - Không để khóa production trong source, ConfigMap, image, giao diện test hoặc ví dụ OpenAPI.
-- Phiên bản khóa AES-GCM được lưu cạnh ciphertext; luân chuyển cần đọc khóa cũ/ghi
-  khóa mới và kế hoạch mã hóa lại.
+- Dữ liệu nhạy cảm phải được mã hóa theo tiêu chuẩn VHM; cần quy trình luân chuyển,
+  thu hồi và khôi phục khóa.
 - Token/thông tin xác thực FPT không được xuất hiện trong thông báo exception/log.
 - Tối thiểu TLS 1.2, ưu tiên TLS 1.3; phải lập tài liệu quyết định kiểm tra/ghim
   chứng thư cho FPT và Mobile SDK.
@@ -1104,7 +1034,7 @@ sequenceDiagram
 | Multipart | Tên file đã làm sạch | Triển khai hiện tại có đệm; giới hạn part/header/bộ nhớ. |
 | Presigned URL | Không lưu trong bảng OCR | Không để URL trong log/audit/lỗi; hạn ngắn/chính xác method/key. |
 
-`EkycProxyService` hiện log tên file đã làm sạch, kích thước và content type khi lỗi.
+Luồng eKYC hiện log tên file đã làm sạch, kích thước và content type khi lỗi.
 Vì tên file có thể chứa PII, mục tiêu production chỉ log media ID do hệ thống sinh
 và thao tác, không log tên file gốc (`TD-010`).
 
@@ -1142,12 +1072,12 @@ băm/che theo chính sách trước production (`TD-010`).
 | Lộ presigned URL/path | DB/log/event/admin | Không lưu/phát URL; đường dẫn DB bản rõ là rủi ro tồn dư. |
 | Media độc hại | Polyglot/giải nén/PDF bomb | Quét MIME/magic/số trang/kích thước và cô lập đường tới FPT; một phần. |
 | Lộ dữ liệu Kafka | Payload chứa path/PII/kết quả | Payload hiện chỉ có OCR ID; cưỡng chế bằng test schema. |
-| Lặp thao tác FPT | At-least-once/timeout | Claim trạng thái, checkpoint job; chưa giải quyết gửi Sale không rõ kết quả. |
-| Worker treo | Pod dừng sau claim | Thiếu lease/reaper worker. |
+| Lặp thao tác FPT | At-least-once/timeout | Kiểm soát trạng thái và lưu job FPT; chưa giải quyết gửi Sale không rõ kết quả. |
+| Worker treo | Pod dừng sau khi nhận xử lý | Thiếu cơ chế phát hiện quá hạn và phục hồi. |
 | Nhầm contract eKYC | SDK gửi header/form không được chuyển tiếp | Test contract chính xác theo phiên bản và quyết định `INT-01`. |
 | Log response PII | Đưa nhầm cờ debug/cấu hình local lên môi trường thật | Chính sách cấu hình production + quét DLP/log. |
 | Cạn bộ nhớ | Ba file 20 MB + bản sao multipart/response | Giới hạn đồng thời/body, thiết kế streaming/spooling và kiểm thử tải. |
-| Hoán đổi ciphertext | Không có AAD AES-GCM gắn bản ghi/mục đích | Thêm định dạng AAD/envelope và test can thiệp/hoán đổi bản ghi. |
+| Can thiệp dữ liệu mã hóa | Dữ liệu mã hóa không được gắn đúng bản ghi/mục đích | Áp dụng cơ chế bảo vệ toàn vẹn theo tiêu chuẩn VHM và kiểm thử can thiệp. |
 | Bỏ qua/che audit | Lỗi DB audit che response FPT | Chốt fail-open/closed theo thao tác mà không mất dấu vết; rủi ro hiện tại. |
 
 <a id="muc-10"></a>
@@ -1175,7 +1105,6 @@ flowchart TB
     subgraph VPC[Ranh giới production riêng tư VHM - mục tiêu multi-AZ]
         subgraph EKS[Môi trường chạy ứng dụng]
             API[Các replica API<br/>OCR · Media · eKYC]
-            PUB[Outbox publisher]
             WORKER[OCR processor replicas]
         end
         DB[(PostgreSQL Multi-AZ)]
@@ -1186,8 +1115,7 @@ flowchart TB
 
     CLIENT --> EDGE --> API
     API --> DB
-    PUB --> DB
-    PUB --> KAFKA --> WORKER
+    API --> KAFKA --> WORKER
     WORKER --> DB
     API --> FILE
     WORKER --> FILE
@@ -1196,13 +1124,11 @@ flowchart TB
     API --> SECRET
     WORKER --> SECRET
     API -.-> OBS
-    PUB -.-> OBS
     WORKER -.-> OBS
 ```
 
-Code hiện đóng gói một Spring Boot artifact và có thể chạy API/publisher/consumer
-cùng tiến trình. Mục tiêu production nên cho phép bật/tắt vai trò theo deployment
-để mở rộng độc lập và cô lập phạm vi ảnh hưởng; cơ chế cờ vai trò hiện chưa có (`TD-011`).
+Ứng dụng hiện được đóng gói thành một artifact. Mục tiêu production là cho phép
+triển khai và mở rộng độc lập vai trò API và OCR worker để cô lập phạm vi ảnh hưởng.
 
 ## 10.3 Ma trận luồng mạng
 
@@ -1210,7 +1136,7 @@ cùng tiến trình. Mục tiêu production nên cho phép bật/tắt vai trò 
 | --- | --- | --- | --- |
 | BFF | API | HTTPS JSON/multipart | Workload auth, route/rate/body policy |
 | API/worker | PostgreSQL | TLS SQL | Private SG/network policy, DB role |
-| Publisher/worker | Kafka | TLS/SASL | ACL per topic/group |
+| API/worker | Kafka | TLS/SASL | ACL theo topic/group |
 | API/worker | File Management | HTTPS metadata/điều khiển | Danh tính workload; Basic Auth là kiểm soát chuyển tiếp hiện tại |
 | Worker | Presigned download URL | HTTPS media | URL chính xác, hạn ngắn, không log, giới hạn byte |
 | API/worker | FPT | HTTPS media/kết quả | Allowlist egress, secret, timeout, quota |
@@ -1218,40 +1144,32 @@ cùng tiến trình. Mục tiêu production nên cho phép bật/tắt vai trò 
 
 ## 10.4 Chiến lược CI/CD và triển khai
 
-- `mvn clean test` là lệnh kiểm tra repository.
-- Các cổng bắt buộc: biên dịch/unit, sinh jOOQ, kiểm tra migration, quét secret,
+- `mvn clean test` là lệnh kiểm tra mã nguồn.
+- Các cổng bắt buộc: biên dịch/unit, kiểm tra thay đổi PostgreSQL schema, quét secret,
   SAST/SCA/license, quét container/IaC, contract FPT, integration, an toàn thông tin,
   kiểm thử tải và quét PII trong log.
 - Build artifact bất biến một lần; quảng bá qua môi trường mà không build lại.
-- API rolling/canary; processor rolling có drain consumer; outbox publisher không
-  cần singleton vì claim DB dùng `SKIP LOCKED`.
-- Thay đổi database theo expand/contract và code tương thích ngược. Flyway chỉ chạy
-  khi ứng dụng khởi động; cần runbook sở hữu/khóa migration ở production.
+- API rolling/canary; OCR worker rolling có drain consumer.
+- Thay đổi PostgreSQL schema theo expand/contract, có phiên bản và tương thích ngược;
+  cần runbook migration/rollback ở production.
 - Rollback không được hoàn tác schema theo cách phá hủy hoặc phát lại mù thao tác FPT.
 
 ## 10.5 Quản lý cấu hình
 
-| **Cấu hình** | **Mặc định hiện tại** | **Quy tắc production** |
+| **Nhóm cấu hình** | **Yêu cầu kiến trúc** | **Cổng production** |
 | --- | --- | --- |
-| Kafka topic | `vhm.ocr-ekyc.job.created.v1` | Pre-created, ACL/retention/DLT decision documented. |
-| Kafka consumer | group `vhm-ocr-ekyc`, record ack, max poll 1 | Unique group per environment/role; lag alerts. |
-| Multipart servlet | 20 MB/file, 21 MB/request | Áp dụng cho ingress eKYC; media Sale dùng tham chiếu object và tính riêng 60 MB. |
-| Timeout FPT OCR | kết nối 2 giây, response 10 phút | Căn chỉnh với liveness worker, Kafka max poll và SLA FPT. |
-| FPT Sale | response 30 giây, thăm dò 3 giây | Test contract backoff/quota/deadline. |
-| File Management | tải xuống tối đa 20 MB | Chính sách vai trò/MIME/checksum và giới hạn tổng Sale. |
-| Response audit | max 2 MB | Retention, quota and behavior when omitted. |
-| Body logging | false global; local true currently | Must be false in SIT/UAT/Prod. |
+| Kafka | Topic/group tách theo môi trường; ACL, retention và DLT có tài liệu | Kiểm thử chuyển phát trùng, lag và phục hồi. |
+| FPT | Endpoint, credential, timeout và quota tách theo môi trường | Contract test và phê duyệt Tích hợp/ANBM. |
+| FPT Sale | Thăm dò tối thiểu 3 giây, deadline tối đa 5 phút theo contract | Test backoff/quota/deadline. |
+| Media | Tối đa 20 MB/file và 60 MB/hồ sơ Sale | Kiểm tra MIME/magic/checksum và tổng dung lượng. |
+| Audit và log | Không ghi body FPT ở SIT/UAT/Production | Chính sách lưu giữ và quét PII/DLP. |
 
 ## 10.6 Chiến lược migration
 
-Migration dữ liệu legacy không thuộc phạm vi hiện tại. Thay đổi để mã hóa tham
-chiếu media/thêm lease worker/FK cần thực hiện theo giai đoạn:
-
-1. Mở rộng cột/index nullable và triển khai đọc/ghi song song.
-2. Backfill có giới hạn, metric an toàn với PII và có thể khởi động lại.
-3. Xác minh số lượng/hash/bất biến và tính tương thích của ứng dụng.
-4. Chuyển đường đọc và cưỡng chế ràng buộc.
-5. Thu hẹp/xóa bản rõ cũ chỉ sau khi cửa sổ lưu giữ/rollback được duyệt.
+Migration dữ liệu legacy không thuộc phạm vi hiện tại. Thay đổi PostgreSQL schema
+có ảnh hưởng dữ liệu nhạy cảm phải tương thích ngược, có kế hoạch chuyển đổi dữ
+liệu, xác minh toàn vẹn và rollback. Không xóa cấu trúc hoặc dữ liệu cũ trước khi
+hết cửa sổ rollback/lưu giữ được phê duyệt.
 
 <a id="muc-11"></a>
 
@@ -1271,7 +1189,7 @@ chiếu media/thêm lease worker/FK cần thực hiện theo giai đoạn:
 | Hoàn tất Sale | Contract FPT tối đa 5 phút | E2E với chờ/kết thúc/timeout |
 | eKYC/FPT p95/p99 | `CHƯA XÁC ĐỊNH` | SLA FPT và ngân sách timeout client |
 | Bản ghi DB/ngày/tăng trưởng lưu trữ | `CHƯA XÁC ĐỊNH` | Lưu giữ + phân bố payload kết quả/audit |
-| Ciphertext kết quả/audit p95/p99 | `CHƯA XÁC ĐỊNH`; audit tối đa 2 MB | Tính dung lượng DB/kho lưu trữ |
+| Dung lượng kết quả/audit p95/p99 | `CHƯA XÁC ĐỊNH`; audit tối đa 2 MB | Tính dung lượng PostgreSQL |
 
 Các công thức bắt buộc:
 
@@ -1287,8 +1205,8 @@ bản nháp này được xem là giá trị production đã phê duyệt.
 
 | **Nguồn chi phí** | **Đầu vào tính dung lượng** | **Trạng thái** |
 | --- | --- | --- |
-| Tài nguyên tính toán ứng dụng | Replica API/publisher/worker, bộ nhớ cho media | TBD |
-| PostgreSQL | rows, ciphertext size, indexes, backup/PITR | TBD |
+| Tài nguyên tính toán ứng dụng | Replica API/worker, bộ nhớ cho media | TBD |
+| PostgreSQL | Dung lượng dữ liệu, tăng trưởng và backup/PITR | TBD |
 | Kafka | messages, poll amplification, retention | TBD |
 | Object storage/File Management | upload/download/storage/retention | TBD |
 | Egress | Media tới FPT và response FPT | TBD |
@@ -1309,10 +1227,9 @@ và dự toán tháng là các điểm chặn sẵn sàng production.
 | --- | --- | --- |
 | OCR/Media API | RPS, p95 latency, DB pool | Stateless HPA; idempotency and DB limit |
 | API eKYC | Request đang hoạt động, byte, độ trễ FPT, bộ nhớ | Tách concurrency/bulkhead khỏi luồng điều khiển OCR |
-| Outbox Publisher | Số bản ghi đến hạn, tuổi lớn nhất, độ trễ phát | Claim đa instance an toàn; lô có giới hạn |
 | OCR Worker | Độ trễ Kafka, tuổi lớn nhất, độ trễ FPT | Concurrency/token bucket/quota riêng cho FPT |
-| Thăm dò Sale | Tuổi outbox đến hạn, số lần thăm dò, nguy cơ quá deadline | Backoff/jitter; ưu tiên deadline; không thăm dò dồn dập |
-| PostgreSQL | CPU/IOPS/connections/locks/table growth | Pool cap, indexes, vacuum/partition plan |
+| Thăm dò Sale | Số job đến hạn, số lần thăm dò, nguy cơ quá deadline | Backoff/jitter; ưu tiên deadline; không thăm dò dồn dập |
+| PostgreSQL | CPU/IOPS/kết nối/tăng trưởng dữ liệu | Giới hạn kết nối, HA/PITR và kế hoạch dung lượng |
 | Kafka | partition lag/throughput | Partition count and key distribution sizing |
 
 OCR backlog and interactive eKYC must have independent resource/quota pools. A
@@ -1320,13 +1237,11 @@ burst of 20–60 MB OCR files must not exhaust memory/connections serving eKYC.
 
 ## 12.2 Quyết định về độ tin cậy
 
-- Outbox publish is at-least-once; Kafka consumer is idempotent by OCR state.
-- Chèn kết quả cuối dùng `ON CONFLICT DO NOTHING`; cập nhật trạng thái kết thúc
-  phải được bảo vệ khỏi kết quả xung đột đồng thời trong triển khai mục tiêu.
-- Provider job FPT Sale được checkpoint trước thăm dò trễ; mọi lần thăm dò dùng cùng job ID.
+- Kafka có thể chuyển phát lặp; worker phải idempotent theo trạng thái OCR.
+- Kết quả và trạng thái kết thúc phải nhất quán, không bị ghi đè bởi xử lý đồng thời.
+- Job FPT Sale được lưu trước khi thăm dò; mọi lần thăm dò dùng cùng job ID.
 - Không thử lại eKYC mù quáng; trạng thái chuyển phát không rõ được ghi nhận.
-- Bổ sung lease/reaper worker cho `PROCESSING` quá hạn và phục hồi khi dừng giữa
-  claim/gọi FPT/checkpoint.
+- Bổ sung cơ chế phát hiện và phục hồi OCR `PROCESSING` quá hạn.
 - Bổ sung topic retry/DLT hoặc quyết định thành văn. Đã có quy ước tên helper nhưng
   chưa cấu hình listener retry/hành vi DLT.
 - Circuit breaker phải phân biệt lần gửi mới với thăm dò provider job hiện hữu;
@@ -1340,10 +1255,10 @@ sự thật nghiệp vụ.
 
 Phục hồi phải xác minh:
 
-- phiên bản schema/Flyway, check/index/FK và tính sẵn sàng của khóa mã hóa;
-- tính nhất quán OCR/media/kết quả/lần gọi/outbox;
-- phục hồi lease outbox `PUBLISHING` và phát lại an toàn khi trùng;
-- phục hồi `PROCESSING` quá hạn sau khi tính năng lease được triển khai;
+- phiên bản PostgreSQL schema và tính sẵn sàng của khóa mã hóa;
+- tính nhất quán OCR/media/kết quả/audit FPT;
+- khả năng xử lý lại an toàn các công việc chưa hoàn tất;
+- phục hồi `PROCESSING` quá hạn theo cơ chế đối soát được duyệt;
 - không tạo lại/ghi đè kết quả đã kết thúc;
 - xóa dữ liệu phục hồi đã quá hạn lưu trước khi mở lưu lượng;
 - không in secret/PII bản rõ trong quá trình phục hồi.
@@ -1354,11 +1269,11 @@ Phục hồi phải xác minh:
 
 ## 13.1 Hiện trạng nền tảng
 
-- Actuator công bố `health`, `info`, `prometheus`; đã bật probe readiness/liveness.
-- Log console có cấu trúc ECS và filter correlation ID.
-- Tag Micrometer chung: application, environment, region.
-- Metric HTTP server loại trừ URI health/management đã cấu hình.
-- Đã có log cho phát outbox, nhận Kafka, thao tác worker/FPT và lời gọi eKYC FPT;
+- Dịch vụ công bố health, readiness/liveness và metric cho nền tảng giám sát.
+- Log có cấu trúc và hỗ trợ correlation ID.
+- Metric có nhãn chung theo ứng dụng, môi trường và vùng triển khai.
+- Endpoint health/management được loại khỏi chỉ số nghiệp vụ.
+- Đã có log cho Kafka, thao tác worker/FPT và lời gọi eKYC FPT;
   chưa có bộ metric miền nghiệp vụ đầy đủ.
 
 ## 13.2 Chỉ số bắt buộc
@@ -1369,7 +1284,7 @@ Phục hồi phải xác minh:
 | `ocr_lifecycle_duration_seconds` | Histogram | use_case, provider, outcome |
 | `ocr_provider_requests_total` | Counter | provider, operation, outcome, http_class |
 | `ocr_provider_duration_seconds` | Histogram | provider, operation |
-| `ocr_outbox_due` / `ocr_outbox_oldest_age_seconds` | Gauge | event_type, status |
+| `ocr_jobs_pending` / `ocr_jobs_oldest_age_seconds` | Gauge | use_case, status |
 | `ocr_kafka_consumer_lag` | Gauge | topic, consumer_group, partition |
 | `ocr_jobs_stuck` | Gauge | step, age_bucket |
 | `ocr_sale_poll_count` | Histogram | terminal_status |
@@ -1389,7 +1304,7 @@ path, correlation ID hoặc PII làm metric label.
 | --- | --- | --- |
 | Lỗi xác thực FPT | Lặp lại 401/403 | Nghiêm trọng |
 | FPT không sẵn sàng/timeout | Tỷ lệ lỗi/timeout vượt cửa sổ đã duyệt | Cao |
-| Tồn đọng outbox | Tuổi bản ghi đến hạn lớn nhất vượt SLO | Cao/Nghiêm trọng |
+| Tồn đọng OCR | Tuổi công việc chờ lớn nhất vượt SLO | Cao/Nghiêm trọng |
 | Kafka trễ/xử lý treo | Lag hoặc `PROCESSING` quá hạn vượt ngưỡng | Cao |
 | Nguy cơ quá deadline Sale | Job đang chờ không thể xử lý hết trước deadline 5 phút | Nghiêm trọng |
 | eKYC bão hòa | Request đang hoạt động/bộ nhớ/timeout vượt ngưỡng | Cao |
@@ -1401,7 +1316,7 @@ path, correlation ID hoặc PII làm metric label.
 ## 13.4 SLI/SLO
 
 SLI phải tách: API tiếp nhận OCR, hoàn tất OCR đầu-cuối, thao tác FPT, độ trễ
-outbox, độ trễ Kafka, thời gian chờ FPT Sale, response eKYC đồng bộ và đọc
+Kafka, thời gian chờ FPT Sale, response eKYC đồng bộ và đọc
 trạng thái/kết quả. Thời gian FPT phải quan sát được, không bị ẩn trong tính sẵn
 sàng nền tảng. Mục tiêu vẫn `CHƯA XÁC ĐỊNH` đến khi duyệt NFR/dung lượng.
 
@@ -1423,7 +1338,6 @@ sàng nền tảng. Mục tiêu vẫn `CHƯA XÁC ĐỊNH` đến khi duyệt NF
 
 - FPT trả 401/403 và luân chuyển/thu hồi thông tin xác thực.
 - Sự cố FPT, quota/429 và chế độ an toàn của circuit breaker.
-- Lease outbox `PUBLISHING` quá hạn và sự cố Kafka.
 - Kafka lag, UUID/thông điệp độc, retry/DLT và rollback consumer.
 - OCR `PROCESSING` quá hạn và không rõ kết quả sau khi gửi FPT.
 - Thăm dò/deadline/nguy cơ hết hạn lưu của FPT Sale.
@@ -1448,14 +1362,14 @@ sàng nền tảng. Mục tiêu vẫn `CHƯA XÁC ĐỊNH` đến khi duyệt NF
 
 ## 15.1 Phạm vi kiểm thử tự động hiện tại
 
-Bộ kiểm thử JUnit hiện tại bao phủ application context, API envelope/controller,
-client auto-configuration/contract, nền tảng tương quan, AES-GCM, chuẩn hóa/router
-OCR, hành vi adapter FPT/FPT Sale, đường dẫn media/presign, worker thành công/lỗi/
-trùng/gửi-thăm dò Sale, metadata quản trị và ánh xạ repository. Lệnh của repository là:
+Bộ kiểm thử tự động hiện tại bao phủ API, client contract, mã hóa, chuẩn hóa OCR,
+tích hợp FPT/FPT Sale, media và các nhánh xử lý worker chính. Lệnh xác minh là:
 
 ```bash
 mvn clean test
 ```
+
+Mốc xác minh ngày 14/08/2026: `57` test chạy, `0` failure, `0` error, build thành công.
 
 Kiểm thử unit không thay thế bằng chứng tích hợp PostgreSQL/Kafka/FPT, an toàn
 thông tin, hiệu năng hoặc phục hồi.
@@ -1465,22 +1379,21 @@ thông tin, hiệu năng hoặc phục hồi.
 | **Lớp kiểm thử** | **Phạm vi bắt buộc** | **Cổng** |
 | --- | --- | --- |
 | Unit | Nhánh trạng thái/idempotency/chuẩn hóa/mã hóa/lỗi | Mục tiêu nhánh trọng yếu ≥80% |
-| Tích hợp DB | PostgreSQL thật, Flyway, check/unique/FK, transaction, `SKIP LOCKED`, test tranh chấp | Bắt buộc |
-| Kafka/outbox | Cửa sổ publisher dừng, trùng, thăm dò trễ, khởi động lại, retry/DLT | Bắt buộc |
+| Tích hợp dữ liệu | PostgreSQL schema `ocr_ekyc`, migration, tính nhất quán và test đồng thời | Bắt buộc |
+| Kafka/worker | Chuyển phát trùng, khởi động lại, retry/DLT và phục hồi công việc treo | Bắt buộc |
 | Contract provider | FPT IDR, mọi trạng thái/lỗi FPT Sale và exact wire eKYC | Bắt buộc |
 | Contract API | OpenAPI/envelope/chuyển tiếp/header/kích thước/tương thích ngược | Bắt buộc |
 | An toàn thông tin | Authn/authz/IDOR, secret, SSRF, multipart, PII-log, can thiệp/luân chuyển mật mã | Bắt buộc |
 | E2E | Upload → tạo → hàng đợi → FPT → trạng thái/kết quả cho từng use case | Bắt buộc |
 | Hiệu năng | Một/hai file 20 MB, Sale 60 MB, eKYC đồng thời, quota DB/Kafka/FPT | Bắt buộc |
-| Khả năng chịu lỗi | Pod dừng ở mỗi checkpoint, DB/Kafka/storage/FPT lỗi, chuyển phát không rõ | Bắt buộc |
+| Khả năng chịu lỗi | Pod dừng ở từng giai đoạn, DB/Kafka/storage/FPT lỗi, chuyển phát không rõ | Bắt buộc |
 | OAT/DR | Triển khai/rollback, phục hồi, luân chuyển, xóa, cảnh báo/runbook | Bắt buộc |
 
 ## 15.3 Kịch bản kiểm thử trọng yếu
 
 - Đồng thời cùng idempotency key/cùng body và cùng key/body khác nhau.
-- Commit/rollback thao tác tạo trên OCR/media/outbox; không có aggregate mồ côi khi lỗi.
-- Publisher crash before/after Kafka ack and stale publisher lease.
-- Worker dừng sau claim, sau khi FPT nhận, trước checkpoint và trước commit kết quả.
+- Lỗi khi tạo OCR không được để lại dữ liệu hoặc công việc dở dang.
+- Worker dừng trong từng giai đoạn không được tạo lời gọi FPT hoặc kết quả trùng.
 - Thông điệp gửi/thăm dò trùng không được tạo provider job/kết quả thứ hai.
 - FPT Sale `QUEUED`, `PROCESSING`, `COMPLETED`, `FAILED`, `EXPIRED`, 404, 429,
   5xx, JSON không hợp lệ, thiếu request ID và timeout năm phút.
@@ -1491,8 +1404,8 @@ thông tin, hiệu năng hoặc phục hồi.
 - Cross-source/reference media path, path traversal, wrong MIME/magic/checksum and
   presigned URL expiry/reuse.
 - Authentication missing/invalid/wrong audience/scope and admin IDOR.
-- Tính duy nhất nonce AES-GCM, can thiệp, sai khóa/phiên bản, hoán đổi bản ghi/mục tiêu AAD.
-- Quét repository/image/cấu hình/log/APM không có secret, PII, path, ID FPT hoặc body media.
+- Kiểm thử mã hóa, can thiệp dữ liệu, sai khóa và luân chuyển khóa.
+- Quét mã nguồn/image/cấu hình/log/APM không có secret, PII, path, ID FPT hoặc body media.
 
 ## 15.4 Dữ liệu kiểm thử
 
@@ -1511,39 +1424,34 @@ lưu giữ đích danh và bằng chứng xóa. Fixture response FPT phải có 
 | AR-001 | An toàn thông tin | Endpoint service/admin thiếu authn/authz tại service; bỏ qua BFF có thể lộ dữ liệu/thao tác | Nghiêm trọng | IAM/JWT/mTLS workload + phạm vi object + test vai trò quản trị | ANBM/Backend — MỞ, điểm chặn |
 | AR-002 | Tích hợp | Chưa chứng minh contract route/path/header/form eKYC tương thích luồng phiên/SDK FPT | Nghiêm trọng | Đóng `INT-01`, ghim phiên bản SDK/API, test contract/E2E | Tích hợp/Client — MỞ, điểm chặn |
 | AR-003 | Quyền riêng tư | Chưa duyệt/triển khai mục đích, đồng thuận, vị trí dữ liệu, DPA, lưu giữ, xóa | Nghiêm trọng | DPIA/DPA, registry chính sách, job/bằng chứng xóa | Pháp chế/Quyền riêng tư — MỞ, điểm chặn |
-| AR-004 | Độ tin cậy | Worker claim bằng CAS nhưng không có lease; dừng tiến trình làm OCR kẹt vĩnh viễn ở `PROCESSING` | Nghiêm trọng | Lease owner/until, reaper/đối soát và test dừng tiến trình | Backend/Vận hành — MỞ P1 |
+| AR-004 | Độ tin cậy | Worker dừng đột ngột có thể làm OCR kẹt ở `PROCESSING` | Nghiêm trọng | Cơ chế phát hiện quá hạn, đối soát và test phục hồi | Backend/Vận hành — MỞ P1 |
 | AR-005 | Toàn vẹn | Timeout gửi Sale sau khi FPT có thể đã nhận làm job FPT mồ côi/trùng | Cao | Idempotency/tra cứu FPT, tương quan request, phục hồi `UNKNOWN` tường minh | FPT/Tích hợp — MỞ |
-| AR-006 | An toàn dữ liệu | `s3_path_file` bản rõ trong DB; không gắn checksum/magic/bước hoàn tất | Cao | Tham chiếu opaque/mã hóa, checksum, kiểm tra theo vai trò và migration | Backend/ANBM — MỞ |
-| AR-007 | Hiệu năng | Media/multipart/response được đệm; Sale có thể vượt 60 MB cộng các bản sao/worker | Nghiêm trọng | Thiết kế streaming/spool giới hạn, bulkhead, test heap và HPA | Backend/Vận hành — MỞ, điểm chặn |
+| AR-006 | An toàn dữ liệu | Tham chiếu media được lưu bản rõ; chưa gắn checksum và bước xác nhận hoàn tất | Cao | Tham chiếu opaque/mã hóa, checksum, kiểm tra theo vai trò | Backend/ANBM — MỞ |
+| AR-007 | Hiệu năng | Hồ sơ Sale có thể tạo áp lực bộ nhớ lớn khi xử lý đồng thời ba file | Nghiêm trọng | Giới hạn đồng thời, giới hạn kích thước, test tải và HPA | Backend/Vận hành — MỞ, điểm chặn |
 | AR-008 | Quyền riêng tư | Log response body debug có thể lưu PII OCR/eKYC | Nghiêm trọng | Ép tắt bằng chính sách production, test/cảnh báo DLP và runbook sự cố | Vận hành/ANBM — MỞ, điểm chặn |
-| AR-009 | Độ tin cậy | Chưa cưỡng chế deadline OCR thường và không có bản ghi lần gọi FPT | Cao | Deadline/hủy, trạng thái lần gọi và taxonomy retry an toàn | Backend — MỞ |
+| AR-009 | Độ tin cậy | Chưa cưỡng chế deadline cho OCR thông thường | Cao | Deadline/hủy, đối soát và taxonomy retry an toàn | Backend — MỞ |
 | AR-010 | Tích hợp | Không có bảo vệ quota/circuit breaker FPT; 429/bùng tải có thể lan truyền | Cao | Concurrency/token bucket/backoff/jitter cho FPT | Vận hành/Tích hợp — MỞ |
 | AR-011 | Toàn vẹn | Lỗi lưu audit có thể che response FPT đã biết và trả lỗi chung | Cao | Chính sách transaction/lỗi, audit bất đồng bộ bền vững hoặc fallback an toàn | Backend/Kiến trúc — MỞ |
 | AR-012 | Sẵn sàng | FPT là phụ thuộc duy nhất cho Sale và eKYC | Cao | SLA, dừng nhận mới an toàn, giám sát, retry/phục hồi và phương án nghiệp vụ | Sản phẩm/Vận hành — MỞ |
-| AR-013 | Toàn vẹn/phân quyền | `subjectRef` tham gia idempotency nhưng không được lưu, làm mất tương quan đối tượng sau khi tạo | Cao | Thêm `subject_ref` bằng Flyway, ánh xạ repository/API quản trị và kiểm thử IDOR | Backend/ANBM — MỞ |
-| AR-014 | Toàn vẹn | Đóng attempt Sale và hoàn tất OCR/kết quả không nằm trong cùng một transaction bao ngoài; lỗi giữa hai bước có thể tạo trạng thái lệch | Cao | Gộp điểm commit hoặc thêm đối soát idempotent; test lỗi DB ở từng ranh giới | Backend/Kiến trúc — MỞ |
+| AR-013 | Toàn vẹn/phân quyền | `subjectRef` có trong request nhưng chưa được lưu, làm mất tương quan đối tượng sau khi tạo | Cao | Bổ sung vào PostgreSQL schema và contract truy vấn/phân quyền | Backend/ANBM — MỞ |
+| AR-014 | Toàn vẹn | Trạng thái lần gọi FPT Sale và kết quả OCR có thể không nhất quán khi lỗi giữa các bước cập nhật | Cao | Bảo đảm cập nhật nhất quán hoặc có đối soát idempotent | Backend/Kiến trúc — MỞ |
 
 ## 16.2 Danh mục vấn đề mở và nợ kỹ thuật
 
 | **ID** | **Vấn đề** | **Ảnh hưởng/Ưu tiên** | **Khắc phục/cổng** |
 | --- | --- | --- | --- |
 | TD-001 | Liên kết/chủ sở hữu L1/L3/tiêu chuẩn còn TBD | Cao | Hoàn tất trước khi phê duyệt L2. |
-| TD-002 | Cây package chưa tách namespace sở hữu `api`/`processor` | Trung bình | Refactor không đổi artifact/contract; rà soát kiến trúc. |
 | TD-003 | Thiếu API hủy/thử lại/đối soát/hết hạn trạng thái | Cao | Định nghĩa chính sách L3/trạng thái và triển khai trước khi duyệt độ tin cậy nếu cần. |
 | TD-004 | Tranh chấp unique khi tạo đồng thời chưa được chuẩn hóa thành response idempotent | Cao | Insert trước/đọc khi xung đột + test tích hợp đồng thời. |
-| TD-005 | Kafka publisher gửi UUID thô; chưa dùng `EventEnvelope`; chưa định nghĩa retry/DLT | Trung bình/Cao | Envelope tối thiểu có phiên bản hoặc duyệt UUID thô; định nghĩa retry/DLT. |
-| TD-006 | Thiếu FK cho attempt/aggregate outbox | Trung bình | Migration mở rộng, dọn bản ghi mồ côi rồi cưỡng chế FK. |
-| TD-007 | Có `row_version` nhưng cập nhật vòng đời jOOQ không dùng phiên bản lạc quan | Cao | CAS theo version/status và test hoàn tất xung đột. |
-| TD-008 | Giá trị schema `CANCELLED/EXPIRED/FETCH_RESULT/NORMALIZE` chưa dùng | Trung bình | Chỉ triển khai hoặc xóa qua thay đổi migration/contract được duyệt. |
 | TD-009 | Chưa dùng endpoint kết quả Sale theo lô | Thấp/Chi phí | Đánh giá hiệu quả thăm dò so với độ phức tạp/giới hạn tần suất FPT. |
 | TD-010 | Log lỗi chứa tên file multipart gốc/provider request ID; có cờ debug response body | Quyền riêng tư nghiêm trọng | Loại bỏ/che tên file, ID và body ở production; quét PII. |
-| TD-011 | Không thể bật API/publisher/consumer thành các vai trò runtime độc lập | Trung bình/Cao | Thêm cờ/profile vai trò và test triển khai. |
-| TD-012 | Chưa triển khai lưu giữ/xóa OCR/audit/outbox/media | Quyền riêng tư nghiêm trọng | Chính sách có phiên bản và xóa định kỳ kèm bằng chứng. |
+| TD-011 | Chưa thể triển khai API và OCR worker thành các vai trò runtime độc lập | Trung bình/Cao | Bổ sung cấu hình vai trò và test triển khai. |
+| TD-012 | Chưa triển khai lưu giữ/xóa OCR/audit/media | Quyền riêng tư nghiêm trọng | Chính sách có phiên bản và xóa định kỳ kèm bằng chứng. |
 | TD-013 | Không có quy tắc MIME media theo vai trò/kiểm tra magic/checksum | An toàn thông tin cao | Triển khai contract hoàn tất/kiểm tra media. |
 | TD-014 | Ngữ nghĩa `valid` chuẩn quá thô cho tính xác thực/rà soát thủ công | Trung bình | Phiên bản hóa schema kết quả và định nghĩa chính sách chất lượng/outcome. |
 | TD-015 | Timeout response FPT mặc định 10 phút xung đột ngân sách eKYC tương tác | Cao | Timeout theo thao tác, căn chỉnh SLA BFF/client/FPT. |
-| TD-016 | DTO nhận `subjectRef` và đưa vào fingerprint nhưng entity/schema không lưu | Cao | Bổ sung cột/migration/ánh xạ và test truy vấn, phân quyền, idempotency. |
-| TD-017 | Đóng attempt FPT Sale và `store.complete` là hai ranh giới commit riêng | Cao | Thiết kế transaction/đối soát nguyên tử, bảo đảm thử lại không ghi trạng thái xung đột. |
+| TD-016 | `subjectRef` có trong request nhưng chưa được lưu trong PostgreSQL schema `ocr_ekyc` | Cao | Bổ sung dữ liệu, contract truy vấn và test phân quyền/idempotency. |
+| TD-017 | Trạng thái FPT Sale và hoàn tất OCR chưa có cơ chế bảo đảm nhất quán xuyên suốt | Cao | Thiết kế cập nhật nhất quán hoặc đối soát idempotent. |
 
 Vấn đề mở không mặc nhiên được chấp nhận. Chấp nhận rủi ro phải ghi rõ chủ sở hữu,
 phạm vi, ngày hết hạn, người phê duyệt và kiểm soát bù trừ.
@@ -1561,8 +1469,7 @@ phạm vi, ngày hết hạn, người phê duyệt và kiểm soát bù trừ.
 | Tài nguyên OCR | Aggregate bất đồng bộ VHM được định danh bởi `ocrId`. |
 | Kết quả chuẩn | Kết quả OCR ổn định được công bố cho bên gọi VHM. |
 | Lần gọi FPT | Bản ghi bền vững cho một thao tác/job/audit với FPT. |
-| Outbox | Bản ghi DB commit cùng aggregate và được phát lên Kafka sau đó. |
-| Thăm dò trễ | Bản ghi outbox có `available_at` trong tương lai, dùng để thăm dò trạng thái FPT Sale. |
+| Thăm dò định kỳ | Cơ chế kiểm tra trạng thái FPT Sale theo khoảng thời gian đã quy định. |
 | Idempotency Key | Khóa opaque do bên gọi cung cấp để ngăn tạo tài nguyên trùng. |
 | Dấu vân tay request | SHA-256 của payload tạo đã tuần tự hóa, dùng phát hiện xung đột khóa. |
 | Provider job ID | `request_id` FPT Sale; chỉ dùng nội bộ. |
@@ -1578,7 +1485,7 @@ phạm vi, ngày hết hạn, người phê duyệt và kiểm soát bù trừ.
 | L2 standard template | [`ttd-mau-chuan.md`](./ttd-mau-chuan.md) |
 | OCR/eKYC activity design | [`tdd-luong-hoat-dong.md`](./tdd-luong-hoat-dong.md) |
 | Danh sách tài liệu FPT nội bộ | [`tai-lieu-tham-khao-fpt.md`](./tai-lieu-tham-khao-fpt.md) |
-| Repository overview | [`../README.md`](../README.md) |
+| Tổng quan mã nguồn | [`../README.md`](../README.md) |
 | FPT Sale OCR for Vinhomes | `[VSF-eKYC] Tài liệu API OCR cho Vinhomes.pdf`, v0.2.0, 13/08/2026 |
 | FPT eKYC update-information API | <https://docs-vision.fpt.ai/en/ekyc/III-integration/III-2-APIs/a-APIs%20of%20eKYC%20Flows/APIs-in-update-information-flow/> |
 | FPT eKYC result/callback | <https://docs-vision.fpt.ai/en/ekyc/III-integration/III-2-APIs/a-APIs%20of%20eKYC%20Flows/APIs-result/> |
@@ -1629,15 +1536,15 @@ phạm vi, ngày hết hạn, người phê duyệt và kiểm soát bù trừ.
 | **ID** | **Quyết định** | **Cơ sở/hệ quả** | **Trạng thái** |
 | --- | --- | --- | --- |
 | ADR-001 | Tập trung tích hợp OCR/eKYC tại `vhm-ocr-ekyc` | Miền nghiệp vụ không sở hữu thông tin xác thực/contract FPT; năng lực này trở thành phụ thuộc trung tâm. | Mốc cơ sở đã chấp nhận |
-| ADR-002 | OCR tài liệu bất đồng bộ qua DB outbox/Kafka/worker | Cô lập độ trễ/quota FPT; cần vận hành DB/hàng đợi/worker. | Mốc cơ sở đã chấp nhận |
+| ADR-002 | OCR tài liệu bất đồng bộ qua PostgreSQL, Kafka và worker | Cô lập độ trễ/quota FPT; cần vận hành DB/hàng đợi/worker. | Mốc cơ sở đã chấp nhận |
 | ADR-003 | eKYC đồng bộ, không đưa vào hàng đợi/tự động thử lại thao tác thay đổi | Cần cho luồng tương tác/FPT; đòi hỏi timeout/dung lượng chặt chẽ. | Mốc cơ sở đã chấp nhận |
-| ADR-004 | PostgreSQL là nguồn sự thật OCR | Cho phép transaction/idempotency/outbox; cần HA/PITR. | Mốc cơ sở đã chấp nhận |
+| ADR-004 | PostgreSQL schema `ocr_ekyc` là nguồn dữ liệu chính của OCR | Cho phép quản lý nhất quán vòng đời/idempotency; cần HA/PITR. | Mốc cơ sở đã chấp nhận |
 | ADR-005 | Chọn FPT khi tạo và lưu trên OCR | Retry/audit xác định; không failover trong suốt. | Mốc cơ sở đã chấp nhận |
 | ADR-006 | Kết quả OCR chuẩn với danh sách trường cố định | Ổn định contract VHM và giảm dữ liệu FPT bị công bố. | Mốc cơ sở đã chấp nhận |
-| ADR-007 | FPT Sale dùng checkpoint provider job + thăm dò trễ qua DB outbox | Worker không ngủ/giữ lease khi FPT đang xử lý. | Mốc cơ sở đã chấp nhận |
+| ADR-007 | FPT Sale lưu provider job và thăm dò định kỳ | Worker không giữ tài nguyên trong khi FPT đang xử lý. | Mốc cơ sở đã chấp nhận |
 | ADR-008 | Kiểm soát presigned media qua File Management; chỉ lưu tham chiếu path | Không đưa binary vào request tạo OCR/Kafka; mã hóa/hoàn tất path là mục tiêu. | Chấp nhận có khoảng trống |
-| ADR-009 | AES-GCM mã hóa kết quả chuẩn và audit response eKYC | Bảo vệ payload nhạy cảm; còn phải gia cố KMS/AAD/luân chuyển. | Chấp nhận có khoảng trống |
-| ADR-010 | Một artifact/cây mã nguồn Maven với ranh giới logic API/processor | Build/triển khai đơn giản; vai trò production cần mở rộng độc lập. | Mốc cơ sở đã chấp nhận |
+| ADR-009 | Mã hóa kết quả chuẩn và audit response eKYC theo tiêu chuẩn VHM | Bảo vệ payload nhạy cảm; cần bằng chứng quản lý và luân chuyển khóa. | Chấp nhận có khoảng trống |
+| ADR-010 | Một đơn vị triển khai với ranh giới logic API/worker | Vận hành ban đầu đơn giản; vai trò production cần mở rộng độc lập. | Mốc cơ sở đã chấp nhận |
 | ADR-011 | Proxy FPT SDK hay façade backend | Cần quyết định chính xác theo `INT-01`. | Đề xuất / `BLOCKING` |
 
 ## E. Danh sách kiểm tra trước khi vận hành chính thức
@@ -1667,7 +1574,7 @@ phạm vi, ngày hết hạn, người phê duyệt và kiểm soát bù trừ.
 
 ### E.3 Độ tin cậy và vận hành
 
-- [ ] Đã triển khai và test dừng tiến trình cho lease/phục hồi `PROCESSING` quá hạn.
+- [ ] Đã triển khai và test phục hồi `PROCESSING` quá hạn khi worker dừng.
 - [ ] Runbook Kafka retry/DLT và thông điệp độc đã duyệt.
 - [ ] Quota FPT, timeout, circuit breaker và backoff đã cấu hình/kiểm thử.
 - [ ] Bulkhead API/eKYC/worker ngăn cạn tài nguyên chéo luồng.
