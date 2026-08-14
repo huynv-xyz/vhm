@@ -8,7 +8,7 @@
 | **Trường** | **Nội dung** |
 | --- | --- |
 | **Trạng thái** | **ĐANG THẨM ĐỊNH (UNDER REVIEW)** |
-| **Phiên bản & Lịch sử thay đổi** | `v0.9.1` — 14/08/2026 — Bản L2 phục vụ thẩm định kiến trúc, đối chiếu code, tài liệu luồng và contract FPT |
+| **Phiên bản & Lịch sử thay đổi** | `v0.9.2` — 14/08/2026 — Chuẩn hóa cấu trúc theo mẫu L2, phục vụ thẩm định kiến trúc và contract FPT |
 | **Chủ sở hữu tài liệu** | TBD — một cá nhân chịu trách nhiệm tài liệu |
 | **Chủ sở hữu hệ thống** | TBD |
 | **Hệ thống** | `vhm-ocr-ekyc` — năng lực OCR/eKYC dùng chung |
@@ -16,36 +16,31 @@
 | **Người rà soát / Phê duyệt** | Sản phẩm: TBD · Kiến trúc: TBD · Tích hợp: TBD · ANBM: TBD · Quyền riêng tư/Pháp chế: TBD · Vận hành: TBD |
 | **Mốc triển khai** | Mã nguồn, PostgreSQL schema `ocr_ekyc`, cấu hình ứng dụng và kiểm thử tự động tại ngày 14/08/2026 |
 | **Tài liệu L1** | `../noxh-ocr-ekyc.md`, `../orc-ekyc-full.md`; liên kết Confluence chính thức: TBD |
-| **Tài liệu L3** | Theo Danh mục sản phẩm L3 tại mục 0.2 |
+| **Tài liệu L3** | Theo phần **L3 Artefact Register** của tài liệu này |
 | **Tiêu chuẩn tham chiếu** | `docs/ttd-mau-chuan.md`; tiêu chuẩn VHM về IAM/ANBM/Quyền riêng tư dữ liệu/Quan sát hệ thống: phiên bản TBD |
 | **Lần rà soát gần nhất** | 14/08/2026 |
 
-## Mục lục
+**Mục lục**
 
-0. [Thông tin tài liệu & Phê duyệt](#muc-0)
-1. [Mục tiêu nghiệp vụ & Phạm vi](#muc-1)
-2. [Tổng quan kiến trúc & Nguyên tắc](#muc-2)
-3. [Yêu cầu chức năng](#muc-3)
-4. [Yêu cầu phi chức năng](#muc-4)
-5. [Nền tảng công nghệ & Cơ sở lựa chọn](#muc-5)
-6. [Kiến trúc tích hợp](#muc-6)
-7. [Kiến trúc dữ liệu & Luồng dữ liệu](#muc-7)
-8. [Sơ đồ luồng nghiệp vụ](#muc-8)
-9. [Kiến trúc an toàn thông tin & Tuân thủ](#muc-9)
-10. [Triển khai & Cấu trúc hạ tầng](#muc-10)
-11. [Chi phí & Dung lượng/Hiệu năng](#muc-11)
-12. [Khả năng mở rộng & Độ tin cậy](#muc-12)
-13. [Khả năng quan sát & Giám sát](#muc-13)
-14. [Sẵn sàng vận hành](#muc-14)
-15. [Chiến lược kiểm thử & Chất lượng](#muc-15)
-16. [Rủi ro & Vấn đề mở/Nợ kỹ thuật](#muc-16)
-17. [Phụ lục](#phu-luc)
+1. [Business Objectives & Scope](#muc-1)
+2. [Architecture Overview & Principles](#muc-2)
+3. [Functional Requirements](#muc-3)
+4. [Non-Functional Requirements](#muc-4)
+5. [Technology Stack & Justification](#muc-5)
+6. [Integration Architecture](#muc-6)
+7. [Data Architecture & Data Flow](#muc-7)
+8. [Business Flow Diagrams](#muc-8)
+9. [Security & Compliance Architecture](#muc-9)
+10. [Deployment & Infrastructure Topology](#muc-10)
+11. [Cost & Capacity/Performance](#muc-11)
+12. [Scalability & Reliability](#muc-12)
+13. [Observability & Monitoring](#muc-13)
+14. [Operational Readiness](#muc-14)
+15. [Testing & Quality Strategy](#muc-15)
+16. [Risks & Open Issues/Tech Debt](#muc-16)
+17. [Appendix](#phu-luc)
 
-<a id="muc-0"></a>
-
-# 0. Thông tin tài liệu & Phê duyệt
-
-## 0.1 Cổng rà soát và phê duyệt
+**Approval & Review Gates**
 
 | **Vai trò rà soát/phê duyệt** | **Họ tên** | **Phạm vi rà soát** | **Quyết định** | **Ngày xác nhận** |
 | --- | --- | --- | --- | --- |
@@ -56,7 +51,7 @@
 | Quyền riêng tư/Pháp chế | TBD | Consent, PII/sinh trắc, mục đích, vị trí dữ liệu, lưu giữ và xóa | Chờ rà soát | — |
 | Vận hành/Cloud/DBA | TBD | Dung lượng, triển khai, giám sát, sao lưu, phục hồi và runbook | Chờ rà soát | — |
 
-### Các cổng quản trị
+**Governance Gates**
 
 | **Chuyển trạng thái** | **Điều kiện đầu vào** |
 | --- | --- |
@@ -64,7 +59,7 @@
 | `UNDER REVIEW → APPROVED` | Owner/reviewer đích danh; P1 và go-live blocker đã đóng hoặc có risk acceptance hữu hạn; L1/L3/standard link truy cập được. |
 | `APPROVED → IMPLEMENTATION BASELINE` | API/provider contract, migration, security/privacy, capacity/cost và quality gate đã có evidence. |
 
-## 0.2 Danh mục sản phẩm L3
+**L3 Artefact Register**
 
 | **Tài liệu L3** | **Trạng thái** | **Chủ sở hữu** | **Cổng bắt buộc** | **Liên kết** |
 | --- | --- | --- | --- | --- |
@@ -76,7 +71,7 @@
 | Runbook migration & phục hồi CSDL | PLANNED | DBA/Vận hành | Trước OAT | TBD |
 | Runbook dashboard, cảnh báo & sự cố | PLANNED | Vận hành | Trước go-live | TBD |
 
-## 0.3 Chỉ mục bao phủ mẫu L2
+**L2 Template Coverage Index**
 
 | **Mục L2** | **Nội dung trong tài liệu này** |
 | --- | --- |
@@ -97,7 +92,7 @@
 | Chiến lược kiểm thử & Chất lượng | Mục 15 |
 | Rủi ro & Vấn đề mở/Nợ kỹ thuật | Mục 16 |
 
-### Quy ước trạng thái thiết kế
+**Quy ước trạng thái thiết kế**
 
 | **Nhãn** | **Ý nghĩa** |
 | --- | --- |
@@ -120,15 +115,15 @@ Tài liệu phân biệt rõ **OCR document** và **eKYC**:
 
 <a id="muc-1"></a>
 
-# 1. Mục tiêu nghiệp vụ & Phạm vi
+# 1. Business Objectives & Scope
 
-## 1.1 Tên hệ thống, Bối cảnh và Mục tiêu
+### Business Context & Objectives
 
 `vhm-ocr-ekyc` là năng lực tích hợp tập trung giúp các miền nghiệp vụ VHM sử dụng OCR và
 eKYC mà không phân tán thông tin xác thực nhà cung cấp, contract giao tiếp, ánh xạ lỗi và dữ
 liệu nhạy cảm sang từng ứng dụng.
 
-### 1.1.1 Vấn đề hiện tại
+#### Current Business Problem
 
 - Nhập liệu giấy tờ thủ công dễ sai số định danh, họ tên, ngày và địa chỉ.
 - Từng miền nghiệp vụ tự tích hợp nhà cung cấp sẽ lặp thông tin xác thực, retry, quota, audit và logic ánh xạ.
@@ -140,7 +135,7 @@ liệu nhạy cảm sang từng ứng dụng.
   header, multipart field hoặc timeout có thể làm SDK/API không hoạt động.
 - Payload thô của nhà cung cấp không ổn định và không phù hợp làm contract cho miền nghiệp vụ.
 
-### 1.1.2 Mục tiêu
+#### Business Objectives
 
 - Cung cấp OCR tài liệu bất đồng bộ với contract tạo/trạng thái/kết quả ổn định.
 - Bảo đảm tạo OCR và phát sự kiện xử lý nhất quán, xử lý thông điệp trùng an toàn.
@@ -152,7 +147,7 @@ liệu nhạy cảm sang từng ứng dụng.
 - Xác lập kiểm soát production cho xác thực, quyền riêng tư media, phục hồi,
   quan sát hệ thống, lưu giữ và dung lượng.
 
-## 1.2 Trong phạm vi
+## 1.1 In Scope
 
 | **Capability** | **Phạm vi** | **Trạng thái** |
 | --- | --- | --- |
@@ -164,7 +159,7 @@ liệu nhạy cảm sang từng ứng dụng.
 | Admin metadata UI/API | Danh sách metadata OCR/kết quả, không giải mã kết quả | `HIỆN TRẠNG` khi `vhm.admin-ui.enabled=true` |
 | Thư viện client | `OcrClient`, `EkycClient` và Spring Boot auto-configuration | `HIỆN TRẠNG` |
 
-## 1.3 Ngoài phạm vi
+## 1.2 Out of Scope
 
 - Huấn luyện/tinh chỉnh OCR, liveness hoặc face-matching model.
 - Quyết định pháp lý/đủ điều kiện nghiệp vụ chỉ từ OCR confidence.
@@ -176,7 +171,7 @@ liệu nhạy cảm sang từng ứng dụng.
 - Tự động chuyển sang provider khác sau khi OCR đã tạo.
 - Hạ tầng production/IaC cụ thể khi chưa có mốc nền tảng được duyệt.
 
-## 1.4 Giả định, Ràng buộc & Phụ thuộc
+### Assumptions, Constraints & Dependencies
 
 | **ID** | **Giả định/Ràng buộc** | **Trạng thái** | **Ảnh hưởng** |
 | --- | --- | --- | --- |
@@ -192,7 +187,7 @@ liệu nhạy cảm sang từng ứng dụng.
 | A-10 | Purpose, consent, retention, residency và deletion policy được duyệt | `BLOCKING` | Không được go-live với dữ liệu thật nếu thiếu. |
 | A-11 | `source`, `referenceId`, `requestBy`, `subjectRef` là opaque reference, không nhúng PII | Contract | Vi phạm làm tăng rò rỉ ở DB/admin/log. |
 
-## 1.5 Các bên liên quan & Nhóm người dùng
+### Stakeholders & Personas
 
 | **Nhóm người dùng** | **Trách nhiệm/quyền** |
 | --- | --- |
@@ -203,7 +198,7 @@ liệu nhạy cảm sang từng ứng dụng.
 | Security/Data Privacy/Auditor | Phê duyệt purpose, access, encryption, retention, log và evidence. |
 | FPT | Đơn vị xử lý/nhà cung cấp bên ngoài theo contract và DPA/SLA. |
 
-## 1.6 Tóm tắt xử lý dữ liệu cá nhân
+### Personal Data Processing Summary
 
 | **Dữ liệu** | **Mục đích** | **Nơi lưu/truyền hiện tại** | **Kiểm soát bắt buộc** |
 | --- | --- | --- | --- |
@@ -218,7 +213,7 @@ liệu nhạy cảm sang từng ứng dụng.
 được lưu vào bảng `ocrs`; vì vậy chưa thể dùng làm bằng chứng tương quan/phân quyền
 sau khi tạo OCR. Khoảng trống này được theo dõi tại `TD-016`.
 
-## 1.7 Mức độ trọng yếu của hệ thống
+### System Criticality
 
 Đề xuất **Cấp 2 — Nghiệp vụ trọng yếu, dữ liệu cá nhân nhạy cảm**. Giá trị chính thức,
 RTO/RPO và phân loại an toàn thông tin cần Chủ sở hữu hệ thống, ANBM và đơn vị
@@ -227,7 +222,7 @@ Lỗi OCR/eKYC không được tự biến thành quyết định nghiệp vụ 
 
 <a id="muc-2"></a>
 
-# 2. Tổng quan kiến trúc & Nguyên tắc
+# 2. Architecture Overview & Principles
 
 ## 2.1 Nguyên tắc thiết kế
 
@@ -408,7 +403,7 @@ stateDiagram-v2
 
 <a id="muc-3"></a>
 
-# 3. Yêu cầu chức năng
+# 3. Functional Requirements
 
 ## 3.1 Ma trận năng lực chức năng
 
@@ -470,7 +465,7 @@ stateDiagram-v2
 
 <a id="muc-4"></a>
 
-# 4. Yêu cầu phi chức năng
+# 4. Non-Functional Requirements
 
 | **NFR ID** | **Nhóm** | **Hiện trạng/Mục tiêu** | **Trạng thái** |
 | --- | --- | --- | --- |
@@ -489,7 +484,7 @@ stateDiagram-v2
 
 <a id="muc-5"></a>
 
-# 5. Nền tảng công nghệ & Cơ sở lựa chọn
+# 5. Technology Stack & Justification
 
 | **Lĩnh vực** | **Giải pháp lựa chọn** | **Cơ sở lựa chọn** | **Đánh đổi/trạng thái** |
 | --- | --- | --- | --- |
@@ -502,7 +497,7 @@ stateDiagram-v2
 | Quan sát hệ thống | Metric, log và trace theo nền tảng VHM | Theo dõi API, Kafka, worker và FPT | Không ghi PII hoặc dữ liệu sinh trắc. |
 | Tài liệu API | OpenAPI có phiên bản | Contract giữa VHM, client và dịch vụ | Cần xuất bản đặc tả L3 trước go-live. |
 
-## 5.1 Tóm tắt ADR
+## 5.1 ADR Log
 
 Chỉ mục ADR đầy đủ tại Phụ lục D. Các quyết định trọng yếu: OCR bất đồng bộ,
 eKYC đồng bộ, PostgreSQL schema `ocr_ekyc` là nguồn dữ liệu chính, tích hợp FPT
@@ -510,7 +505,7 @@ tập trung, kết quả OCR chuẩn, media riêng tư và không thử lại eK
 
 <a id="muc-6"></a>
 
-# 6. Kiến trúc tích hợp
+# 6. Integration Architecture
 
 ## 6.1 Danh mục giao diện tích hợp
 
@@ -716,9 +711,9 @@ Lỗi phía FPT trong OCR bất đồng bộ không trả 5xx cho thao tác tạ
 
 <a id="muc-7"></a>
 
-# 7. Kiến trúc dữ liệu & Luồng dữ liệu
+# 7. Data Architecture & Data Flow
 
-## 7.1 Mô hình dữ liệu
+## 7.1 Data Model
 
 ### 7.1.1 Sở hữu dữ liệu logic
 
@@ -745,7 +740,7 @@ erDiagram
     OCR ||--o{ FPT_AUDIT : "theo dõi"
 ```
 
-## 7.2 Sơ đồ luồng dữ liệu
+## 7.2 Data Flow Diagram
 
 ### 7.2.1 Luồng điều khiển/dữ liệu OCR
 
@@ -795,7 +790,7 @@ flowchart LR
 Ký hiệu `==>` biểu diễn luồng có media hoặc response nhạy cảm. Dữ liệu này phải
 được giới hạn kích thước, không ghi log và không lưu ngoài mục đích đã duyệt.
 
-## 7.3 Quyền riêng tư dữ liệu & PII
+## 7.3 Data Privacy & PII
 
 ### 7.3.1 Phân loại và tối thiểu hóa dữ liệu
 
@@ -817,7 +812,7 @@ Ký hiệu `==>` biểu diễn luồng có media hoặc response nhạy cảm. D
 - Metadata quản trị gồm `referenceId` và `requestBy`; các trường này phải luôn
   opaque, endpoint quản trị phải được phân quyền và audit.
 
-## 7.4 Chính sách lưu giữ và xóa dữ liệu
+## 7.4 Data Privacy (Optional)
 
 | **Dữ liệu** | **Giới hạn kỹ thuật/đầu vào contract** | **Cơ chế xóa** | **Trạng thái** |
 | --- | --- | --- | --- |
@@ -833,7 +828,7 @@ Không dùng thời hạn 30 ngày của FPT Sale làm retention mặc định c
 phải versioned theo purpose, consent và legal hold. Purge job phải bounded,
 idempotent, có oldest-eligible-age metric và không log PII/path.
 
-## 7.5 Kho dữ liệu và quyền sở hữu
+### Data Stores & Ownership
 
 | **Kho** | **Dữ liệu** | **Nguồn sự thật** | **Phục hồi** |
 | --- | --- | --- | --- |
@@ -845,9 +840,9 @@ idempotent, có oldest-eligible-age metric và không log PII/path.
 
 <a id="muc-8"></a>
 
-# 8. Sơ đồ luồng nghiệp vụ
+# 8. Business Flow Diagrams
 
-## 8.1 Các luồng nghiệp vụ trọng yếu
+## 8.1 Sequence/State Diagram
 
 ### 8.1.1 Chuẩn bị upload và tạo OCR
 
@@ -994,23 +989,26 @@ sequenceDiagram
 
 <a id="muc-9"></a>
 
-# 9. Kiến trúc an toàn thông tin & Tuân thủ
+# 9. Security & Compliance Architecture
 
-## 9.1 Các lớp an toàn thông tin
-
-### 9.1.1 Danh tính, phân quyền và mạng
+## 9.1 Identity & Authentication
 
 | **Kiểm soát** | **Mục tiêu** | **Hiện trạng/bằng chứng** |
 | --- | --- | --- |
 | Xác thực bên ngoài | OIDC/JWT tại BFF | Ngoài phạm vi mã nguồn này |
-| Xác thực service | mTLS/workload JWT, issuer/audience/scope | `KHOẢNG TRỐNG`: không có dependency/filter Spring Security |
-| Phân quyền object | Gắn bên gọi/source/reference/prefix media | Đang giả định BFF xử lý; service chỉ kiểm tra prefix quản lý |
-| Xác thực quản trị | Vai trò đặc quyền, giới hạn mạng, audit | `KHOẢNG TRỐNG`; chỉ feature flag là không đủ |
-| Egress | Danh sách đích FPT/File Management cố định | Đường dẫn cố định trong properties; bằng chứng mạng TBD |
-| Bảo vệ ingress | WAF/API gateway, giới hạn tần suất/body theo route | Bằng chứng triển khai TBD |
-| DB/Kafka/kho lưu trữ | Mạng riêng, TLS/xác thực, workload đặc quyền tối thiểu | Bằng chứng triển khai TBD |
+| Xác thực liên dịch vụ | mTLS hoặc workload JWT với issuer, audience và scope được duyệt | Cần chốt với nền tảng IAM trước production |
+| Xác thực quản trị | Danh tính đặc quyền, MFA, giới hạn mạng và audit | Cần hoàn tất thiết kế kiểm soát quản trị |
 
-### 9.1.2 Bí mật và mật mã
+## 9.2 Authorization & Access Control
+
+- BFF thực thi phân quyền theo vai trò và ngữ cảnh nghiệp vụ trước khi chuyển yêu cầu.
+- Dịch vụ kiểm tra phạm vi truy cập theo chủ thể, nguồn yêu cầu, hồ sơ và tài nguyên media;
+  không chỉ dựa vào việc biết định danh OCR.
+- Quyền quản trị, quyền ứng dụng và quyền truy cập PostgreSQL schema `ocr_ekyc`
+  được tách biệt theo nguyên tắc đặc quyền tối thiểu.
+- Mọi thao tác xem kết quả, tải media, xử lý lại và thay đổi cấu hình phải có audit.
+
+## 9.3 Secrets & Credential Management
 
 - FPT API key, thông tin xác thực File Management và khóa mã hóa phải lấy từ
   secret manager/biến môi trường; cấu hình rỗng phải làm readiness thất bại đối với
@@ -1022,7 +1020,9 @@ sequenceDiagram
 - Tối thiểu TLS 1.2, ưu tiên TLS 1.3; phải lập tài liệu quyết định kiểm tra/ghim
   chứng thư cho FPT và Mobile SDK.
 
-### 9.1.3 Kiểm soát media/request
+## 9.4 Application Security & Data Protection
+
+### Kiểm soát media và request
 
 | **Kiểm soát** | **Hiện trạng** | **Khoảng trống/mục tiêu** |
 | --- | --- | --- |
@@ -1038,7 +1038,7 @@ Luồng eKYC hiện log tên file đã làm sạch, kích thước và content t
 Vì tên file có thể chứa PII, mục tiêu production chỉ log media ID do hệ thống sinh
 và thao tác, không log tên file gốc (`TD-010`).
 
-### 9.1.4 Ghi log và audit
+### Ghi log và audit
 
 Các trường log vận hành được phép: thời gian, ứng dụng/môi trường/phiên bản, thao tác,
 OCR ID theo chính sách được duyệt, enum FPT/status code, thời lượng, Kafka
@@ -1053,7 +1053,7 @@ Dữ liệu debug local phải là dữ liệu tổng hợp và log phải có t
 Code hiện còn ghi `providerRequestId` trong một số log adapter; phải loại bỏ hoặc
 băm/che theo chính sách trước production (`TD-010`).
 
-### 9.1.5 Quản trị và tuân thủ
+### Quản trị và tuân thủ
 
 - Đồng thuận/cơ sở xử lý hợp pháp phải bao phủ riêng mục đích OCR tài liệu và eKYC sinh trắc.
 - DPA/DPIA phải xác định FPT, vùng lưu trữ, bên xử lý phụ, truy cập hỗ trợ từ xa,
@@ -1062,7 +1062,7 @@ băm/che theo chính sách trước production (`TD-010`).
 - Không tái sử dụng dữ liệu OCR/eKYC cho phân tích/huấn luyện mô hình nếu chưa có mục đích mới được duyệt.
 - Xuất/xóa dữ liệu chủ thể phải phối hợp DB VHM, object storage, FPT và bản sao lưu.
 
-## 9.2 Mô hình mối đe dọa
+### Mô hình mối đe dọa
 
 | **Mối đe dọa** | **Vector** | **Giảm thiểu/trạng thái** |
 | --- | --- | --- |
@@ -1082,9 +1082,9 @@ băm/che theo chính sách trước production (`TD-010`).
 
 <a id="muc-10"></a>
 
-# 10. Triển khai & Cấu trúc hạ tầng
+# 10. Deployment & Infrastructure Topology
 
-## 10.1 Môi trường
+## 10.1 Environments
 
 | **Môi trường** | **Dữ liệu/FPT** | **Kiểm soát** |
 | --- | --- | --- |
@@ -1093,7 +1093,7 @@ băm/che theo chính sách trước production (`TD-010`).
 | UAT | Dữ liệu tổng hợp/đã che được duyệt | Cấu hình giống production, nghiệm thu nghiệp vụ/quyền riêng tư. |
 | Production | Dữ liệu cá nhân/sinh trắc thật | WAF, IAM workload, secret manager, data plane riêng, HA, sao lưu và giám sát. |
 
-## 10.2 Sơ đồ triển khai production
+## 10.2 Production Deployment Diagram (CI/CD)
 
 ```mermaid
 flowchart TB
@@ -1130,19 +1130,7 @@ flowchart TB
 Ứng dụng hiện được đóng gói thành một artifact. Mục tiêu production là cho phép
 triển khai và mở rộng độc lập vai trò API và OCR worker để cô lập phạm vi ảnh hưởng.
 
-## 10.3 Ma trận luồng mạng
-
-| **Nguồn** | **Đích** | **Giao thức/dữ liệu** | **Kiểm soát** |
-| --- | --- | --- | --- |
-| BFF | API | HTTPS JSON/multipart | Workload auth, route/rate/body policy |
-| API/worker | PostgreSQL | TLS SQL | Private SG/network policy, DB role |
-| API/worker | Kafka | TLS/SASL | ACL theo topic/group |
-| API/worker | File Management | HTTPS metadata/điều khiển | Danh tính workload; Basic Auth là kiểm soát chuyển tiếp hiện tại |
-| Worker | Presigned download URL | HTTPS media | URL chính xác, hạn ngắn, không log, giới hạn byte |
-| API/worker | FPT | HTTPS media/kết quả | Allowlist egress, secret, timeout, quota |
-| Các thành phần | Nền tảng quan sát | TLS, chỉ metadata | Danh sách trường cho phép/che/lưu giữ |
-
-## 10.4 Chiến lược CI/CD và triển khai
+## 10.3 Deployment Strategy
 
 - `mvn clean test` là lệnh kiểm tra mã nguồn.
 - Các cổng bắt buộc: biên dịch/unit, kiểm tra thay đổi PostgreSQL schema, quét secret,
@@ -1154,7 +1142,7 @@ triển khai và mở rộng độc lập vai trò API và OCR worker để cô 
   cần runbook migration/rollback ở production.
 - Rollback không được hoàn tác schema theo cách phá hủy hoặc phát lại mù thao tác FPT.
 
-## 10.5 Quản lý cấu hình
+### Quản lý cấu hình
 
 | **Nhóm cấu hình** | **Yêu cầu kiến trúc** | **Cổng production** |
 | --- | --- | --- |
@@ -1164,7 +1152,18 @@ triển khai và mở rộng độc lập vai trò API và OCR worker để cô 
 | Media | Tối đa 20 MB/file và 60 MB/hồ sơ Sale | Kiểm tra MIME/magic/checksum và tổng dung lượng. |
 | Audit và log | Không ghi body FPT ở SIT/UAT/Production | Chính sách lưu giữ và quét PII/DLP. |
 
-## 10.6 Chiến lược migration
+## 10.4 Infrastructure & Network Security
+
+| **Nguồn** | **Đích** | **Giao thức/dữ liệu** | **Kiểm soát** |
+| --- | --- | --- | --- |
+| BFF | API | HTTPS JSON/multipart | Xác thực workload, giới hạn route/tần suất/kích thước body |
+| API/worker | PostgreSQL schema `ocr_ekyc` | Kết nối mã hóa | Mạng riêng và quyền theo nguyên tắc tối thiểu |
+| API/worker | Kafka | Kết nối mã hóa | Phân quyền theo topic và consumer group |
+| API/worker | File Management | HTTPS metadata/media | Danh tính workload, giới hạn phạm vi truy cập |
+| API/worker | FPT | HTTPS media/kết quả | Danh sách đích cho phép, secret, timeout và quota |
+| Các thành phần | Nền tảng quan sát | Kết nối mã hóa, chỉ metadata | Danh sách trường cho phép, che dữ liệu và lưu giữ có thời hạn |
+
+## 10.5 Migration Strategy (Optional)
 
 Migration dữ liệu legacy không thuộc phạm vi hiện tại. Thay đổi PostgreSQL schema
 có ảnh hưởng dữ liệu nhạy cảm phải tương thích ngược, có kế hoạch chuyển đổi dữ
@@ -1173,9 +1172,9 @@ hết cửa sổ rollback/lưu giữ được phê duyệt.
 
 <a id="muc-11"></a>
 
-# 11. Chi phí & Dung lượng/Hiệu năng
+# 11. Cost & Capacity/Performance
 
-## 11.1 Mục tiêu dung lượng/hiệu năng
+## 11.1 Capacity/Performance
 
 | **Chỉ số/đầu vào** | **Giá trị thiết kế** | **Cổng/bằng chứng** |
 | --- | --- | --- |
@@ -1201,7 +1200,7 @@ Các công thức bắt buộc:
 Không có số replica, kích thước heap, connection pool hay giới hạn TPS nào trong
 bản nháp này được xem là giá trị production đã phê duyệt.
 
-## 11.2 Chi phí
+## 11.2 Cost
 
 | **Nguồn chi phí** | **Đầu vào tính dung lượng** | **Trạng thái** |
 | --- | --- | --- |
@@ -1219,9 +1218,9 @@ và dự toán tháng là các điểm chặn sẵn sàng production.
 
 <a id="muc-12"></a>
 
-# 12. Khả năng mở rộng & Độ tin cậy
+# 12. Scalability & Reliability
 
-## 12.1 Chiến lược mở rộng
+## 12.1 Scaling Strategy
 
 | **Thành phần** | **Tín hiệu mở rộng** | **Kiểm soát bắt buộc** |
 | --- | --- | --- |
@@ -1235,7 +1234,7 @@ và dự toán tháng là các điểm chặn sẵn sàng production.
 OCR backlog and interactive eKYC must have independent resource/quota pools. A
 burst of 20–60 MB OCR files must not exhaust memory/connections serving eKYC.
 
-## 12.2 Quyết định về độ tin cậy
+## 12.2 Reliability
 
 - Kafka có thể chuyển phát lặp; worker phải idempotent theo trạng thái OCR.
 - Kết quả và trạng thái kết thúc phải nhất quán, không bị ghi đè bởi xử lý đồng thời.
@@ -1265,7 +1264,7 @@ Phục hồi phải xác minh:
 
 <a id="muc-13"></a>
 
-# 13. Khả năng quan sát & Giám sát
+# 13. Observability & Monitoring
 
 ## 13.1 Hiện trạng nền tảng
 
@@ -1322,7 +1321,7 @@ sàng nền tảng. Mục tiêu vẫn `CHƯA XÁC ĐỊNH` đến khi duyệt NF
 
 <a id="muc-14"></a>
 
-# 14. Sẵn sàng vận hành
+# 14. Operational Readiness
 
 ## 14.1 RTO & RPO
 
@@ -1358,7 +1357,7 @@ sàng nền tảng. Mục tiêu vẫn `CHƯA XÁC ĐỊNH` đến khi duyệt NF
 
 <a id="muc-15"></a>
 
-# 15. Chiến lược kiểm thử & Chất lượng
+# 15. Testing & Quality Strategy
 
 ## 15.1 Phạm vi kiểm thử tự động hiện tại
 
@@ -1415,9 +1414,9 @@ lưu giữ đích danh và bằng chứng xóa. Fixture response FPT phải có 
 
 <a id="muc-16"></a>
 
-# 16. Rủi ro & Vấn đề mở/Nợ kỹ thuật
+# 16. Risks & Open Issues/Tech Debt
 
-## 16.1 Danh mục rủi ro kiến trúc
+## 16.1 Architecture Risks
 
 | **Mã rủi ro** | **Nhóm** | **Mô tả/ảnh hưởng** | **Mức độ** | **Giảm thiểu** | **Chủ sở hữu/trạng thái** |
 | --- | --- | --- | --- | --- | --- |
@@ -1436,7 +1435,7 @@ lưu giữ đích danh và bằng chứng xóa. Fixture response FPT phải có 
 | AR-013 | Toàn vẹn/phân quyền | `subjectRef` có trong request nhưng chưa được lưu, làm mất tương quan đối tượng sau khi tạo | Cao | Bổ sung vào PostgreSQL schema và contract truy vấn/phân quyền | Backend/ANBM — MỞ |
 | AR-014 | Toàn vẹn | Trạng thái lần gọi FPT Sale và kết quả OCR có thể không nhất quán khi lỗi giữa các bước cập nhật | Cao | Bảo đảm cập nhật nhất quán hoặc có đối soát idempotent | Backend/Kiến trúc — MỞ |
 
-## 16.2 Danh mục vấn đề mở và nợ kỹ thuật
+## 16.2 Open Issues/Tech Debt
 
 | **ID** | **Vấn đề** | **Ảnh hưởng/Ưu tiên** | **Khắc phục/cổng** |
 | --- | --- | --- | --- |
@@ -1458,9 +1457,9 @@ phạm vi, ngày hết hạn, người phê duyệt và kiểm soát bù trừ.
 
 <a id="phu-luc"></a>
 
-# Phụ lục
+# Appendix
 
-## A. Thuật ngữ
+## A. Glossary
 
 | **Thuật ngữ** | **Định nghĩa** |
 | --- | --- |
@@ -1478,7 +1477,7 @@ phạm vi, ngày hết hạn, người phê duyệt và kiểm soát bù trừ.
 | Không rõ sau khi gửi | Lỗi truyền tải khi FPT có thể đã nhận thao tác thay đổi. |
 | DPA/DPIA | Thỏa thuận xử lý dữ liệu / Đánh giá tác động bảo vệ dữ liệu. |
 
-## B. Tài liệu tham khảo
+## B. References
 
 | **Tài liệu** | **Liên kết/phiên bản** |
 | --- | --- |
