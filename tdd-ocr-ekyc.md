@@ -8,7 +8,7 @@
 | **Trường** | **Nội dung** |
 | --- | --- |
 | **Trạng thái** | **ĐANG THẨM ĐỊNH (UNDER REVIEW)** |
-| **Phiên bản & Lịch sử thay đổi** | `v0.9.2` — 14/08/2026 — Chuẩn hóa cấu trúc theo mẫu L2, phục vụ thẩm định kiến trúc và contract FPT |
+| **Phiên bản & Lịch sử thay đổi** | `v0.9.3` — 14/08/2026 — Chuẩn hóa cấu trúc theo mẫu L2 và bổ sung vòng đời trạng thái FPT Sale OCR |
 | **Chủ sở hữu tài liệu** | TBD — một cá nhân chịu trách nhiệm tài liệu |
 | **Chủ sở hữu hệ thống** | TBD |
 | **Hệ thống** | `vhm-ocr-ekyc` — năng lực OCR/eKYC dùng chung |
@@ -628,6 +628,22 @@ Dữ liệu trạng thái:
 | Kết quả lô | `POST /sale-ocr/result-batch`, tối đa 100 ID | FPT hỗ trợ; VHM chưa triển khai |
 | Kết thúc | `COMPLETED`, `FAILED`; `EXPIRED` sau thời hạn lưu | Ánh xạ thành công/kết quả hoặc lỗi FPT |
 | Giới hạn | 20 MB/file, 60 MB/request, xử lý 5 phút | Phải cưỡng chế kiểm tra media/dung lượng xuyên suốt |
+
+Luồng tích hợp giữ nguyên mô hình bất đồng bộ: VHM gửi hồ sơ, nhận `request_id`,
+sau đó chủ động thăm dò FPT theo chu kỳ tối thiểu 3 giây cho tới trạng thái kết
+thúc. FPT không cung cấp callback/webhook cho luồng này.
+
+| **Trạng thái FPT** | **Ý nghĩa** | **Khối kết quả** | **`error_code`** | **Ánh xạ vòng đời VHM** |
+| --- | --- | --- | --- | --- |
+| `QUEUED` | FPT đã tiếp nhận hồ sơ và đang chờ xử lý | `null` hoặc mảng rỗng | `SUCCESS` | Giữ OCR ở trạng thái chờ FPT và tiếp tục thăm dò. |
+| `PROCESSING` | FPT đang thực hiện OCR | `null` hoặc mảng rỗng | `SUCCESS` | Giữ OCR ở trạng thái chờ FPT và tiếp tục thăm dò. |
+| `COMPLETED` | FPT xử lý thành công | Đầy đủ các khối kết quả | `SUCCESS` | Chuẩn hóa, lưu kết quả và kết thúc OCR thành công. |
+| `FAILED` | FPT xử lý thất bại | Thông thường `null` hoặc mảng rỗng; riêng `DOCUMENT_TYPE_MISMATCH` có `completeness` | Mã lỗi xử lý của FPT | Kết thúc OCR không thành công và lưu mã lỗi FPT. |
+| `EXPIRED` | Kết quả đã quá hạn lưu trữ 30 ngày kể từ khi nộp | `null` hoặc mảng rỗng | `SUCCESS` | Kết thúc không có kết quả; ánh xạ thành hết hạn, không coi là OCR thành công. |
+
+`error_code=SUCCESS` chỉ thể hiện request lấy trạng thái thành công. Quyết định kết
+thúc OCR phải dựa đồng thời vào `status`; đặc biệt `QUEUED`, `PROCESSING` và
+`EXPIRED` không được ánh xạ thành kết quả OCR thành công.
 
 Response FPT khi hoàn tất chứa `completeness`, `documents`, `matching` và
 `signature_seal`. `matching.status` gồm `MATCH`, `MISMATCH`, `NEW`; exact,
