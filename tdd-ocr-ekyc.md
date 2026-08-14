@@ -8,7 +8,7 @@
 | **Trường** | **Nội dung** |
 | --- | --- |
 | **Trạng thái** | **ĐANG THẨM ĐỊNH (UNDER REVIEW)** |
-| **Phiên bản & Lịch sử thay đổi** | `v0.9.3` — 14/08/2026 — Chuẩn hóa cấu trúc theo mẫu L2 và bổ sung vòng đời trạng thái FPT Sale OCR |
+| **Phiên bản & Lịch sử thay đổi** | `v0.9.4` — 14/08/2026 — Chuẩn hóa contract VHM `/ocr/*` và vòng đời trạng thái FPT Sale OCR |
 | **Chủ sở hữu tài liệu** | TBD — một cá nhân chịu trách nhiệm tài liệu |
 | **Chủ sở hữu hệ thống** | TBD |
 | **Hệ thống** | `vhm-ocr-ekyc` — năng lực OCR/eKYC dùng chung |
@@ -152,7 +152,7 @@ liệu nhạy cảm sang từng ứng dụng.
 | **Capability** | **Phạm vi** | **Trạng thái** |
 | --- | --- | --- |
 | OCR một tài liệu | Presigned upload/reference → FPT bất đồng bộ → kết quả chuẩn | `HIỆN TRẠNG` |
-| OCR hồ sơ Sale | CCCD trước/sau + PLHĐ; FPT `/sale-ocr/register` và thăm dò kết quả | `HIỆN TRẠNG` — cần gia cố production |
+| OCR hồ sơ Sale | CCCD trước/sau + PLHĐ; gửi hồ sơ và thăm dò kết quả FPT | `HIỆN TRẠNG` — cần gia cố production |
 | OCR status/result | Tài nguyên VHM, polling, kết quả được mã hóa | `HIỆN TRẠNG` |
 | eKYC init/OCR/liveness | Ba API đồng bộ, response tương thích provider và audit mã hóa | `HIỆN TRẠNG` — compatibility chưa sign-off |
 | File Management | Chuẩn bị upload, kiểm tra tồn tại, chuẩn bị download | `HIỆN TRẠNG` khi bật tính năng |
@@ -511,13 +511,13 @@ tập trung, kết quả OCR chuẩn, media riêng tư và không thử lại eK
 
 | **ID** | **Nguồn → Đích** | **Giao diện** | **Chế độ/Xác thực** | **Trạng thái** |
 | --- | --- | --- | --- | --- |
-| API-01 | BFF/miền nghiệp vụ → service | `POST /v1/ocrs` | JSON, `Idempotency-Key`; mục tiêu xác thực service | Hiện có |
-| API-02 | BFF/domain → service | `POST /v1/ocrs/sale-profile` | JSON, `Idempotency-Key` | Hiện có |
-| API-03 | BFF/domain → service | `GET /v1/ocrs/{ocrId}` và `/result` | JSON | Hiện có |
+| API-01 | BFF/miền nghiệp vụ → service | `POST /ocr` | JSON, `Idempotency-Key`; mục tiêu xác thực service | Contract VHM |
+| API-02 | BFF/domain → service | `POST /ocr/sale-profile` | JSON, `Idempotency-Key` | Contract VHM |
+| API-03 | BFF/domain → service | `GET /ocr/{ocrId}` và `/ocr/{ocrId}/result` | JSON | Contract VHM |
 | MEDIA-01 | BFF → service → File Management | `POST /v1/media/prepare-upload`, kiểm tra/tải xuống | JSON + Basic Auth ở hạ nguồn | Có điều kiện/hiện có |
 | EVT-01 | Dịch vụ OCR → Kafka → worker | `vhm.ocr-ekyc.job.created.v1` | Chỉ truyền định danh OCR | Hiện có |
-| FPT-01 | Worker → FPT IDR | `POST /vision/idr/vnm`, multipart `image` | `api-key` | Adapter đồng bộ hiện có |
-| FPT-02 | Worker → FPT Sale | `POST /sale-ocr/register`, `GET /sale-ocr/result/{id}` | `api_key` | Gửi/thăm dò bất đồng bộ hiện có |
+| FPT-01 | Worker → FPT | Nhận dạng giấy tờ | Xác thực theo cấu hình môi trường | Lời gọi đồng bộ trong worker |
+| FPT-02 | Worker → FPT | OCR hồ sơ Sale | Xác thực theo cấu hình môi trường | Gửi/thăm dò bất đồng bộ |
 | EKYC-01 | Client/BFF → service → FPT | `/v1/ekyc-sdk/init-session`, `/ocr`, `/liveness` | Mục tiêu xác thực VHM; chèn khóa FPT | Hiện có nhưng còn khoảng trống tương thích |
 | ADM-01 | Vận hành viên → service | `/internal/v1/admin/ocrs`, `/ocr-results` | Mục tiêu xác thực quản trị | Có điều kiện; xác thực là điểm chặn |
 
@@ -535,7 +535,7 @@ trả HTTP `202` và `Retry-After: 3`.
 ### 6.2.1 Tạo một tài liệu
 
 ```http
-POST /v1/ocrs
+POST /ocr
 Idempotency-Key: <opaque-key>
 Content-Type: application/json
 
@@ -557,7 +557,7 @@ chưa có trong code và phải được bổ sung trước khi mở API product
 
 ### 6.2.2 Tạo hồ sơ Sale
 
-`POST /v1/ocrs/sale-profile` nhận:
+`POST /ocr/sale-profile` nhận:
 
 ```json
 {
@@ -591,7 +591,7 @@ Dữ liệu trạng thái:
   "resultAvailable": false,
   "nextAction": "POLL",
   "updatedAt": "2026-08-14T03:00:00Z",
-  "resourceUri": "/v1/ocrs/0198..."
+  "resourceUri": "/ocr/0198..."
 }
 ```
 
@@ -614,18 +614,18 @@ Dữ liệu trạng thái:
 
 ### 6.4.1 FPT ID Recognition
 
-- `POST https://api.fpt.ai/vision/idr/vnm` mặc định.
-- Header credential `api-key`; multipart field `image`.
-- Adapter coi provider code `0` hoặc `200` và HTTP 2xx là success.
-- Đây là synchronous call bên trong async VHM worker; chưa có provider attempt/poll.
+- Worker gọi năng lực nhận dạng giấy tờ của FPT thông qua lớp tích hợp nội bộ.
+- Endpoint và thông tin xác thực FPT được quản lý theo cấu hình môi trường, không
+  thuộc contract L2 công bố cho bên sử dụng VHM.
+- Lời gọi FPT là đồng bộ bên trong luồng OCR bất đồng bộ của VHM.
 
 ### 6.4.2 FPT Sale OCR v0.2.0
 
 | **Thao tác** | **Contract** | **Hành vi worker** |
 | --- | --- | --- |
-| Đăng ký | `POST /sale-ocr/register`; đúng ba trường `id_card_front`, `id_card_back`, `labor_contract` | HTTP 202 + `SUCCESS` + `request_id` → lưu job FPT |
-| Kết quả đơn | `GET /sale-ocr/result/{request_id}` | Thăm dò mỗi 3 giây |
-| Kết quả lô | `POST /sale-ocr/result-batch`, tối đa 100 ID | FPT hỗ trợ; VHM chưa triển khai |
+| Đăng ký | Gửi đúng ba tài liệu CCCD trước, CCCD sau và PLHĐ | FPT tiếp nhận thành công và trả `request_id` → lưu mã giao dịch nội bộ |
+| Kết quả đơn | Truy vấn theo `request_id` | Thăm dò mỗi 3 giây |
+| Kết quả lô | FPT hỗ trợ truy vấn tối đa 100 ID | VHM chưa triển khai |
 | Kết thúc | `COMPLETED`, `FAILED`; `EXPIRED` sau thời hạn lưu | Ánh xạ thành công/kết quả hoặc lỗi FPT |
 | Giới hạn | 20 MB/file, 60 MB/request, xử lý 5 phút | Phải cưỡng chế kiểm tra media/dung lượng xuyên suốt |
 
@@ -652,11 +652,11 @@ diễn lại. Cảnh báo chữ ký/con dấu chỉ là bằng chứng hỗ tr�
 
 ## 6.5 Contract chuyển tiếp eKYC
 
-| **API VHM** | **Đầu vào hiện tại** | **Đích FPT mặc định được cấu hình** |
+| **API VHM** | **Đầu vào hiện tại** | **Năng lực FPT** |
 | --- | --- | --- |
-| `POST /v1/ekyc-sdk/init-session` | Request body/header stream, giới hạn 20 MB | `/vision/ekyc-be/session/init` |
-| `POST /v1/ekyc-sdk/ocr` | Multipart `image` | `/vision/idr/vnm` |
-| `POST /v1/ekyc-sdk/liveness` | Multipart `video` + `cmnd` | `/dmp/liveness/v3` |
+| `POST /v1/ekyc-sdk/init-session` | Request body/header stream, giới hạn 20 MB | Khởi tạo phiên eKYC |
+| `POST /v1/ekyc-sdk/ocr` | Multipart `image` | Nhận dạng giấy tờ trong phiên eKYC |
+| `POST /v1/ekyc-sdk/liveness` | Multipart `video` + `cmnd` | Kiểm tra sống và đối sánh khuôn mặt |
 
 Service chèn `api-key`, không nhận thông tin xác thực từ bên gọi; chỉ sao chép header
 request/response thuộc danh sách cho phép và trả status/body HTTP của FPT. Metadata
@@ -666,9 +666,9 @@ audit của mỗi lần gọi được lưu trong PostgreSQL schema `ocr_ekyc` t
 
 Tài liệu FPT update-information flow mô tả một session thống nhất:
 
-- init: `POST base_url/session/init`; SDK dùng `base_url/init_session`;
-- OCR: `POST base_url/ocr`, cần `session-id`, `device-type`, `document-type`;
-- liveness: `POST base_url/face/liveness`, dùng `selfies` hoặc `video`;
+- thao tác khởi tạo tạo phiên eKYC;
+- thao tác OCR dùng cùng phiên và ngữ cảnh thiết bị/loại giấy tờ;
+- thao tác liveness dùng cùng phiên với ảnh hoặc video khuôn mặt;
 - SDK/version có thể cần `client_uuid`, `sdk-version`, `side-type`, `auto`, `lang`.
 
 Web SDK cho phép cấu hình riêng endpoint init/OCR/liveness; tên form OCR mặc định
@@ -930,7 +930,7 @@ sequenceDiagram
     K-->>W: OCR ID
     W->>D: nhận quyền xử lý + ghi nhận lần gọi
     W->>S: load front + back + labor contract
-    W->>F: POST /sale-ocr/register (3 files)
+    W->>F: Gửi hồ sơ Sale (3 tài liệu)
     F-->>W: 202 SUCCESS + request_id + QUEUED
     W->>D: lưu FPT job<br/>WAITING_PROVIDER + lịch thăm dò 3 giây
 
@@ -938,7 +938,7 @@ sequenceDiagram
         D-->>K: định danh OCR đến lịch thăm dò
         K-->>W: OCR ID
         W->>D: chuyển sang trạng thái thăm dò
-        W->>F: GET /sale-ocr/result/{request_id}
+        W->>F: Truy vấn trạng thái theo request_id
         F-->>W: QUEUED / PROCESSING / COMPLETED / FAILED / EXPIRED
         alt non-terminal or retryable 429/5xx
             W->>D: cập nhật WAITING_PROVIDER + lịch thăm dò tiếp
