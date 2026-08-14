@@ -8,7 +8,7 @@
 | **Trường** | **Nội dung** |
 | --- | --- |
 | **Trạng thái** | **ĐANG THẨM ĐỊNH (UNDER REVIEW)** |
-| **Phiên bản & Lịch sử thay đổi** | `v0.9.24` — 15/08/2026 — Bổ sung contract API proxy eKYC theo tài liệu FPT SDK/API chính thức |
+| **Phiên bản & Lịch sử thay đổi** | `v0.9.25` — 15/08/2026 — Chuẩn hóa sơ đồ triển khai production theo luồng GitLab CI/CD, ECR và EKS |
 | **Chủ sở hữu tài liệu** | TBD — một cá nhân chịu trách nhiệm tài liệu |
 | **Chủ sở hữu hệ thống** | TBD |
 | **Hệ thống** | `vhm-ocr-ekyc` — năng lực OCR/eKYC dùng chung |
@@ -1189,40 +1189,56 @@ response body hoặc tái dựng lịch sử thay đổi nghiệp vụ.
 ## 10.2 Production Deployment Diagram (CI/CD)
 
 ```mermaid
-flowchart TB
-    CHANNEL([Mobile / Web])
-    BFF[VHM BFF]
-    EDGE[WAF / API Gateway / Ingress]
-    PROVIDERS[FPT]
-    FILE[File Management]
+flowchart LR
+    DEV([Developer])
+    GITLAB[GitLab<br/>Source code · Pipeline definition]
 
-    subgraph VPC[Ranh giới production riêng tư VHM - mục tiêu multi-AZ]
-        subgraph EKS[Môi trường chạy ứng dụng]
-            API[Các replica API<br/>OCR · eKYC]
-            WORKER[OCR processor replicas]
+    subgraph AWS[AWS Production]
+        subgraph CI[CI Pipeline — Build & Push]
+            RUNNER[GitLab Runner<br/>trên Kubernetes]
+            CHECK[Build · Test<br/>Security scan]
         end
-        DB[(PostgreSQL Multi-AZ)]
-        KAFKA[(Kafka)]
-        OBS[Metrics / Logs / Traces]
-        SECRET[Secret Manager / KMS]
+
+        ROLE[GitLab Runner Role]
+        ECR[(Amazon ECR<br/>Immutable image)]
+        ARTIFACT[(S3 Artifacts<br/>Manifest · SBOM · Evidence)]
+
+        subgraph CD[CD Pipeline — Apply manifest]
+            EKS[Amazon EKS]
+            subgraph PODS[vhm-ocr-ekyc namespace]
+                API[API Pods]
+                PROCESSOR[OCR Processor Pods]
+            end
+        end
+
+        SECRET[AWS Secrets Manager / KMS]
     end
 
-    CHANNEL --> BFF --> EDGE --> API
-    API --> DB
-    API --> KAFKA --> WORKER
-    WORKER --> DB
-    API --> FILE
-    WORKER --> FILE
-    API --> PROVIDERS
-    WORKER --> PROVIDERS
-    API --> SECRET
-    WORKER --> SECRET
-    API -.-> OBS
-    WORKER -.-> OBS
+    DEV -->|commit / merge request| GITLAB
+    GITLAB -->|trigger pipeline| RUNNER
+    RUNNER --> CHECK
+    RUNNER -.->|assume role| ROLE
+    CHECK -->|push image theo digest| ECR
+    CHECK -->|publish artefact| ARTIFACT
+    RUNNER -->|apply manifest đã duyệt| EKS
+    ECR -->|pull image theo digest| EKS
+    EKS -->|triển khai| API
+    EKS -->|triển khai| PROCESSOR
+    SECRET -->|cấp secret lúc runtime| API
+    SECRET -->|cấp secret lúc runtime| PROCESSOR
 ```
 
-Ứng dụng hiện được đóng gói thành một artifact. Mục tiêu production là cho phép
-triển khai và mở rộng độc lập vai trò API và OCR worker để cô lập phạm vi ảnh hưởng.
+CI tạo một image bất biến, đẩy image lên ECR và lưu manifest, SBOM cùng bằng chứng
+kiểm thử trong kho artefact. CD chỉ triển khai image đã qua cổng phê duyệt bằng
+digest; không build lại khi quảng bá lên production. GitLab Runner sử dụng IAM role
+ngắn hạn để push image và triển khai manifest, không lưu access key tĩnh trong
+pipeline.
+
+API Pods và OCR Processor Pods dùng chung image nhưng được cấu hình thành hai vai
+trò runtime, triển khai và mở rộng độc lập. Secret được cấp cho workload tại runtime
+từ AWS Secrets Manager/KMS; không đóng gói trong image, manifest hoặc artefact CI.
+PostgreSQL, Kafka, File Management và FPT là phụ thuộc runtime đã mô tả tại các sơ
+đồ kiến trúc/luồng dữ liệu, không lặp lại trong sơ đồ CI/CD này.
 
 ## 10.3 Deployment Strategy
 
