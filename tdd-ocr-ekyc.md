@@ -8,7 +8,7 @@
 | **Trường** | **Nội dung** |
 | --- | --- |
 | **Trạng thái** | **ĐANG THẨM ĐỊNH (UNDER REVIEW)** |
-| **Phiên bản & Lịch sử thay đổi** | `v0.9.5` — 14/08/2026 — Chuẩn hóa contract `/ocr/*`, vòng đời FPT Sale OCR và ranh giới Mobile/Web → BFF → OCR/eKYC |
+| **Phiên bản & Lịch sử thay đổi** | `v0.9.7` — 14/08/2026 — Thống nhất hai API OCR `/ocr`, `/ocr/result`, vòng đời FPT và ranh giới Mobile/Web → BFF → OCR/eKYC |
 | **Chủ sở hữu tài liệu** | TBD — một cá nhân chịu trách nhiệm tài liệu |
 | **Chủ sở hữu hệ thống** | TBD |
 | **Hệ thống** | `vhm-ocr-ekyc` — năng lực OCR/eKYC dùng chung |
@@ -449,14 +449,14 @@ stateDiagram-v2
 
 ## 3.3 Ma trận trạng thái/hành động
 
-| **Trạng thái** | Đọc trạng thái | Đọc kết quả | Worker gửi | Worker thăm dò | Hành động BFF |
-| --- | --- | --- | --- | --- | --- |
-| `QUEUED` | Có | `409` | Claim một lần | Không | Thăm dò |
-| `PROCESSING` | Có | `409` | Không nhận xử lý trùng | Không thăm dò trùng | Thăm dò |
-| `WAITING_PROVIDER` | Có | `409` | Không | Claim một lần | Thăm dò |
-| `COMPLETED + OCR_COMPLETED` | Có | Có | Không | Không | Xác nhận/áp dụng |
-| `COMPLETED + PROVIDER_ERROR` | Có | `409` | Không | Không | Tạo request/key mới; chưa có API retry |
-| `CANCELLED/EXPIRED` | Chỉ có trong schema | Không | Không | Không | Chính sách mục tiêu TBD |
+| **Trạng thái** | **Phản hồi `/ocr/result`** | **Worker gửi** | **Worker thăm dò** | **Hành động BFF** |
+| --- | --- | --- | --- | --- |
+| `QUEUED` | Trạng thái hiện tại, kết quả `null` | Nhận xử lý một lần | Không | Tiếp tục thăm dò |
+| `PROCESSING` | Trạng thái hiện tại, kết quả `null` | Không nhận xử lý trùng | Không thăm dò trùng | Tiếp tục thăm dò |
+| `WAITING_PROVIDER` | Trạng thái hiện tại, kết quả `null` | Không | Nhận thăm dò một lần | Tiếp tục thăm dò |
+| `COMPLETED + OCR_COMPLETED` | Trạng thái kết thúc và kết quả OCR | Không | Không | Xác nhận/áp dụng |
+| `COMPLETED + PROVIDER_ERROR` | Trạng thái kết thúc, mã lỗi, kết quả `null` | Không | Không | Tạo yêu cầu mới theo chính sách |
+| `CANCELLED/EXPIRED` | Trạng thái kết thúc, kết quả `null` | Không | Không | Xử lý theo chính sách nghiệp vụ |
 
 ## 3.4 Quy tắc kênh
 
@@ -515,9 +515,8 @@ tập trung, kết quả OCR chuẩn, media riêng tư và không thử lại eK
 
 | **ID** | **Nguồn → Đích** | **Giao diện** | **Chế độ/Xác thực** | **Trạng thái** |
 | --- | --- | --- | --- | --- |
-| API-01 | BFF → service | `POST /ocr` | JSON, `Idempotency-Key`; mục tiêu xác thực service | Contract VHM |
-| API-02 | BFF → service | `POST /ocr/sale-profile` | JSON, `Idempotency-Key` | Contract VHM |
-| API-03 | BFF → service | `GET /ocr/{ocrId}` và `/ocr/{ocrId}/result` | JSON | Contract VHM |
+| API-01 | BFF → service | `POST /ocr` | Tạo OCR một hoặc nhiều tài liệu; JSON, `Idempotency-Key` | Contract VHM |
+| API-02 | BFF → service | `/ocr/result` | Truy vấn trạng thái và nhận kết quả bằng định danh OCR | Contract VHM |
 | MEDIA-01 | BFF → service → File Management | `POST /v1/media/prepare-upload`, kiểm tra/tải xuống | JSON + Basic Auth ở hạ nguồn | Có điều kiện/hiện có |
 | EVT-01 | Dịch vụ OCR → Kafka → worker | `vhm.ocr-ekyc.job.created.v1` | Chỉ truyền định danh OCR | Hiện có |
 | FPT-01 | Worker → FPT | Nhận dạng giấy tờ | Xác thực theo cấu hình môi trường | Lời gọi đồng bộ trong worker |
@@ -526,6 +525,10 @@ tập trung, kết quả OCR chuẩn, media riêng tư và không thử lại eK
 | ADM-01 | Vận hành viên → service | `/internal/v1/admin/ocrs`, `/ocr-results` | Mục tiêu xác thực quản trị | Có điều kiện; xác thực là điểm chặn |
 
 ## 6.2 Contract API OCR VHM
+
+Contract OCR công khai cho BFF chỉ gồm hai đường dẫn: `POST /ocr` để tạo yêu cầu
+và `/ocr/result` để thăm dò trạng thái/nhận kết quả. Không công bố endpoint OCR
+riêng theo use case hoặc endpoint tài nguyên chứa định danh trên path.
 
 Mọi response OCR/media thành công dùng envelope:
 
@@ -559,26 +562,12 @@ FPT là nhà cung cấp duy nhất thuộc contract TDD này. Production không 
 chọn nhà cung cấp qua query parameter. Danh sách loại tài liệu cho phép theo bên gọi/use case
 chưa có trong code và phải được bổ sung trước khi mở API production.
 
-### 6.2.2 Tạo hồ sơ Sale
+### 6.2.2 Tạo OCR hồ sơ nhiều tài liệu
 
-`POST /ocr/sale-profile` nhận:
-
-```json
-{
-  "source": "SALE",
-  "referenceId": "opaque-sale-ref",
-  "requestBy": "opaque-actor-ref",
-  "subjectRef": "opaque-subject-ref",
-  "channel": "WEB",
-  "platform": "WEB",
-  "idCardFrontS3PathFile": "ocr-media/.../front.jpg",
-  "idCardBackS3PathFile": "ocr-media/.../back.jpg",
-  "laborContractS3PathFile": "ocr-media/.../contract.pdf"
-}
-```
-
-Service lưu `documentType=SALE_PROFILE`, `selectedProvider=FPT`, ba media ở
-vị trí 1/2/3 và deadline 5 phút.
+Hồ sơ nhiều tài liệu sử dụng cùng `POST /ocr`, không có endpoint riêng theo use
+case. BFF gửi loại OCR, ngữ cảnh nghiệp vụ và ba tham chiếu tài liệu gồm CCCD mặt
+trước, CCCD mặt sau và PLHĐ. Dịch vụ ghi nhận một tài nguyên OCR duy nhất, bảo toàn
+vai trò của từng tài liệu và áp dụng thời hạn xử lý 5 phút.
 
 ### 6.2.3 Trạng thái/kết quả
 
@@ -593,14 +582,15 @@ Dữ liệu trạng thái:
   "outcome": null,
   "errorCode": null,
   "resultAvailable": false,
+  "result": null,
   "nextAction": "POLL",
-  "updatedAt": "2026-08-14T03:00:00Z",
-  "resourceUri": "/ocr/0198..."
+  "updatedAt": "2026-08-14T03:00:00Z"
 }
 ```
 
 `nextAction`: kết quả có sẵn → `CONFIRM_AND_APPLY`; kết thúc không có kết quả →
-`RETRY`; còn lại → `POLL`. Result chưa có trả HTTP `409`, code `40900`.
+`RETRY`; còn lại → `POLL`. Khi OCR chưa kết thúc, `/ocr/result` vẫn trả trạng thái
+hiện tại và `result=null` để BFF tiếp tục thăm dò.
 
 ## 6.3 Contract API media
 
