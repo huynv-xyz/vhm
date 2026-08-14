@@ -8,7 +8,7 @@
 | **Trường** | **Nội dung** |
 | --- | --- |
 | **Trạng thái** | **ĐANG THẨM ĐỊNH (UNDER REVIEW)** |
-| **Phiên bản & Lịch sử thay đổi** | `v0.9.4` — 14/08/2026 — Chuẩn hóa contract VHM `/ocr/*` và vòng đời trạng thái FPT Sale OCR |
+| **Phiên bản & Lịch sử thay đổi** | `v0.9.5` — 14/08/2026 — Chuẩn hóa contract `/ocr/*`, vòng đời FPT Sale OCR và ranh giới Mobile/Web → BFF → OCR/eKYC |
 | **Chủ sở hữu tài liệu** | TBD — một cá nhân chịu trách nhiệm tài liệu |
 | **Chủ sở hữu hệ thống** | TBD |
 | **Hệ thống** | `vhm-ocr-ekyc` — năng lực OCR/eKYC dùng chung |
@@ -175,14 +175,14 @@ liệu nhạy cảm sang từng ứng dụng.
 
 | **ID** | **Giả định/Ràng buộc** | **Trạng thái** | **Ảnh hưởng** |
 | --- | --- | --- | --- |
-| A-01 | OCR luôn bất đồng bộ từ góc nhìn bên gọi, kể cả khi lời gọi provider đồng bộ | Quyết định kiến trúc | API trả `202`; client thăm dò VHM. |
+| A-01 | OCR luôn bất đồng bộ từ góc nhìn kênh, kể cả khi lời gọi provider đồng bộ | Quyết định kiến trúc | API trả `202`; BFF thăm dò OCR/eKYC và trả trạng thái cho Mobile/Web. |
 | A-02 | eKYC init/OCR/liveness đồng bộ và không tự thử lại mutation | Quyết định kiến trúc | Timeout/không rõ sau khi gửi phải trả lỗi, không phát lại mù. |
 | A-03 | File Management quản lý object riêng tư và trả presigned URL ngắn hạn | Phụ thuộc | Thiếu prepare-download thì worker không đọc được media. |
 | A-04 | Kafka chuyển phát at-least-once; consumer phải idempotent | Giả định nền tảng | Thông điệp trùng không gọi FPT sau khi OCR đã được nhận xử lý hoặc đã kết thúc. |
 | A-05 | FPT Sale giữ kết quả 30 ngày, poll tối thiểu mỗi 3 giây, processing tối đa 5 phút | `BÊN NGOÀI` theo PDF v0.2.0 | Cần kiểm thử contract/SLA chính thức trước production. |
 | A-06 | Mỗi file Sale ≤20 MB; đúng 3 file; provider tổng request ≤60 MB | `BÊN NGOÀI` | Bộ nhớ/dung lượng phải được tính theo ba file. |
 | A-07 | Luồng phiên FPT eKYC cần cùng `session-id`, `device-type` và endpoint/header đúng phiên bản | `BÊN NGOÀI` | Code hiện tại chưa forward đủ header; `BLOCKING`. |
-| A-08 | Bên gọi/BFF chịu trách nhiệm xác thực, phân quyền và phạm vi đối tượng nghiệp vụ | Giả định hiện tại | Service chưa cưỡng chế Spring Security; production cần phòng thủ nhiều lớp. |
+| A-08 | Mobile/Web gọi qua BFF; BFF chịu trách nhiệm xác thực, phân quyền và phạm vi đối tượng nghiệp vụ | Giả định hiện tại | Service chưa cưỡng chế xác thực workload; production cần phòng thủ nhiều lớp. |
 | A-09 | Credential provider/khóa mã hóa được cấp qua secret manager/environment | `MỤC TIÊU` | Không được có secret dự phòng trong repo/image/log. |
 | A-10 | Purpose, consent, retention, residency và deletion policy được duyệt | `BLOCKING` | Không được go-live với dữ liệu thật nếu thiếu. |
 | A-11 | `source`, `referenceId`, `requestBy`, `subjectRef` là opaque reference, không nhúng PII | Contract | Vi phạm làm tăng rò rỉ ở DB/admin/log. |
@@ -191,8 +191,9 @@ liệu nhạy cảm sang từng ứng dụng.
 
 | **Nhóm người dùng** | **Trách nhiệm/quyền** |
 | --- | --- |
-| End User | Upload/capture media và nhận trạng thái/kết quả qua ứng dụng VHM. |
-| Domain/BFF Service | Xác thực, authorize business object, cấp opaque context, apply kết quả sau xác nhận. |
+| End User | Upload/capture media và nhận trạng thái/kết quả qua ứng dụng Mobile/Web VHM. |
+| Mobile/Web | Giao tiếp với BFF; không gọi trực tiếp dịch vụ OCR/eKYC hoặc FPT. |
+| BFF Service | Xác thực, phân quyền business object, cấp opaque context, gọi OCR/eKYC và áp dụng kết quả sau xác nhận. |
 | Business Operator | Tra cứu metadata đã được phân quyền; không mặc định xem raw result/media. |
 | Platform Operator | Vận hành queue, worker, provider, DB, dashboard và incident. |
 | Security/Data Privacy/Auditor | Phê duyệt purpose, access, encryption, retention, log và evidence. |
@@ -303,19 +304,22 @@ flowchart TB
 ```mermaid
 flowchart LR
     subgraph OCR[OCR TÀI LIỆU — bất đồng bộ]
-        C[Tạo OCR] --> T[(PostgreSQL<br/>schema ocr_ekyc)]
-        T -->|202| P[Client thăm dò VHM]
+        M[Mobile / Web] --> B[BFF] --> C[Tạo OCR]
+        C --> T[(PostgreSQL<br/>schema ocr_ekyc)]
+        T -->|trạng thái / kết quả| B
+        B -->|phản hồi| M
         T --> K[(Kafka)] --> W[OCR Worker]
         W --> PR[FPT]
         PR --> N[Chuẩn hóa / mã hóa kết quả]
-        N --> P
+        N --> T
     end
 
     subgraph EKYC[eKYC — đồng bộ]
-        S[Request Client/BFF] --> E[vhm-ocr-ekyc<br/>kiểm tra + chèn thông tin xác thực]
+        M2[Mobile / Web] --> B2[BFF] --> E[vhm-ocr-ekyc<br/>kiểm tra + chèn thông tin xác thực]
         E --> F[FPT endpoint]
         F --> A[Audit response đã mã hóa]
-        A --> R[Response tương thích FPT]
+        A --> B2
+        B2 --> M2
     end
 ```
 
@@ -325,7 +329,7 @@ flowchart LR
 | --- | --- | --- | --- |
 | Mobile/Web → BFF | Không tin cậy | OIDC/JWT, phân quyền object, giới hạn tần suất/body | Ngoài phạm vi mã nguồn này |
 | BFF → `vhm-ocr-ekyc` | Zero Trust nội bộ | Danh tính workload/mTLS/JWT, audience/scope, chống phát lại | `KHOẢNG TRỐNG`: chưa có Spring Security |
-| Client → kho riêng tư | Đầu vào media không tin cậy | Presigned PUT chính xác, hạn ngắn, checksum, không đọc/liệt kê | Một phần qua File Management |
+| Mobile/Web → kho riêng tư | Đầu vào media không tin cậy | Presigned PUT chính xác, hạn ngắn, checksum, không đọc/liệt kê | Một phần qua File Management |
 | Service/worker → File Management/kho lưu trữ | Hạn chế | Thông tin xác thực Basic/workload, danh sách cho phép, TLS, giới hạn byte | `HIỆN TRẠNG`; mục tiêu là danh tính workload |
 | Service/worker → FPT | Bên ngoài | TLS, endpoint cố định, credential bí mật, timeout, quota | `HIỆN TRẠNG` một phần |
 | Service → PostgreSQL/Kafka | Hạn chế | Mạng riêng, TLS/xác thực, đặc quyền tối thiểu | Bằng chứng triển khai TBD |
@@ -445,7 +449,7 @@ stateDiagram-v2
 
 ## 3.3 Ma trận trạng thái/hành động
 
-| **Trạng thái** | Đọc trạng thái | Đọc kết quả | Worker gửi | Worker thăm dò | Hành động client |
+| **Trạng thái** | Đọc trạng thái | Đọc kết quả | Worker gửi | Worker thăm dò | Hành động BFF |
 | --- | --- | --- | --- | --- | --- |
 | `QUEUED` | Có | `409` | Claim một lần | Không | Thăm dò |
 | `PROCESSING` | Có | `409` | Không nhận xử lý trùng | Không thăm dò trùng | Thăm dò |
@@ -458,8 +462,8 @@ stateDiagram-v2
 
 - DB constraint chỉ cho `WEB/WEB`, `MOBILE/ANDROID`, `MOBILE/IOS`.
 - Request code upper-case channel/platform trước persist; invalid pair bị DB reject.
-- Mobile/Web không gọi provider trực tiếp và không giữ provider credential.
-- eKYC client phải giữ `session-id` giữa các bước và truyền đúng `device-type`.
+- Mobile/Web chỉ gọi BFF cho OCR/eKYC; không gọi trực tiếp `vhm-ocr-ekyc` hoặc FPT.
+- BFF quản lý ngữ cảnh phiên eKYC giữa các bước và truyền đúng thông tin kênh/thiết bị.
 - Web/Mobile SDK compatibility là L3 gate; route name VHM không thay thế exact
   multipart/header contract theo phiên bản SDK.
 
@@ -472,7 +476,7 @@ stateDiagram-v2
 | NFR-001 | Tính sẵn sàng | Đo riêng SLO dịch vụ và SLA FPT; mục tiêu nhiều replica/Multi-AZ | Mục tiêu TBD |
 | NFR-002 | Độ trễ tiếp nhận OCR | Không gọi FPT khi tạo; mục tiêu p95 theo SLO API VHM | Kiến trúc đã đáp ứng; mục tiêu TBD |
 | NFR-003 | Hoàn tất OCR | Sale ≤5 phút theo contract FPT; OCR thường có mục tiêu TBD | Một phần |
-| NFR-004 | Độ trễ eKYC | Timeout FPT < deadline service/BFF/client; mục tiêu theo từng thao tác | Thứ tự TBD; timeout response mặc định hiện tại 10 phút |
+| NFR-004 | Độ trễ eKYC | Timeout FPT < deadline service < deadline BFF < deadline Mobile/Web | Mục tiêu theo từng thao tác còn TBD |
 | NFR-005 | Tính toàn vẹn | Nhất quán PostgreSQL, idempotency và loại trùng ở trạng thái kết thúc | Một phần; còn khoảng trống `PROCESSING` quá hạn |
 | NFR-006 | An toàn thông tin | TLS, xác thực workload, secret manager, endpoint cố định, không log body | Một phần; bằng chứng xác thực/secret là điểm chặn |
 | NFR-007 | Quyền riêng tư | Mã hóa, tối thiểu hóa dữ liệu, lưu giữ/xóa, DPA/DPIA | Đã có mã hóa; còn khoảng trống quản trị/xóa |
@@ -495,7 +499,7 @@ stateDiagram-v2
 | Lưu trữ media | File Management và kho object riêng tư | Không truyền media qua Kafka hoặc lưu binary trong PostgreSQL | Cần checksum, thời hạn lưu và kiểm soát truy cập. |
 | Mã hóa | Tiêu chuẩn mã hóa và quản lý khóa của VHM | Bảo vệ kết quả OCR và audit eKYC | Cần bằng chứng quản lý/luân chuyển khóa trước production. |
 | Quan sát hệ thống | Metric, log và trace theo nền tảng VHM | Theo dõi API, Kafka, worker và FPT | Không ghi PII hoặc dữ liệu sinh trắc. |
-| Tài liệu API | OpenAPI có phiên bản | Contract giữa VHM, client và dịch vụ | Cần xuất bản đặc tả L3 trước go-live. |
+| Tài liệu API | OpenAPI có phiên bản | Contract giữa BFF và dịch vụ OCR/eKYC | Cần xuất bản đặc tả L3 trước go-live. |
 
 ## 5.1 ADR Log
 
@@ -511,14 +515,14 @@ tập trung, kết quả OCR chuẩn, media riêng tư và không thử lại eK
 
 | **ID** | **Nguồn → Đích** | **Giao diện** | **Chế độ/Xác thực** | **Trạng thái** |
 | --- | --- | --- | --- | --- |
-| API-01 | BFF/miền nghiệp vụ → service | `POST /ocr` | JSON, `Idempotency-Key`; mục tiêu xác thực service | Contract VHM |
-| API-02 | BFF/domain → service | `POST /ocr/sale-profile` | JSON, `Idempotency-Key` | Contract VHM |
-| API-03 | BFF/domain → service | `GET /ocr/{ocrId}` và `/ocr/{ocrId}/result` | JSON | Contract VHM |
+| API-01 | BFF → service | `POST /ocr` | JSON, `Idempotency-Key`; mục tiêu xác thực service | Contract VHM |
+| API-02 | BFF → service | `POST /ocr/sale-profile` | JSON, `Idempotency-Key` | Contract VHM |
+| API-03 | BFF → service | `GET /ocr/{ocrId}` và `/ocr/{ocrId}/result` | JSON | Contract VHM |
 | MEDIA-01 | BFF → service → File Management | `POST /v1/media/prepare-upload`, kiểm tra/tải xuống | JSON + Basic Auth ở hạ nguồn | Có điều kiện/hiện có |
 | EVT-01 | Dịch vụ OCR → Kafka → worker | `vhm.ocr-ekyc.job.created.v1` | Chỉ truyền định danh OCR | Hiện có |
 | FPT-01 | Worker → FPT | Nhận dạng giấy tờ | Xác thực theo cấu hình môi trường | Lời gọi đồng bộ trong worker |
 | FPT-02 | Worker → FPT | OCR hồ sơ Sale | Xác thực theo cấu hình môi trường | Gửi/thăm dò bất đồng bộ |
-| EKYC-01 | Client/BFF → service → FPT | `/v1/ekyc-sdk/init-session`, `/ocr`, `/liveness` | Mục tiêu xác thực VHM; chèn khóa FPT | Hiện có nhưng còn khoảng trống tương thích |
+| EKYC-01 | BFF → service → FPT | `/v1/ekyc-sdk/init-session`, `/ocr`, `/liveness` | Mục tiêu xác thực VHM; chèn khóa FPT | Hiện có nhưng còn khoảng trống tương thích |
 | ADM-01 | Vận hành viên → service | `/internal/v1/admin/ocrs`, `/ocr-results` | Mục tiêu xác thực quản trị | Có điều kiện; xác thực là điểm chặn |
 
 ## 6.2 Contract API OCR VHM
@@ -762,7 +766,8 @@ erDiagram
 
 ```mermaid
 flowchart LR
-    CLIENT([Client/BFF])
+    CHANNEL([Mobile / Web])
+    BFF[BFF]
     MEDIA[Media API / File Management]
     STORAGE[(Kho riêng tư)]
     API[OCR API]
@@ -771,10 +776,15 @@ flowchart LR
     WORKER[OCR Worker]
     PROVIDER[FPT]
 
-    CLIENT -->|metadata| MEDIA
-    MEDIA -->|presigned URL| CLIENT
-    CLIENT ==>|media bytes| STORAGE
-    CLIENT -->|tham chiếu opaque + ngữ cảnh| API
+    CHANNEL -->|yêu cầu chuẩn bị upload| BFF
+    BFF -->|metadata| MEDIA
+    MEDIA -->|presigned URL| BFF
+    BFF -->|presigned URL| CHANNEL
+    CHANNEL ==>|media bytes| STORAGE
+    CHANNEL -->|yêu cầu tạo OCR| BFF
+    BFF -->|tham chiếu opaque + ngữ cảnh| API
+    API -->|trạng thái / kết quả| BFF
+    BFF -->|phản hồi nghiệp vụ| CHANNEL
     API -->|trạng thái OCR + tham chiếu media| DB
     API -->|chỉ OCR ID| KAFKA
     KAFKA -->|chỉ OCR ID| WORKER
@@ -790,17 +800,20 @@ flowchart LR
 
 ```mermaid
 flowchart LR
-    CLIENT([Client/BFF])
+    CHANNEL([Mobile / Web])
+    BFF[BFF]
     SERVICE[Controller / Proxy eKYC]
     FPT[FPT]
     DB[(PostgreSQL<br/>schema ocr_ekyc)]
 
-    CLIENT ==>|init JSON or multipart media| SERVICE
+    CHANNEL ==>|yêu cầu eKYC| BFF
+    BFF ==>|init JSON hoặc multipart media| SERVICE
     SERVICE -->|lần gọi STARTED| DB
     SERVICE ==>|header cho phép + thông tin xác thực + body| FPT
     FPT ==>|status/header/body| SERVICE
     SERVICE -->|audit response đã mã hóa| DB
-    SERVICE ==>|response tương thích FPT| CLIENT
+    SERVICE ==>|response eKYC| BFF
+    BFF ==>|kết quả| CHANNEL
 ```
 
 Ký hiệu `==>` biểu diễn luồng có media hoặc response nhạy cảm. Dữ liệu này phải
@@ -865,7 +878,8 @@ idempotent, có oldest-eligible-age metric và không log PII/path.
 ```mermaid
 sequenceDiagram
     autonumber
-    participant C as Client/BFF
+    participant C as Mobile/Web
+    participant B as BFF
     participant M as Media API
     participant F as File Management
     participant S as Private Storage
@@ -873,20 +887,24 @@ sequenceDiagram
     participant D as PostgreSQL
     participant K as Kafka
 
-    C->>M: prepare-upload(metadata, role, size, MIME)
+    C->>B: yêu cầu chuẩn bị upload
+    B->>M: prepare-upload(metadata, role, size, MIME)
     M->>M: validate + create server-controlled path
     M->>F: prepare-upload(path, metadata)
     F-->>M: presignedUrl + headers
-    M-->>C: presignedUrl + headers + s3PathFile
+    M-->>B: presignedUrl + headers + s3PathFile
+    B-->>C: presignedUrl + headers + s3PathFile
     C->>S: PUT media with exact signed headers
     S-->>C: upload result
-    C->>A: create OCR + Idempotency-Key + s3PathFile(s)
+    C->>B: yêu cầu tạo OCR
+    B->>A: create OCR + Idempotency-Key + s3PathFile(s)
     A->>F: exists(path(s))
     F-->>A: exists metadata
     A->>D: lưu OCR + tham chiếu media
     A->>K: phát định danh OCR
     D-->>A: đã ghi nhận
-    A-->>C: 202 + Retry-After: 3 + OCR resource
+    A-->>B: 202 + Retry-After: 3 + OCR resource
+    B-->>C: xác nhận đã tiếp nhận
 ```
 
 ### 8.1.2 OCR tài liệu thông thường
@@ -955,22 +973,26 @@ sequenceDiagram
 ```mermaid
 sequenceDiagram
     autonumber
-    participant C as Client/BFF
+    participant C as Mobile/Web
+    participant B as BFF
     participant E as vhm-ocr-ekyc
     participant D as PostgreSQL
     participant F as FPT
 
-    C->>E: init / OCR(image) / liveness(video, cmnd)
+    C->>B: init / OCR / liveness
+    B->>E: yêu cầu eKYC và media tương ứng
     E->>E: validate size/content + normalize correlation ID
     E->>D: STARTED + delivery=SENDING
     E->>F: fixed endpoint + allowlisted headers + FPT credential
     alt FPT response
         F-->>E: HTTP status + headers + body
         E->>D: SUCCEEDED/FAILED + encrypted audit
-        E-->>C: passthrough status/allowlisted headers/body
+        E-->>B: status + dữ liệu phản hồi được phép
+        B-->>C: kết quả eKYC
     else timeout/disconnect/unknown
         E->>D: UNKNOWN + delivery=UNKNOWN
-        E-->>C: canonical VHM 502/504 target
+        E-->>B: lỗi chuẩn VHM
+        B-->>C: lỗi nghiệp vụ/kỹ thuật phù hợp kênh
     end
 ```
 
@@ -1113,7 +1135,8 @@ băm/che theo chính sách trước production (`TD-010`).
 
 ```mermaid
 flowchart TB
-    CLIENT([Mobile/Web/BFF])
+    CHANNEL([Mobile / Web])
+    BFF[VHM BFF]
     EDGE[WAF / API Gateway / Ingress]
     PROVIDERS[FPT]
     FILE[File Management]
@@ -1129,7 +1152,7 @@ flowchart TB
         SECRET[Secret Manager / KMS]
     end
 
-    CLIENT --> EDGE --> API
+    CHANNEL --> BFF --> EDGE --> API
     API --> DB
     API --> KAFKA --> WORKER
     WORKER --> DB
@@ -1172,6 +1195,7 @@ triển khai và mở rộng độc lập vai trò API và OCR worker để cô 
 
 | **Nguồn** | **Đích** | **Giao thức/dữ liệu** | **Kiểm soát** |
 | --- | --- | --- | --- |
+| Mobile/Web | BFF | HTTPS nghiệp vụ | Xác thực người dùng, giới hạn tần suất và kiểm soát phiên |
 | BFF | API | HTTPS JSON/multipart | Xác thực workload, giới hạn route/tần suất/kích thước body |
 | API/worker | PostgreSQL schema `ocr_ekyc` | Kết nối mã hóa | Mạng riêng và quyền theo nguyên tắc tối thiểu |
 | API/worker | Kafka | Kết nối mã hóa | Phân quyền theo topic và consumer group |
@@ -1211,7 +1235,7 @@ Các công thức bắt buộc:
 - `peakConcurrency = peakArrivalRate × operationDurationP99 × safetyFactor`.
 - `workerReplicas = ceil(requiredProviderConcurrency / measuredConcurrencyPerPod) + HA headroom`.
 - `maxSaleMemory ≈ concurrency × (sum input bytes + multipart copies + response + safety overhead)`.
-- Poll traffic must include client→VHM polling and worker→FPT Sale polling separately.
+- Dung lượng thăm dò phải tính riêng Mobile/Web → BFF, BFF → OCR/eKYC và worker → FPT Sale.
 
 Không có số replica, kích thước heap, connection pool hay giới hạn TPS nào trong
 bản nháp này được xem là giá trị production đã phê duyệt.
@@ -1464,7 +1488,7 @@ lưu giữ đích danh và bằng chứng xóa. Fixture response FPT phải có 
 | TD-012 | Chưa triển khai lưu giữ/xóa OCR/audit/media | Quyền riêng tư nghiêm trọng | Chính sách có phiên bản và xóa định kỳ kèm bằng chứng. |
 | TD-013 | Không có quy tắc MIME media theo vai trò/kiểm tra magic/checksum | An toàn thông tin cao | Triển khai contract hoàn tất/kiểm tra media. |
 | TD-014 | Ngữ nghĩa `valid` chuẩn quá thô cho tính xác thực/rà soát thủ công | Trung bình | Phiên bản hóa schema kết quả và định nghĩa chính sách chất lượng/outcome. |
-| TD-015 | Timeout response FPT mặc định 10 phút xung đột ngân sách eKYC tương tác | Cao | Timeout theo thao tác, căn chỉnh SLA BFF/client/FPT. |
+| TD-015 | Timeout response FPT mặc định 10 phút xung đột ngân sách eKYC tương tác | Cao | Timeout theo thao tác, căn chỉnh SLA Mobile/Web, BFF, service và FPT. |
 | TD-016 | `subjectRef` có trong request nhưng chưa được lưu trong PostgreSQL schema `ocr_ekyc` | Cao | Bổ sung dữ liệu, contract truy vấn và test phân quyền/idempotency. |
 | TD-017 | Trạng thái FPT Sale và hoàn tất OCR chưa có cơ chế bảo đảm nhất quán xuyên suốt | Cao | Thiết kế cập nhật nhất quán hoặc đối soát idempotent. |
 
