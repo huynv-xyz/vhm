@@ -8,7 +8,7 @@
 | **Trường** | **Nội dung** |
 | --- | --- |
 | **Trạng thái** | **ĐANG THẨM ĐỊNH (UNDER REVIEW)** |
-| **Phiên bản & Lịch sử thay đổi** | `v0.9.10` — 14/08/2026 — Chốt eKYC là proxy đồng bộ tương thích FPT SDK, chuyển tiếp đầy đủ response và không lưu response body |
+| **Phiên bản & Lịch sử thay đổi** | `v0.9.11` — 14/08/2026 — Đồng bộ tên bảng PostgreSQL schema `ocr_ekyc` theo migration hiện tại |
 | **Chủ sở hữu tài liệu** | TBD — một cá nhân chịu trách nhiệm tài liệu |
 | **Chủ sở hữu hệ thống** | TBD |
 | **Hệ thống** | `vhm-ocr-ekyc` — năng lực OCR/eKYC dùng chung |
@@ -207,11 +207,11 @@ liệu nhạy cảm sang từng ứng dụng.
 | Video khuôn mặt/ảnh `cmnd` | Liveness/face match | Multipart đi qua service tới FPT; không persist raw body trong DB | Biometric-purpose consent, bounded memory, no log, DPA. |
 | Trường OCR/confidence/cảnh báo | Tự động điền/rà soát | Dữ liệu mã hóa trong PostgreSQL schema `ocr_ekyc` | Danh sách trường cố định, che dữ liệu, quản lý khóa và lưu giữ. |
 | Response eKYC FPT | Trả kết quả đồng bộ về FPT SDK | Chỉ truyền transient qua `vhm-ocr-ekyc` và BFF; không lưu trong PostgreSQL | Chuyển tiếp đầy đủ cho SDK, không log hoặc lưu body. |
-| Tham chiếu nghiệp vụ/người dùng | Tương quan/phân quyền | Bản rõ trong `ocrs` | Dạng opaque, truy cập theo phạm vi, không nhúng PII. |
+| Tham chiếu nghiệp vụ/người dùng | Tương quan/phân quyền | Bản rõ trong `ocr_ekyc.ocr_ekyc_requests` | Dạng opaque, truy cập theo phạm vi, không nhúng PII. |
 | ID job/request OCR của FPT | Tương quan xử lý OCR nội bộ | PostgreSQL schema `ocr_ekyc` | Không lộ ra API/event/log; không áp dụng lưu response eKYC. |
 
 `subjectRef` hiện được DTO tiếp nhận và tham gia dấu vân tay idempotency nhưng chưa
-được lưu vào bảng `ocrs`; vì vậy chưa thể dùng làm bằng chứng tương quan/phân quyền
+được lưu vào bảng `ocr_ekyc.ocr_ekyc_requests`; vì vậy chưa thể dùng làm bằng chứng tương quan/phân quyền
 sau khi tạo OCR. Yêu cầu hoàn thiện này được theo dõi tại `TD-016`.
 
 ### System Criticality
@@ -727,15 +727,16 @@ Lỗi phía FPT trong OCR bất đồng bộ không trả 5xx cho thao tác tạ
 ### 7.1.1 Sở hữu dữ liệu logic
 
 PostgreSQL schema `ocr_ekyc` là nguồn dữ liệu chính cho vòng đời và kết quả OCR.
-Response eKYC không được lưu trong schema này. TDD L2 chỉ mô tả các nhóm dữ liệu logic; cấu trúc vật lý và câu lệnh
-migration thuộc đặc tả L3 của CSDL.
+Response eKYC không được lưu trong schema này. TDD L2 chỉ mô tả vai trò của các bảng;
+cấu trúc cột, index và migration chi tiết thuộc đặc tả L3 của CSDL.
 
-| **Nhóm dữ liệu** | **Mục đích** | **Phân loại** | **Kiểm soát kiến trúc** |
+| **Bảng PostgreSQL** | **Mục đích** | **Phân loại** | **Kiểm soát kiến trúc** |
 | --- | --- | --- | --- |
-| Tài nguyên OCR | Ánh xạ nghiệp vụ, loại tài liệu, FPT, trạng thái và idempotency | Metadata nhạy cảm | Mã tham chiếu opaque, phân quyền theo phạm vi, trạng thái hợp lệ. |
-| Tham chiếu media | Liên kết tới object riêng tư theo đúng thứ tự tài liệu | Dữ liệu nhạy cảm | Không lưu binary/presigned URL; kiểm soát truy cập và thời hạn lưu. |
-| Kết quả OCR | Kết quả chuẩn trả cho miền nghiệp vụ | PII | Mã hóa, danh sách trường cố định, lưu giữ theo mục đích. |
-| Metadata tích hợp FPT | Theo dõi tình trạng kỹ thuật của lời gọi | Metadata vận hành | Chỉ giữ dữ liệu tối thiểu không chứa request/response body, media, credential hoặc PII. |
+| `ocr_ekyc.ocr_ekyc_requests` | Yêu cầu OCR/eKYC, tham chiếu nghiệp vụ, provider và trạng thái xử lý | Metadata nhạy cảm | Mã tham chiếu opaque, phân quyền theo phạm vi và trạng thái hợp lệ. |
+| `ocr_ekyc.ocr_ekyc_media_refs` | Tham chiếu object media theo vai trò và thứ tự tài liệu | Dữ liệu nhạy cảm | Không lưu binary/presigned URL; kiểm soát truy cập và thời hạn lưu. |
+| `ocr_ekyc.ocr_ekyc_results` | Kết quả OCR chuẩn được lưu trữ | PII | Mã hóa, danh sách trường cố định và lưu giữ theo mục đích. |
+| `ocr_ekyc.ocr_ekyc_provider_calls` | Metadata kỹ thuật của các lần gọi FPT | Metadata vận hành | Không công bố ID FPT; không lưu request/response body eKYC theo kiến trúc đích. |
+| `ocr_ekyc.outbox_events` | Sự kiện điều phối xử lý OCR sau khi yêu cầu được ghi nhận | Metadata nội bộ | Chỉ chứa định danh/tham chiếu tối thiểu, không chứa media, kết quả hoặc PII. |
 
 `subjectRef` hiện có trong request nhưng chưa được lưu cùng tài nguyên OCR; đây là
 yêu cầu cần hoàn thiện trước khi dùng trường này cho tương quan hoặc phân quyền (`TD-016`).
@@ -744,9 +745,10 @@ yêu cầu cần hoàn thiện trước khi dùng trường này cho tương qua
 
 ```mermaid
 erDiagram
-    OCR ||--o{ MEDIA_REFERENCE : "sử dụng"
-    OCR ||--o| OCR_RESULT : "tạo ra"
-    OCR ||--o{ FPT_ATTEMPT : "theo dõi metadata"
+    ocr_ekyc_requests ||--o{ ocr_ekyc_media_refs : "request_id"
+    ocr_ekyc_requests ||--o| ocr_ekyc_results : "request_id"
+    ocr_ekyc_requests ||--o{ ocr_ekyc_provider_calls : "request_id"
+    ocr_ekyc_requests ||--o{ outbox_events : "aggregate_id"
 ```
 
 ## 7.2 Data Flow Diagram
@@ -847,7 +849,7 @@ idempotent, có oldest-eligible-age metric và không log PII/path.
 
 | **Kho** | **Dữ liệu** | **Nguồn sự thật** | **Phục hồi** |
 | --- | --- | --- | --- |
-| PostgreSQL schema `ocr_ekyc` | Trạng thái, tham chiếu và kết quả OCR; không lưu response body eKYC | Có đối với OCR | Mục tiêu Multi-AZ/PITR; diễn tập phục hồi TBD |
+| PostgreSQL schema `ocr_ekyc` | `ocr_ekyc_requests`, `ocr_ekyc_media_refs`, `ocr_ekyc_results`, `ocr_ekyc_provider_calls`, `outbox_events`; không lưu response body eKYC theo kiến trúc đích | Có đối với dữ liệu OCR | Mục tiêu Multi-AZ/PITR; diễn tập phục hồi TBD |
 | Kho object riêng tư | Tài liệu/media đã tải lên | Có đối với byte media | DR File Management/kho lưu trữ + bằng chứng lưu giữ TBD |
 | Kafka | Tham chiếu điều phối OCR | Không | Phát lại an toàn nhờ trạng thái DB; lưu giữ topic TBD |
 | Bộ nhớ tiến trình | Byte media, response FPT, token | Không | Có giới hạn/dọn theo request; cần tính dung lượng bộ nhớ |
@@ -1472,7 +1474,7 @@ lưu giữ đích danh và bằng chứng xóa. Fixture response FPT phải có 
 | TD-013 | Không có quy tắc MIME media theo vai trò/kiểm tra magic/checksum | An toàn thông tin cao | Triển khai contract hoàn tất/kiểm tra media. |
 | TD-014 | Ngữ nghĩa `valid` chuẩn quá thô cho tính xác thực/rà soát thủ công | Trung bình | Phiên bản hóa schema kết quả và định nghĩa chính sách chất lượng/outcome. |
 | TD-015 | Timeout response FPT mặc định 10 phút xung đột ngân sách eKYC tương tác | Cao | Timeout theo thao tác, căn chỉnh SLA Mobile/Web, BFF, service và FPT. |
-| TD-016 | `subjectRef` có trong request nhưng chưa được lưu trong PostgreSQL schema `ocr_ekyc` | Cao | Bổ sung dữ liệu, contract truy vấn và test phân quyền/idempotency. |
+| TD-016 | `subjectRef` có trong request nhưng chưa được lưu trong `ocr_ekyc.ocr_ekyc_requests` | Cao | Bổ sung dữ liệu, contract truy vấn và test phân quyền/idempotency. |
 | TD-017 | Trạng thái FPT Sale và hoàn tất OCR chưa có cơ chế bảo đảm nhất quán xuyên suốt | Cao | Thiết kế cập nhật nhất quán hoặc đối soát idempotent. |
 
 Vấn đề mở không mặc nhiên được chấp nhận. Chấp nhận rủi ro phải ghi rõ chủ sở hữu,
