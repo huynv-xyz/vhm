@@ -8,16 +8,16 @@
 | **Trường** | **Nội dung** |
 | --- | --- |
 | **Trạng thái** | **ĐANG THẨM ĐỊNH (UNDER REVIEW)** |
-| **Phiên bản & Lịch sử thay đổi** | `v0.9.21` — 14/08/2026 — Làm rõ phương án xử lý các comment về tương quan chủ thể, phục hồi worker và lỗi tích hợp FPT |
+| **Phiên bản & Lịch sử thay đổi** | `v0.9.23` — 14/08/2026 — Loại đường dẫn tài liệu local, chỉ giữ tham chiếu chính thức phục vụ thẩm định |
 | **Chủ sở hữu tài liệu** | TBD — một cá nhân chịu trách nhiệm tài liệu |
 | **Chủ sở hữu hệ thống** | TBD |
 | **Hệ thống** | `vhm-ocr-ekyc` — năng lực OCR/eKYC dùng chung |
 | **Đội ngũ/PIC** | Backend: TBD · Kiến trúc: TBD · Tích hợp: TBD · ANBM: TBD · Quyền riêng tư dữ liệu: TBD · Vận hành: TBD |
 | **Người rà soát / Phê duyệt** | Sản phẩm: TBD · Kiến trúc: TBD · Tích hợp: TBD · ANBM: TBD · Quyền riêng tư/Pháp chế: TBD · Vận hành: TBD |
 | **Mốc triển khai** | Mã nguồn, PostgreSQL schema `ocr_ekyc`, cấu hình ứng dụng và kiểm thử tự động tại ngày 14/08/2026 |
-| **Tài liệu L1** | `../noxh-ocr-ekyc.md`, `../orc-ekyc-full.md`; liên kết Confluence chính thức: TBD |
+| **Tài liệu L1** | Liên kết Confluence chính thức: TBD |
 | **Tài liệu L3** | Theo phần **L3 Artefact Register** của tài liệu này |
-| **Tiêu chuẩn tham chiếu** | `docs/ttd-mau-chuan.md`; tiêu chuẩn VHM về IAM/ANBM/Quyền riêng tư dữ liệu/Quan sát hệ thống: phiên bản TBD |
+| **Tiêu chuẩn tham chiếu** | Tiêu chuẩn thiết kế kiến trúc L2, IAM, ANBM, Quyền riêng tư dữ liệu và Quan sát hệ thống của VHM: phiên bản/liên kết chính thức TBD |
 | **Lần rà soát gần nhất** | 14/08/2026 |
 
 **Mục lục**
@@ -47,7 +47,7 @@
 | Chủ sở hữu Sản phẩm/Nghiệp vụ | TBD | Use case OCR thường, CCCD hai mặt, hồ sơ Sale và eKYC | Chờ rà soát | — |
 | Kiến trúc Ứng dụng/Giải pháp | TBD | Ranh giới API/processor/shared, NFR và ADR | Chờ rà soát | — |
 | Kiến trúc Tích hợp | TBD | File Management, kho object riêng tư, Kafka, FPT và contract client | Chờ rà soát | — |
-| ANBM | TBD | IAM, secret, media, mã hóa, audit và kiểm soát mối đe dọa | Chờ rà soát | — |
+| ANBM | TBD | IAM, secret, media, mã hóa, bảo vệ dữ liệu và kiểm soát mối đe dọa | Chờ rà soát | — |
 | Quyền riêng tư/Pháp chế | TBD | Consent, PII/sinh trắc, mục đích, vị trí dữ liệu, lưu giữ và xóa | Chờ rà soát | — |
 | Vận hành/Cloud/DBA | TBD | Dung lượng, triển khai, giám sát, sao lưu, phục hồi và runbook | Chờ rà soát | — |
 
@@ -195,7 +195,7 @@ liệu nhạy cảm sang từng ứng dụng.
 | Mobile/Web | Giao tiếp với BFF; không gọi trực tiếp dịch vụ OCR/eKYC hoặc FPT. |
 | BFF Service | Xác thực, phân quyền business object, cấp opaque context, gọi OCR/eKYC và áp dụng kết quả sau xác nhận. |
 | Platform Operator | Vận hành queue, worker, provider, DB, dashboard và incident. |
-| Security/Data Privacy/Auditor | Phê duyệt purpose, access, encryption, retention, log và evidence. |
+| Security/Data Privacy | Phê duyệt purpose, access, encryption, retention và bằng chứng tuân thủ. |
 | FPT | Đơn vị xử lý/nhà cung cấp bên ngoài theo contract và DPA/SLA. |
 
 ### Personal Data Processing Summary
@@ -869,7 +869,7 @@ Ký hiệu `==>` biểu diễn luồng có media hoặc response nhạy cảm. D
 | DB/kết quả OCR | Theo mục đích được phê duyệt | Xóa/ẩn danh theo lô định kỳ | Áp dụng chính sách lưu giữ VHM |
 | Kết quả eKYC | Theo mục đích eKYC và chính sách dữ liệu sinh trắc được phê duyệt | Xóa/ẩn danh theo lô định kỳ | Mã hóa, phân quyền và có bằng chứng xóa |
 | Media OCR riêng tư | Theo loại tài liệu, mục đích và legal hold | Vòng đời File Management/object + dọn tham chiếu DB | Áp dụng chính sách lưu giữ VHM |
-| Metadata tích hợp FPT | Theo chính sách vận hành/audit | Xóa theo lô sau cửa sổ an toàn | Tối thiểu hóa dữ liệu |
+| Metadata tích hợp FPT | Theo chính sách metadata vận hành | Xóa theo lô sau cửa sổ an toàn | Tối thiểu hóa dữ liệu |
 | Log/APM | Theo tiêu chuẩn VHM | Vòng đời index | Không lưu PII, credential hoặc media nhạy cảm |
 | Sao lưu/PITR | Theo RPO và chính sách lưu giữ | Hết hạn bản sao + quét xóa sau phục hồi | Kiểm thử phục hồi và xóa |
 
@@ -1022,7 +1022,7 @@ sequenceDiagram
 
 | **Sự cố** | **Hành vi yêu cầu** | **Phục hồi/kiểm soát bắt buộc** |
 | --- | --- | --- |
-| Media thiếu/nằm ngoài prefix | Từ chối tạo với 400 | Audit/giới hạn tần suất hành vi lạm dụng lặp lại. |
+| Media thiếu/nằm ngoài prefix | Từ chối tạo với 400 | Giới hạn tần suất đối với hành vi lạm dụng lặp lại. |
 | Kafka trùng thông điệp | Claim thất bại, worker bỏ qua | Duy trì kiểm thử contract. |
 | Phát sự kiện gián đoạn | Sự kiện có thể được phát lại | Worker loại trùng; giám sát tỷ lệ trùng. |
 | Worker dừng ở `PROCESSING` | Bộ đối soát phát hiện theo thời hạn trạng thái | Tiếp tục job FPT đã biết; chỉ đưa lại vào hàng đợi khi xác định chưa gửi FPT; kết thúc timeout theo mục 2.4.4. |
@@ -1065,7 +1065,8 @@ sequenceDiagram
   không chỉ dựa vào việc biết định danh OCR.
 - Quyền ứng dụng và quyền truy cập PostgreSQL schema `ocr_ekyc`
   được tách biệt theo nguyên tắc đặc quyền tối thiểu.
-- Mọi thao tác xem kết quả, tải media, xử lý lại và thay đổi cấu hình phải có audit.
+- Dịch vụ chỉ cho phép truy cập request/kết quả trong đúng phạm vi do BFF và danh
+  tính workload cung cấp; không triển khai chức năng lưu vết nghiệp vụ riêng.
 
 ## 9.3 Secrets & Credential Management
 
@@ -1091,7 +1092,7 @@ sequenceDiagram
 | Checksum | Chưa cưỡng chế | Checksum có chữ ký + xác minh bằng bước hoàn tất/HEAD. |
 | Path traversal | Prefix + từ chối `..` | Chuẩn hóa đường dẫn và gắn source/reference/role. |
 | Multipart | Tên file đã làm sạch | Triển khai hiện tại có đệm; giới hạn part/header/bộ nhớ. |
-| Presigned URL | Không lưu trong bảng OCR | Không để URL trong log/audit/lỗi; hạn ngắn/chính xác method/key. |
+| Presigned URL | Không lưu trong bảng OCR | Không để URL trong log/lỗi; hạn ngắn/chính xác method/key. |
 
 Luồng eKYC hiện log tên file đã làm sạch, kích thước và content type khi lỗi.
 Vì tên file có thể chứa PII, mục tiêu production chỉ log media ID do hệ thống sinh
@@ -1107,7 +1108,11 @@ và thao tác, không log tên file gốc (`TD-010`).
 | Tham chiếu kỹ thuật | Dùng giá trị opaque; giới hạn truy cập trong PostgreSQL | Chỉ truyền khi cần tương quan nội bộ | Không hiển thị provider job/session ID cho Mobile/Web | Chỉ log định danh nội bộ đã được phê duyệt, không dùng làm nhãn metric cardinality cao |
 | Credential và khóa mã hóa | Chỉ lưu trong secret manager/KMS theo tiêu chuẩn VHM | Chỉ cấp cho workload được phép | Không trả cho BFF, SDK hoặc API consumer | Không ghi dưới mọi hình thức |
 
-### Ghi log và audit
+### Nhật ký kỹ thuật
+
+Hệ thống không triển khai chức năng hoặc kho lưu vết nghiệp vụ riêng.
+PostgreSQL lưu request do BFF gửi vào, trạng thái xử lý cần thiết và kết quả
+OCR/eKYC; nhật ký kỹ thuật không phải nguồn dữ liệu nghiệp vụ.
 
 Các trường log vận hành được phép: thời gian, ứng dụng/môi trường/phiên bản, thao tác,
 OCR ID theo chính sách được duyệt, enum FPT/status code, thời lượng, Kafka
@@ -1117,8 +1122,8 @@ Cấm: thông tin xác thực/token, trường OCR, số giấy tờ,
 họ tên/địa chỉ, media thô, tên file gốc, `s3PathFile`, presigned URL, provider
 job/request/session ID và điểm sinh trắc.
 
-Log production không ghi định danh request/session của FPT; nếu cần tương quan vận
-hành phải dùng định danh nội bộ đã được che hoặc băm theo chính sách.
+Nhật ký kỹ thuật chỉ phục vụ giám sát và xử lý sự cố, không dùng để lưu request body,
+response body hoặc tái dựng lịch sử thay đổi nghiệp vụ.
 
 ### Quản trị và tuân thủ
 
@@ -1565,19 +1570,16 @@ phạm vi, ngày hết hạn, người phê duyệt và kiểm soát bù trừ.
 
 | **Tài liệu** | **Liên kết/phiên bản** |
 | --- | --- |
-| L2 standard template | [`ttd-mau-chuan.md`](./ttd-mau-chuan.md) |
-| OCR/eKYC activity design | [`tdd-luong-hoat-dong.md`](./tdd-luong-hoat-dong.md) |
-| Danh sách tài liệu FPT nội bộ | [`tai-lieu-tham-khao-fpt.md`](./tai-lieu-tham-khao-fpt.md) |
-| Tổng quan mã nguồn | [`../README.md`](../README.md) |
-| Tài liệu API OCR hồ sơ Sale của FPT cho Vinhomes | [`[VSF-eKYC] Tài liệu API OCR cho Vinhomes.pdf`](./%5BVSF-eKYC%5D%20T%C3%A0i%20li%E1%BB%87u%20API%20OCR%20cho%20Vinhomes.pdf), ngày 13/08/2026 |
+| Tài liệu L1 OCR/eKYC | Liên kết Confluence chính thức: TBD |
+| Tiêu chuẩn thiết kế kiến trúc L2 VHM | Phiên bản/liên kết Confluence chính thức: TBD |
+| Tài liệu API OCR hồ sơ Sale của FPT cho Vinhomes | Bản do FPT cung cấp cho Vinhomes, ngày 13/08/2026; liên kết kho tài liệu chính thức: TBD |
 | FPT eKYC update-information API | <https://docs-vision.fpt.ai/en/ekyc/III-integration/III-2-APIs/a-APIs%20of%20eKYC%20Flows/APIs-in-update-information-flow/> |
 | FPT eKYC result/callback | <https://docs-vision.fpt.ai/en/ekyc/III-integration/III-2-APIs/a-APIs%20of%20eKYC%20Flows/APIs-result/> |
 | FPT SDK integration architecture | <https://docs-vision.fpt.ai/en/ekyc/III-integration/III-1-SDKs/kien-truc-tich-hop> |
 | FPT Android SDK | <https://docs-vision.fpt.ai/ekyc/III-integration/III-1-SDKs/android-sdk> |
 | FPT Web SDK | <https://docs-vision.fpt.ai/en/ekyc/III-integration/III-1-SDKs/web-sdk/> |
 | FPT ID Recognition | <https://docs.fpt.ai/docs/en/vision/tutorials/id-recognition/> |
-| Architecture history | `../agent.md` |
-| VHM IAM/ANBM/Data Privacy/Observability standards | TBD version/link |
+| Tiêu chuẩn VHM về IAM, ANBM, Quyền riêng tư dữ liệu và Quan sát hệ thống | Phiên bản/liên kết chính thức: TBD |
 
 ## C. Thông tin đầu vào và xác nhận bên ngoài
 
