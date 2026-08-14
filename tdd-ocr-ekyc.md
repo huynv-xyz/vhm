@@ -8,7 +8,7 @@
 | **Trường** | **Nội dung** |
 | --- | --- |
 | **Trạng thái** | **ĐANG THẨM ĐỊNH (UNDER REVIEW)** |
-| **Phiên bản & Lịch sử thay đổi** | `v0.9.7` — 14/08/2026 — Thống nhất hai API OCR `/ocr`, `/ocr/result`, vòng đời FPT và ranh giới Mobile/Web → BFF → OCR/eKYC |
+| **Phiên bản & Lịch sử thay đổi** | `v0.9.8` — 14/08/2026 — Thống nhất hai API OCR, vòng đời FPT và ranh giới Mobile/Web → BFF → OCR/eKYC |
 | **Chủ sở hữu tài liệu** | TBD — một cá nhân chịu trách nhiệm tài liệu |
 | **Chủ sở hữu hệ thống** | TBD |
 | **Hệ thống** | `vhm-ocr-ekyc` — năng lực OCR/eKYC dùng chung |
@@ -65,7 +65,7 @@
 | --- | --- | --- | --- | --- |
 | Đặc tả OpenAPI — OCR/Media/Admin | PLANNED | Trưởng nhóm Backend | Trước khi duyệt API | `/v3/api-docs` runtime; tài liệu xuất bản TBD |
 | Contract wire eKYC FPT & Ma trận tương thích SDK | BLOCKED | Tích hợp/Mobile/Web | Trước production eKYC | TBD |
-| Bộ kiểm thử contract FPT Sale OCR | DRAFT | Tích hợp/QA | Trước production Sale OCR | PDF tại mục B; cần bổ sung fixture tự động |
+| Bộ kiểm thử contract FPT Sale OCR | DRAFT | Tích hợp/QA | Trước production Sale OCR | Tài liệu API OCR FPT tại mục B; cần bổ sung fixture tự động |
 | Đặc tả Upload/Download media & Lưu giữ | PLANNED | Backend/ANBM/Quyền riêng tư | Trước khi duyệt media production | TBD |
 | Contract Kafka & Runbook phục hồi | PLANNED | Backend/Vận hành | Trước khi duyệt độ tin cậy | TBD |
 | Runbook migration & phục hồi CSDL | PLANNED | DBA/Vận hành | Trước OAT | TBD |
@@ -179,7 +179,7 @@ liệu nhạy cảm sang từng ứng dụng.
 | A-02 | eKYC init/OCR/liveness đồng bộ và không tự thử lại mutation | Quyết định kiến trúc | Timeout/không rõ sau khi gửi phải trả lỗi, không phát lại mù. |
 | A-03 | File Management quản lý object riêng tư và trả presigned URL ngắn hạn | Phụ thuộc | Thiếu prepare-download thì worker không đọc được media. |
 | A-04 | Kafka chuyển phát at-least-once; consumer phải idempotent | Giả định nền tảng | Thông điệp trùng không gọi FPT sau khi OCR đã được nhận xử lý hoặc đã kết thúc. |
-| A-05 | FPT Sale giữ kết quả 30 ngày, poll tối thiểu mỗi 3 giây, processing tối đa 5 phút | `BÊN NGOÀI` theo PDF v0.2.0 | Cần kiểm thử contract/SLA chính thức trước production. |
+| A-05 | FPT Sale giữ kết quả 30 ngày, thăm dò tối thiểu mỗi 3 giây, xử lý tối đa 5 phút | Theo tài liệu API OCR FPT cung cấp cho Vinhomes | Cần kiểm thử contract/SLA chính thức trước production. |
 | A-06 | Mỗi file Sale ≤20 MB; đúng 3 file; provider tổng request ≤60 MB | `BÊN NGOÀI` | Bộ nhớ/dung lượng phải được tính theo ba file. |
 | A-07 | Luồng phiên FPT eKYC cần cùng `session-id`, `device-type` và endpoint/header đúng phiên bản | `BÊN NGOÀI` | Code hiện tại chưa forward đủ header; `BLOCKING`. |
 | A-08 | Mobile/Web gọi qua BFF; BFF chịu trách nhiệm xác thực, phân quyền và phạm vi đối tượng nghiệp vụ | Giả định hiện tại | Service chưa cưỡng chế xác thực workload; production cần phòng thủ nhiều lớp. |
@@ -613,7 +613,7 @@ hiện tại và `result=null` để BFF tiếp tục thăm dò.
   thuộc contract L2 công bố cho bên sử dụng VHM.
 - Lời gọi FPT là đồng bộ bên trong luồng OCR bất đồng bộ của VHM.
 
-### 6.4.2 FPT Sale OCR v0.2.0
+### 6.4.2 FPT OCR hồ sơ Sale
 
 | **Thao tác** | **Contract** | **Hành vi worker** |
 | --- | --- | --- |
@@ -1515,7 +1515,7 @@ phạm vi, ngày hết hạn, người phê duyệt và kiểm soát bù trừ.
 | OCR/eKYC activity design | [`tdd-luong-hoat-dong.md`](./tdd-luong-hoat-dong.md) |
 | Danh sách tài liệu FPT nội bộ | [`tai-lieu-tham-khao-fpt.md`](./tai-lieu-tham-khao-fpt.md) |
 | Tổng quan mã nguồn | [`../README.md`](../README.md) |
-| FPT Sale OCR for Vinhomes | `[VSF-eKYC] Tài liệu API OCR cho Vinhomes.pdf`, v0.2.0, 13/08/2026 |
+| Tài liệu API OCR hồ sơ Sale của FPT cho Vinhomes | [`[VSF-eKYC] Tài liệu API OCR cho Vinhomes.pdf`](./%5BVSF-eKYC%5D%20T%C3%A0i%20li%E1%BB%87u%20API%20OCR%20cho%20Vinhomes.pdf), ngày 13/08/2026 |
 | FPT eKYC update-information API | <https://docs-vision.fpt.ai/en/ekyc/III-integration/III-2-APIs/a-APIs%20of%20eKYC%20Flows/APIs-in-update-information-flow/> |
 | FPT eKYC result/callback | <https://docs-vision.fpt.ai/en/ekyc/III-integration/III-2-APIs/a-APIs%20of%20eKYC%20Flows/APIs-result/> |
 | FPT SDK integration architecture | <https://docs-vision.fpt.ai/en/ekyc/III-integration/III-1-SDKs/kien-truc-tich-hop> |
