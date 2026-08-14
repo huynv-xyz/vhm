@@ -8,7 +8,7 @@
 | **Trường** | **Nội dung** |
 | --- | --- |
 | **Trạng thái** | **ĐANG THẨM ĐỊNH (UNDER REVIEW)** |
-| **Phiên bản & Lịch sử thay đổi** | `v0.9.25` — 15/08/2026 — Chuẩn hóa sơ đồ triển khai production theo luồng GitLab CI/CD, ECR và EKS |
+| **Phiên bản & Lịch sử thay đổi** | `v0.9.26` — 15/08/2026 — Hoàn thiện ERD logic cho PostgreSQL schema `ocr_ekyc` |
 | **Chủ sở hữu tài liệu** | TBD — một cá nhân chịu trách nhiệm tài liệu |
 | **Chủ sở hữu hệ thống** | TBD |
 | **Hệ thống** | `vhm-ocr-ekyc` — năng lực OCR/eKYC dùng chung |
@@ -791,12 +791,68 @@ yêu cầu cần hoàn thiện trước khi dùng trường này cho tương qua
 
 ### 7.1.2 Sơ đồ quan hệ dữ liệu logic
 
+ERD dưới đây thể hiện khóa và thuộc tính chính phục vụ rà soát kiến trúc. Kiểu dữ
+liệu, ràng buộc, index và migration chi tiết thuộc thiết kế CSDL mức L3. Tất cả
+entity nằm trong PostgreSQL schema `ocr_ekyc`.
+
 ```mermaid
 erDiagram
     ocr_ekyc_requests ||--o{ ocr_ekyc_media_refs : "request_id"
     ocr_ekyc_requests ||--o| ocr_ekyc_results : "request_id"
     ocr_ekyc_requests ||--o{ ocr_ekyc_provider_calls : "request_id"
     ocr_ekyc_requests ||--o{ outbox_events : "aggregate_id"
+
+    ocr_ekyc_requests {
+        UUID id PK
+        VARCHAR request_type
+        VARCHAR source
+        VARCHAR reference_id
+        VARCHAR subject_ref
+        VARCHAR selected_provider
+        VARCHAR status
+        TIMESTAMPTZ created_at
+        TIMESTAMPTZ updated_at
+    }
+
+    ocr_ekyc_media_refs {
+        UUID id PK
+        UUID request_id FK
+        VARCHAR media_role
+        INTEGER position
+        TEXT s3_path_file
+        TIMESTAMPTZ created_at
+    }
+
+    ocr_ekyc_results {
+        UUID request_id PK, FK
+        VARCHAR schema_version
+        BYTEA encrypted_result
+        VARCHAR key_version
+        TIMESTAMPTZ created_at
+        TIMESTAMPTZ updated_at
+    }
+
+    ocr_ekyc_provider_calls {
+        UUID id PK
+        UUID request_id FK
+        VARCHAR provider
+        VARCHAR operation
+        VARCHAR provider_status
+        INTEGER provider_http_status
+        VARCHAR status
+        TIMESTAMPTZ started_at
+        TIMESTAMPTZ finished_at
+    }
+
+    outbox_events {
+        UUID id PK
+        UUID aggregate_id FK
+        VARCHAR type
+        VARCHAR status
+        TIMESTAMPTZ available_at
+        INTEGER attempt_count
+        TIMESTAMPTZ created_at
+    }
 ```
 
 ## 7.2 Data Flow Diagram
