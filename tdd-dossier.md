@@ -9,7 +9,7 @@
 | **Chủ sở hữu tài liệu** | TBD |
 | **Chủ sở hữu hệ thống** | TBD |
 | **Hệ thống** | `vhm-dossier-core` — modular monolith quản lý hồ sơ và pipeline NOXH |
-| **Hệ thống liên quan** | BFF/kênh tích hợp, `vhm-ocr-ekyc`, PostgreSQL, Redis, Kafka, File Management, Market, Message Delivery, TTOL |
+| **Hệ thống liên quan** | Kênh Agent/Back Office, Agent API (BFF), kênh Market, Market API (BFF), `vhm-ocr-ekyc`, PostgreSQL, Redis, Kafka, File Management, Message Delivery, TTOL |
 | **Đội ngũ/PIC** | Backend: TBD · Kiến trúc: TBD · Tích hợp: TBD · ANBM: TBD · Quyền riêng tư dữ liệu: TBD · Vận hành: TBD |
 | **Người rà soát/phê duyệt** | Sản phẩm/BA: TBD · Kiến trúc: TBD · ANBM: TBD · DBA/Vận hành: TBD · QA: TBD |
 | **Mốc thiết kế** | Kiến trúc mục tiêu phục vụ thẩm định giải pháp và làm đầu vào cho thiết kế L3 |
@@ -23,7 +23,7 @@
 | --- | --- | --- | --- |
 | Chủ sở hữu Sản phẩm/Nghiệp vụ | Luồng đăng ký, checklist, duyệt PKD/PTT/SXD, SLA nhắc bổ sung | Chờ rà soát | — |
 | Kiến trúc Ứng dụng/Giải pháp | Ranh giới modular monolith, API, pipeline và tính nhất quán | Chờ rà soát | — |
-| Kiến trúc Tích hợp | BFF, File Management, `vhm-ocr-ekyc`, Market, Message Delivery, TTOL, Kafka | Chờ rà soát | — |
+| Kiến trúc Tích hợp | Agent API, Market API, File Management, `vhm-ocr-ekyc`, Message Delivery, TTOL, Kafka | Chờ rà soát | — |
 | ANBM | IAM nội bộ, actor context, chống phát lại, PII và file | Chờ rà soát | — |
 | Quyền riêng tư/Pháp chế | CCCD, thông tin liên hệ, lưu giữ, truy cập và xóa dữ liệu | Chờ rà soát | — |
 | DBA/Vận hành/QA | Migration, dung lượng, quan sát, DR và bằng chứng kiểm thử | Chờ rà soát | — |
@@ -40,7 +40,7 @@
 
 | **Tài liệu L3** | **Trạng thái** | **Chủ sở hữu** | **Cổng bắt buộc** | **Tham chiếu** |
 | --- | --- | --- | --- | --- |
-| OpenAPI BFF ↔ Dossier Core | DRAFT | Backend/Tích hợp | Trước duyệt API | Liên kết tài liệu chính thức: TBD |
+| OpenAPI Agent API/Market API ↔ Dossier Core | DRAFT | Backend/Tích hợp | Trước duyệt API | Hai BFF sử dụng cùng internal contract; liên kết chính thức: TBD |
 | Form Data Contract Social Housing v1 | DRAFT | Backend/BA | Trước UAT | Liên kết tài liệu chính thức: TBD |
 | Pipeline Definition Schema, Social Housing v1 và activation/migration policy | DRAFT | Backend/BA/Kiến trúc/Vận hành | Trước UAT | Liên kết tài liệu chính thức: TBD |
 | Contract Checklist chuẩn | **CHƯA CÓ** | BA/Tích hợp/Backend | Trước production | Chưa chốt nguồn authority và version |
@@ -71,19 +71,19 @@ Tài liệu này mô tả **kiến trúc mục tiêu L2**. Dossier được thi�
 - Hồ sơ giấy/Excel/email khó kiểm soát tính đầy đủ, phiên bản và lịch sử xử lý.
 - Nhập tay CCCD và thông tin khách hàng dễ sai; tài liệu thiếu hoặc không tồn tại chỉ được phát hiện muộn.
 - Nhiều người có thể tạo hồ sơ cho cùng khách hàng và dự án, dẫn đến trùng nghiệp vụ và tranh chấp căn.
-- Quyền xem/xử lý theo người dùng, đội nhóm, dự án và cấp duyệt phải được thực thi nhất quán giữa BFF và core.
+- Quyền xem/xử lý theo người dùng, đội nhóm, dự án và cấp duyệt phải được thực thi nhất quán giữa Agent API, Market API và Core.
 - Luồng trả bổ sung cần SLA, nhắc hẹn, lịch sử và khả năng tiếp tục đúng cấp duyệt.
-- Các tích hợp File, OCR, Market, TTOL và Message Delivery có độ sẵn sàng khác nhau; không được làm mất trạng thái đã commit.
+- Các tích hợp File, OCR, TTOL và Message Delivery có độ sẵn sàng khác nhau; không được làm mất trạng thái đã commit.
 
 #### Business Objectives
 
 - Tạo hồ sơ `DRAFT` nhanh với form rỗng hoặc một phần; create không tự động submit.
-- Tiếp nhận hồ sơ từ kênh Agent/Back Office (`source=AGENT`) và kênh Market (`source=MARKET`) qua cùng BFF.
+- Tiếp nhận hồ sơ từ kênh Agent/Back Office qua Agent API (`source=AGENT`) và từ kênh Market qua Market API (`source=MARKET`).
 - Duy trì một snapshot `formData`/`metadata` có version, lịch sử trạng thái và projection pipeline.
 - Ngăn hồ sơ active trùng theo `(applicant.idNumber, projectRegistration.projectId)` kể cả khi có race.
 - Bảo đảm checklist bắt buộc đã được upload trước `SUBMIT`.
 - Thực thi pipeline PKD → PTT → SXD, bao gồm trả bổ sung, phân công, nhận xử lý, cấp/thu hồi căn và hồ sơ giấy.
-- Cung cấp list/detail/statistics/export và progress checklist cho kênh nghiệp vụ qua BFF.
+- Cung cấp list/detail/statistics/export và progress checklist cho hai BFF nghiệp vụ.
 - Tách việc gửi sự kiện và notification khỏi transaction nghiệp vụ bằng outbox.
 - Bảo vệ PII bằng actor context, visibility, ownership, masking và xác thực nội bộ có chữ ký.
 
@@ -92,7 +92,7 @@ Tài liệu này mô tả **kiến trúc mục tiêu L2**. Dossier được thi�
 | **Capability** | **Phạm vi** | **Yêu cầu thiết kế** |
 | --- | --- | --- |
 | Hồ sơ | Create/read/list/update/delete DRAFT, statistics, lookup theo contact | `BẮT BUỘC` |
-| Nguồn tạo hồ sơ | Kênh Agent/Back Office và kênh Market cùng đi qua BFF | `BẮT BUỘC` |
+| Nguồn tạo hồ sơ | Kênh Agent/Back Office qua Agent API; kênh Market qua Market API | `BẮT BUỘC` |
 | Luồng đăng ký công khai | Create DRAFT → prepare upload → PATCH snapshot → submit | `BẮT BUỘC` |
 | Checklist | Snapshot từ nguồn chuẩn, progress, missing/invalid, readiness submit | `BẮT BUỘC` |
 | Pipeline | State/action/role/ownership trong modular monolith | `BẮT BUỘC` |
@@ -118,9 +118,9 @@ Tài liệu này mô tả **kiến trúc mục tiêu L2**. Dossier được thi�
 
 | **ID** | **Giả định/Ràng buộc** | **Trạng thái** | **Ảnh hưởng** |
 | --- | --- | --- | --- |
-| A-01 | BFF là inbound boundary duy nhất của Dossier Core cho cả kênh Agent/Back Office và kênh Market | Quyết định kiến trúc | Các kênh không gọi trực tiếp core. |
+| A-01 | Agent API và Market API là hai inbound BFF ngang hàng của Dossier Core | Quyết định kiến trúc | Hai kênh không gọi trực tiếp Core và không gọi chéo BFF. |
 | A-02 | PostgreSQL là nguồn sự thật của hồ sơ, checklist, projection pipeline và outbox | Quyết định hiện hành | Mọi mutation trọng yếu dùng cùng transaction DB. |
-| A-03 | Create chỉ tạo `DRAFT`; submit là lệnh riêng | Contract bắt buộc | BFF phải điều phối đủ bốn bước đăng ký. |
+| A-03 | Create chỉ tạo `DRAFT`; submit là lệnh riêng | Contract bắt buộc | Agent API và Market API phải điều phối đủ bốn bước đăng ký. |
 | A-04 | Kafka có thể giao lặp; relay/consumer phải idempotent | Giả định nền tảng | Outbox chấp nhận publish lặp, không làm lặp quyết định nghiệp vụ. |
 | A-05 | File path là opaque; namespace upload độc lập với dossier ID | Đã xác minh STG | Không áp dụng kiểm tra prefix `registrations/{dossierId}/`. |
 | A-06 | Mỗi dossier phải nhận một pipeline ID/version xác định | `BẮT BUỘC` | Không lựa chọn pipeline theo thứ tự cấu hình. |
@@ -138,8 +138,8 @@ Tài liệu này mô tả **kiến trúc mục tiêu L2**. Dossier được thi�
 | PTT / `PTT`, `PTT_LEAD` | Kiểm tra thủ tục, duyệt/trả bổ sung/từ chối, chuyển SXD. |
 | Đầu mối SXD | Được mô hình hóa bằng stage `SXD` nhưng xử lý qua roster/role PTT hiện hành. |
 | BO/Admin | Quản lý quyền dự án, tra cứu/báo cáo và vận hành. |
-| BFF | Xác thực kênh, map DTO, ký request và actor context khi gọi core. |
-| Market | Kênh tạo/quản lý hồ sơ qua BFF với `source=MARKET`; đồng thời cung cấp dữ liệu dự án/căn qua Market API. |
+| Agent API | BFF của kênh Agent/Back Office; xác thực kênh, map DTO, gán `source=AGENT`, ký request và actor context khi gọi Core. |
+| Market API | BFF của kênh Market; xác thực kênh, map DTO, gán `source=MARKET`, ký request và actor context khi gọi Core. |
 | File/`vhm-ocr-ekyc`/Message Delivery/TTOL | Cung cấp năng lực tích hợp không thuộc sở hữu core. |
 
 ### Personal Data Processing Summary
@@ -188,13 +188,13 @@ flowchart LR
         AgentChannel[Kênh Agent / Back Office]
         MarketChannel[Kênh Market]
     end
-    AgentChannel --> API[BFF]
-    MarketChannel --> API
-    API -->|Basic + HMAC + signed actor context| Core[vhm-dossier-core]
+    AgentChannel --> AgentAPI[Agent API / BFF]
+    MarketChannel --> MarketAPI[Market API / BFF]
+    AgentAPI -->|Basic + HMAC + signed actor context| Core[vhm-dossier-core]
+    MarketAPI -->|Basic + HMAC + signed actor context| Core
     Core --> PG[(PostgreSQL)]
     Core --> Redis[(Redis / Redisson)]
     Core --> Kafka[(Kafka)]
-    Core -->|Project / unit lookup| MarketAPI[Market API]
     Core --> File[File Management]
     Core --> OCR[vhm-ocr-ekyc]
     OCR --> File
@@ -211,9 +211,10 @@ flowchart LR
         AgentChannel[Kênh Agent / Back Office]
         MarketChannel[Kênh Market]
     end
-    AgentChannel --> BFF[BFF]
-    MarketChannel --> BFF
-    BFF --> API[Dossier Core API]
+    AgentChannel --> AgentAPI[Agent API / BFF]
+    MarketChannel --> MarketAPI[Market API / BFF]
+    AgentAPI --> API[Dossier Core API]
+    MarketAPI --> API
     API --> Domain[Hồ sơ + Checklist + Pipeline]
     Domain -->|Ghi nghiệp vụ và outbox| DB[(PostgreSQL)]
     Relay[Outbox Relay & Scheduler] -->|Đọc bản ghi chờ xử lý| DB
@@ -222,7 +223,6 @@ flowchart LR
     API --> File[File Management]
     API --> OCR[vhm-ocr-ekyc]
     OCR --> File
-    API -->|Project / unit lookup| MarketAPI[Market API]
     API --> Enterprise[TTOL]
 ```
 
@@ -234,24 +234,24 @@ Pipeline Social Housing là cấu hình có phiên bản được nạp cùng �
 
 | **Khối kiến trúc** | **Trách nhiệm** | **Dữ liệu quản lý** | **Không chịu trách nhiệm** |
 | --- | --- | --- | --- |
-| BFF | Public contract, xác thực kênh, object authorization và truyền actor context | Không sở hữu hồ sơ | Business invariant và persistence cuối. |
-| Kênh Market | Sử dụng public contract qua BFF; BFF gán `source=MARKET` từ channel context tin cậy | Không sở hữu hồ sơ | Business invariant và persistence cuối. |
+| Agent API | BFF cho Agent/Back Office, public contract, xác thực kênh, object authorization và truyền actor context | Không sở hữu hồ sơ | Business invariant và persistence cuối. |
+| Market API | BFF cho Market, public contract, xác thực kênh, object authorization và truyền actor context | Không sở hữu hồ sơ | Business invariant và persistence cuối. |
 | Dossier domain | Vòng đời hồ sơ, validation, duplicate, checklist, pipeline, phân công và điều phối OCR | Aggregate dossier và projection liên quan | Identity kênh, file binary, OCR raw. |
 | Outbox/Scheduler | Phát sự kiện, gửi notification và nhắc SLA sau commit | Trạng thái delivery/dedup | Thay đổi quyết định nghiệp vụ đã commit. |
 | `vhm-ocr-ekyc` | Quản lý media phục vụ OCR, tài nguyên OCR bất đồng bộ và chuẩn hóa kết quả | OCR lifecycle, media OCR và kết quả chuẩn | Sở hữu dossier, xử lý tài liệu không OCR hoặc tự áp kết quả vào form. |
 | File Management | Upload, kiểm tra, lưu trữ và download tài liệu không OCR | File binary và metadata thuộc contract File | Sở hữu dossier hoặc xử lý OCR. |
-| Enterprise services | Market, TTOL, Message Delivery | Dữ liệu thuộc từng miền | Sở hữu aggregate dossier. |
+| Enterprise services | TTOL, Message Delivery | Dữ liệu thuộc từng miền | Sở hữu aggregate dossier. |
 
 ### 2.2.5 Ranh giới tin cậy
 
 | **Ranh giới** | **Mức tin cậy** | **Kiểm soát** | **Khoảng trống** |
 | --- | --- | --- | --- |
-| Client → BFF | Không tin cậy | Auth kênh, role, validation, rate limit tầng gateway | Thuộc phạm vi kênh/platform. |
-| BFF → core | Zero Trust nội bộ | Basic Auth, HMAC, timestamp/nonce/body hash, actor signature | Cần vận hành secret rotation. |
+| Client → Agent API/Market API | Không tin cậy | Auth kênh, role, validation, rate limit tầng gateway | Thuộc phạm vi từng kênh/platform. |
+| Agent API/Market API → Core | Zero Trust nội bộ | Client identity riêng, Basic Auth, HMAC, timestamp/nonce/body hash, actor signature | Cần allowlist và secret rotation độc lập cho từng BFF. |
 | Actor context → business | Chỉ tin sau verify | `subject`, role, visibility, expiry, JTI | JTI replay đang có thể tắt theo môi trường. |
 | Core → `vhm-ocr-ekyc` | Zero Trust nội bộ | Workload identity, audience/scope, object context, idempotency | OpenAPI/IAM L3 và E2E chưa hoàn tất. |
 | Core → File Management | Dependency ngoài process | Workload identity, object scope, checksum và owner/upload grant | Chỉ dành cho tài liệu không OCR. |
-| Core → Market/TTOL/Message | Dependency ngoài process | Credential server-side, timeout/retry/config | Contract/SLA cần chốt. |
+| Core → TTOL/Message | Dependency ngoài process | Credential server-side, timeout/retry/config | Contract/SLA cần chốt. |
 | `vhm-ocr-ekyc` → File Management | Ranh giới được ủy quyền | Workload identity và object scope của media OCR | Core không tham gia contract File của nhánh OCR. |
 | Core → Kafka | At-least-once | Transactional outbox, retry, idempotent consumer | Publish mặc định có thể tắt theo config. |
 
@@ -294,7 +294,7 @@ Sơ đồ trên là snapshot của Social Housing pipeline v1, không phải gi�
 
 ### 2.4.1 Tạo tài nguyên và idempotency
 
-- BFF xác định `source` từ channel context; `MARKET` bắt buộc header `Idempotency-Key` (`10509`), còn `AGENT` không bắt buộc.
+- Agent API gán `source=AGENT`; Market API gán `source=MARKET`. MARKET bắt buộc header `Idempotency-Key` (`10509`), còn AGENT không bắt buộc.
 - Với idempotency key, core lấy PostgreSQL transaction advisory lock trên key trước khi kiểm tra replay.
 - Replay được tra theo `(idempotencyKey, createdBy)` **trước** form/schema/file validation; cùng actor nhận lại dossier đã tạo.
 - Nếu key toàn cục đã thuộc actor khác, request bị từ chối; DB có unique constraint cuối trên `idempotency_key`.
@@ -327,7 +327,7 @@ Create/update/transition/delete ghi business row và `outbox_event` trong cùng 
 
 | **ID** | **Năng lực/yêu cầu** | **Thiết kế** | **Mức bắt buộc** |
 | --- | --- | --- | --- |
-| FR-01 | Tạo hồ sơ nháp | BFF tiếp nhận từ kênh Agent/Back Office hoặc Market và gọi core create `SOCIAL_HOUSING`; luôn trả `DRAFT` | `BẮT BUỘC` |
+| FR-01 | Tạo hồ sơ nháp | Agent API hoặc Market API gọi Core create `SOCIAL_HOUSING`; luôn trả `DRAFT` | `BẮT BUỘC` |
 | FR-02 | Upload tài liệu | Core kiểm tra quyền; tài liệu không OCR gọi File Management, media OCR gọi `vhm-ocr-ekyc`; kênh PUT theo presigned contract | `BẮT BUỘC` |
 | FR-03 | Cập nhật snapshot | Full update ở DRAFT/ADD_INFO; contact-only khi đã submit/review | `BẮT BUỘC` |
 | FR-04 | Nộp hồ sơ | Command `SUBMIT`, duplicate guard, checklist readiness, sinh mã | `BẮT BUỘC` |
@@ -349,7 +349,7 @@ Create/update/transition/delete ghi business row và `outbox_event` trong cùng 
 | **ID** | **Quy tắc** |
 | --- | --- |
 | BR-01 | Public create không được submit; trạng thái sau create luôn là `DRAFT`. |
-| BR-02 | BFF xác định `source=AGENT\|MARKET` từ channel context tin cậy; `MARKET` create phải có `Idempotency-Key`, `AGENT` không bắt buộc key. |
+| BR-02 | Agent API gán `source=AGENT`, Market API gán `source=MARKET` từ channel context tin cậy; MARKET create phải có `Idempotency-Key`, AGENT không bắt buộc key. |
 | BR-03 | Một cặp CCCD người nộp + dự án chỉ có một hồ sơ chưa terminal. |
 | BR-04 | Create `{}` không tạo checklist; create có `documents[]` và mọi full update DRAFT/ADD_INFO phải synchronize checklist. |
 | BR-05 | Identity checklist là `(dossierId, documentTemplateId, groupCode)`. |
@@ -408,21 +408,21 @@ ADR chi tiết nằm tại Phụ lục D. Các quyết định nền tảng: mod
 
 | **ID** | **Tích hợp** | **Hướng** | **Kiểu** | **Mục đích** | **Failure policy** |
 | --- | --- | --- | --- | --- | --- |
-| INT-01 | BFF | Inbound | HTTP sync | Agent/Back Office và Market registration/list/detail/action | Signature/actor fail closed |
-| INT-02 | Dossier Core → File Management | Outbound | Client sync | Tài liệu không OCR: prepare upload, existence/ownership, download và lưu artefact xuất | Fail hard cho validation bắt buộc |
-| INT-03 | Dossier Core → `vhm-ocr-ekyc` | Outbound | HTTP async resource | Media OCR, OCR CCCD và kết quả chuẩn | Idempotent create, polling hữu hạn, không retry mù |
-| INT-04 | Dossier Core → Market API | Outbound | HTTP sync + cache | SAP/project/unit/special days | Tùy use case: fail hard hoặc best effort |
+| INT-01 | Agent API → Dossier Core | Inbound | HTTP sync | Agent/Back Office registration/list/detail/action, `source=AGENT` | Signature/actor fail closed |
+| INT-02 | Market API → Dossier Core | Inbound | HTTP sync | Market registration/list/detail/action, `source=MARKET` | Signature/actor fail closed |
+| INT-03 | Dossier Core → File Management | Outbound | Client sync | Tài liệu không OCR: prepare upload, existence/ownership, download và lưu artefact xuất | Fail hard cho validation bắt buộc |
+| INT-04 | Dossier Core → `vhm-ocr-ekyc` | Outbound | HTTP async resource | Media OCR, OCR CCCD và kết quả chuẩn | Idempotent create, polling hữu hạn, không retry mù |
 | INT-05 | TTOL | Outbound | HTTP/cache | Roster reviewer/holiday | Auto-assign best effort; manual fallback |
 | INT-06 | Message Delivery | Outbound | Outbox relay | Email notification | Retry/backoff → FAILED |
 | INT-07 | Kafka | Outbound | Async | Domain event đã commit | Outbox retry; publish có feature flag |
 
 ## 6.2 Contract API hồ sơ VHM
 
-### 6.2.1 Registration flow qua BFF
+### 6.2.1 Registration flow qua Agent API/Market API
 
-Kênh Agent/Back Office và kênh Market dùng cùng public contract và cùng chuỗi xử lý. BFF xác định `source` từ channel context đã xác thực, sau đó gọi Dossier Core bằng workload identity và signed actor context; client không được tự chọn `source` trong request body.
+Kênh Agent/Back Office đi qua Agent API; kênh Market đi qua Market API. Hai BFF ngang hàng sử dụng cùng internal contract của Dossier Core và cùng chuỗi xử lý. Mỗi BFF gán `source` tương ứng từ channel context đã xác thực rồi gọi Core bằng workload identity riêng và signed actor context; client không được tự chọn `source` trong request body.
 
-| **Bước** | **API BFF** | **Kết quả bắt buộc** |
+| **Bước** | **API Agent/Market** | **Kết quả bắt buộc** |
 | --- | --- | --- |
 | 1 | `POST /v1/social-housing/registrations` | Tạo duy nhất một `DRAFT`, nhận `dossierId`. |
 | 2 | `POST /v1/social-housing/registrations/{id}/prepare-upload` rồi PUT file | Chỉ cấp URL sau khi caller đọc được dossier; giữ `s3PathFile`. |
@@ -431,7 +431,7 @@ Kênh Agent/Back Office và kênh Market dùng cùng public contract và cùng c
 
 ### 6.2.2 Nhóm năng lực API nội bộ
 
-Core công bố API nội bộ có version cho các nhóm năng lực: quản lý hồ sơ, command pipeline, quyết định tài liệu, quyền dự án, notes/hardcopy, download/export, statistics và reminder. Public contract không phản chiếu nguyên xi endpoint nội bộ; BFF chịu trách nhiệm map DTO, HTTP semantics và ẩn cấu trúc nội bộ. Danh sách path/field đầy đủ thuộc OpenAPI L3, không lặp lại trong tài liệu L2 này.
+Core công bố API nội bộ có version cho các nhóm năng lực: quản lý hồ sơ, command pipeline, quyết định tài liệu, quyền dự án, notes/hardcopy, download/export, statistics và reminder. Public contract không phản chiếu nguyên xi endpoint nội bộ; Agent API và Market API chịu trách nhiệm map DTO, HTTP semantics và ẩn cấu trúc nội bộ. Danh sách path/field đầy đủ thuộc OpenAPI L3, không lặp lại trong tài liệu L2 này.
 
 ### 6.2.3 Envelope và phân trang
 
@@ -462,7 +462,7 @@ Quy tắc phân tuyến do use case phía server quyết định. Client không 
 
 ### 6.3.3 Media dùng cho OCR
 
-Media OCR đi theo luồng `Kênh → BFF → Dossier Core → vhm-ocr-ekyc → File Management`. Dossier Core xác thực quyền hồ sơ và gửi context nghiệp vụ tới `vhm-ocr-ekyc`; service này sở hữu bước chuẩn bị/lấy media với File Management và vòng đời OCR. Core không gọi File Management trực tiếp cho media thuộc request OCR.
+Media OCR đi theo luồng `Kênh → Agent API/Market API → Dossier Core → vhm-ocr-ekyc → File Management`. Dossier Core xác thực quyền hồ sơ và gửi context nghiệp vụ tới `vhm-ocr-ekyc`; service này sở hữu bước chuẩn bị/lấy media với File Management và vòng đời OCR. Core không gọi File Management trực tiếp cho media thuộc request OCR.
 
 Role và MIME baseline lấy từ L2 OCR/eKYC dùng chung (`OCR_DOCUMENT`, `DOCUMENT_FRONT`, `DOCUMENT_BACK`, `LABOR_CONTRACT`; JPEG/PNG/PDF). Dossier không được mở rộng role/MIME hoặc tự dựng object path nếu chưa cập nhật contract OCR L3.
 
@@ -470,7 +470,7 @@ Role và MIME baseline lấy từ L2 OCR/eKYC dùng chung (`OCR_DOCUMENT`, `DOCU
 
 ### 6.4.1 Ranh giới tích hợp
 
-Dossier Core là consumer duy nhất của `vhm-ocr-ekyc` trong luồng hồ sơ NOXH và gọi service này bằng workload identity. Capability OCR tự quản lý media OCR với File Management, lifecycle, processor, provider credential, polling provider và kết quả chuẩn. BFF không gọi trực tiếp OCR service; Dossier Core chỉ biết contract OCR VHM và các opaque reference, không biết contract provider.
+Dossier Core là consumer duy nhất của `vhm-ocr-ekyc` trong luồng hồ sơ NOXH và gọi service này bằng workload identity. Capability OCR tự quản lý media OCR với File Management, lifecycle, processor, provider credential, polling provider và kết quả chuẩn. Agent API và Market API không gọi trực tiếp OCR service; Dossier Core chỉ biết contract OCR VHM và các opaque reference, không biết contract provider.
 
 Tích hợp OCR trực tiếp từ dossier tới provider không được phép trong kiến trúc mục tiêu. Mọi đường OCR legacy phải được loại bỏ hoặc vô hiệu hóa trước go-live sau khi E2E với `vhm-ocr-ekyc` đạt quality gate.
 
@@ -492,7 +492,7 @@ Cùng idempotency key và cùng request trả tài nguyên hiện hữu; cùng k
 
 ### 6.4.3 Vòng đời và áp dụng kết quả
 
-Trạng thái OCR gồm `QUEUED`, `PROCESSING`, `COMPLETED`, `FAILED`, `EXPIRED`. BFF thăm dò qua API của Dossier Core; Dossier Core gọi `/ocr/result` của `vhm-ocr-ekyc` và trả trạng thái chuẩn về BFF. `nextAction` hướng dẫn `POLL`, `RETRY` hoặc `CONFIRM_AND_APPLY`.
+Trạng thái OCR gồm `QUEUED`, `PROCESSING`, `COMPLETED`, `FAILED`, `EXPIRED`. Agent API hoặc Market API thăm dò qua API của Dossier Core; Dossier Core gọi `/ocr/result` của `vhm-ocr-ekyc` và trả trạng thái chuẩn về BFF tương ứng. `nextAction` hướng dẫn `POLL`, `RETRY` hoặc `CONFIRM_AND_APPLY`.
 
 Khi `COMPLETED`, kênh phải cho người dùng kiểm tra kết quả chuẩn trước khi áp dụng. Việc áp dụng chỉ diễn ra qua PATCH snapshot dossier bình thường; OCR service không ghi trực tiếp vào database dossier. Dossier lưu bằng chứng tối thiểu gồm `ocrId`, outcome chuẩn, thời điểm và actor xác nhận để trace/readiness; không lưu raw provider response hoặc provider job ID. Field/schema cụ thể thuộc Form/Checklist Contract L3.
 
@@ -634,7 +634,7 @@ erDiagram
 ```mermaid
 sequenceDiagram
     actor U as Người dùng Agent / Market
-    participant A as BFF
+    participant A as Agent API / Market API
     participant C as dossier-core
     participant O as vhm-ocr-ekyc
     participant F as File Management
@@ -680,7 +680,7 @@ sequenceDiagram
 ```mermaid
 sequenceDiagram
     actor R as Reviewer
-    participant A as BFF
+    participant A as Agent API / Market API
     participant C as Dossier Core Pipeline
     participant D as PostgreSQL
     participant N as Notification Relay
@@ -701,7 +701,7 @@ sequenceDiagram
 ```mermaid
 sequenceDiagram
     actor U as Người dùng
-    participant B as BFF
+    participant B as Agent API / Market API
     participant C as Dossier Core
     participant O as vhm-ocr-ekyc
     participant F as File Management
@@ -781,12 +781,12 @@ Retention, legal hold, purge, quyền của data subject và phạm vi audit ch�
 1. Pipeline xác nhận actor là owner và action `SUBMIT` hợp lệ ở `DRAFT`.
 2. Social Housing guard kiểm tra duplicate active lại trong transaction.
 3. Checklist phải có required item và toàn bộ required đã upload.
-4. Core lấy SAP/project context từ Market, snapshot server-owned field cần thiết.
+4. Core kiểm tra và snapshot các trường server-owned cần thiết theo contract nghiệp vụ đã được phê duyệt.
 5. Sinh mã submit đầu, transition sang Sales review, auto-assign PKD best effort và ghi outbox.
 
 ### 8.1.4 Revision và reminder
 
-Khi reviewer request revision, hồ sơ đi về stage intake tương ứng hoặc `agentUpdateAtSales`. Rule YAML hiện dùng mốc nhắc sau 144 giờ/deadline 216 giờ và sau 432 giờ/deadline 504 giờ, loại trừ ngày nghỉ từ Market/TTOL. Scanner chạy theo fixed delay, dedup theo cycle; manual trigger chỉ dành cho PKD/PKD_LEAD. Nếu lịch/notification dependency lỗi, hồ sơ không được tự động reject.
+Khi reviewer request revision, hồ sơ đi về stage intake tương ứng hoặc `agentUpdateAtSales`. Rule YAML hiện dùng mốc nhắc sau 144 giờ/deadline 216 giờ và sau 432 giờ/deadline 504 giờ, loại trừ ngày nghỉ theo nguồn lịch được phê duyệt. Scanner chạy theo fixed delay, dedup theo cycle; manual trigger chỉ dành cho PKD/PKD_LEAD. Nếu lịch/notification dependency lỗi, hồ sơ không được tự động reject.
 
 ## 8.2 Ma trận xử lý lỗi
 
@@ -815,9 +815,9 @@ Khi reviewer request revision, hồ sơ đi về stage intake tương ứng ho�
 
 ## 9.1 Identity & Authentication
 
-Kênh Agent/Back Office và kênh Market đều xác thực tại BFF. BFF xác định channel/source, thực thi public authorization rồi gọi Dossier Core bằng cùng internal contract. Request vào core có workload identity bằng Basic Auth/HMAC và business actor context được ký, chứa `subject`, display name, pipeline roles, visibility, thời hạn và JTI.
+Kênh Agent/Back Office xác thực tại Agent API; kênh Market xác thực tại Market API. Hai BFF xác định channel/source, thực thi public authorization rồi gọi Dossier Core bằng cùng internal contract nhưng workload identity độc lập. Request vào Core có Basic Auth/HMAC và business actor context được ký, chứa `subject`, display name, pipeline roles, visibility, thời hạn và JTI.
 
-Ở STAG/PROD, chữ ký nội bộ và actor context là bắt buộc. Timestamp giới hạn replay window; nonce được kiểm tra qua Redis. Basic username phải khớp client ID. `source=AGENT|MARKET` do BFF gán từ channel context đã xác thực, không lấy trực tiếp từ body của client. Local bypass chỉ hợp lệ khi active profile chính xác là `local`; bypass không được xuất hiện ở STAG/PROD.
+Ở STAG/PROD, chữ ký nội bộ và actor context là bắt buộc. Timestamp giới hạn replay window; nonce được kiểm tra qua Redis. Basic username phải khớp client ID đã đăng ký riêng cho Agent API hoặc Market API. `source=AGENT|MARKET` do BFF tương ứng gán từ channel context đã xác thực, không lấy trực tiếp từ body của client. Local bypass chỉ hợp lệ khi active profile chính xác là `local`; bypass không được xuất hiện ở STAG/PROD.
 
 ## 9.2 Authorization & Access Control
 
@@ -825,7 +825,7 @@ Authorization áp dụng defense in depth:
 
 | **Lớp** | **Kiểm soát** |
 | --- | --- |
-| Kênh/BFF | Xác thực actor, nhận diện channel, gán `source`, kiểm tra public scope và object-level authorization. |
+| Kênh/Agent API/Market API | Xác thực actor, nhận diện channel, gán `source`, kiểm tra public scope và object-level authorization. |
 | Visibility core | `ALL`, `TEAM`, `SELF_CREATED`, `ASSIGNED`; các mode chưa hỗ trợ phải deny by default. |
 | Project permission | Team/project/scope active quyết định phạm vi người dùng và nguồn auto-assignment. |
 | Pipeline role | Mỗi action chỉ dành cho role đã cấu hình. |
@@ -836,7 +836,7 @@ Authorization áp dụng defense in depth:
 
 ## 9.3 Secrets & Credential Management
 
-- HMAC secret, Basic credential, File/OCR/Market/Message/TTOL credential và encryption key không được nằm trong source, image hoặc tài liệu này. Credential File của Core chỉ có scope cho tài liệu không OCR; credential File của nhánh OCR thuộc `vhm-ocr-ekyc`.
+- HMAC secret, Basic credential, File/OCR/Message/TTOL credential và encryption key không được nằm trong source, image hoặc tài liệu này. Agent API và Market API dùng credential nội bộ riêng khi gọi Core. Credential File của Core chỉ có scope cho tài liệu không OCR; credential File của nhánh OCR thuộc `vhm-ocr-ekyc`.
 - Secret phải được cấp qua secret manager/runtime, có owner, rotation period và emergency revocation runbook.
 - Core và `vhm-ocr-ekyc` dùng danh tính workload riêng, audience/scope tối thiểu; dossier không nhận provider credential OCR.
 - Không copy cookie STG vào code/config/log; credential từng được chia sẻ ngoài luồng phải được rotate/revoke.
@@ -877,7 +877,7 @@ Log tối thiểu gồm correlation ID, client ID, actor subject dạng opaque, 
 | TH-05 | Client tự khai required checklist | Có thể làm sai submit readiness nếu server tin snapshot client | Checklist authority và version server-side. |
 | TH-06 | PII/secret lọt log/event | Allowlist log/event, scan CI/APM, runbook incident | Cần evidence production. |
 | TH-07 | OCR result tự động gây quyết định sai | Người dùng xác nhận trước PATCH; không auto reject | Manual review UX/contract cần UAT. |
-| TH-08 | Client giả mạo `source=MARKET` | BFF gán source từ channel context; core không tin source do client tự khai | Cần negative contract test cho cả hai kênh. |
+| TH-08 | Client giả mạo `source=MARKET` | Agent API/Market API gán source theo client identity; Core không tin source do client tự khai | Cần negative contract test chéo hai BFF. |
 
 # 10. Deployment & Infrastructure Topology
 
@@ -907,9 +907,10 @@ flowchart LR
         Agent[Kênh Agent / Back Office]
         Market[Kênh Market]
     end
-    Agent --> BFF[BFF Replicas]
-    Market --> BFF
-    BFF --> Core
+    Agent --> AgentAPI[Agent API Replicas]
+    Market --> MarketAPI[Market API Replicas]
+    AgentAPI --> Core
+    MarketAPI --> Core
     Core --> File[File Management]
     Core --> OCR[vhm-ocr-ekyc]
     OCR --> File
@@ -939,9 +940,9 @@ Sơ đồ là topology logic. Số replica, AZ, CPU/RAM, connection pool, Kafka 
 
 ## 10.4 Infrastructure & Network Security
 
-- Chỉ BFF workload đã được allowlist mới gọi core internal ingress; kênh Agent/Back Office và Market không gọi core trực tiếp.
+- Chỉ workload Agent API và Market API đã được allowlist riêng mới gọi Core internal ingress; hai kênh không gọi Core trực tiếp.
 - DB, Redis, Kafka và external credentials dùng network identity/ACL tối thiểu; không public internet nếu không bắt buộc.
-- Dossier Core được egress tới File Management cho tài liệu không OCR và tới `vhm-ocr-ekyc` cho nhánh OCR, cùng Market, TTOL và Message Delivery; provider OCR chỉ do `vhm-ocr-ekyc` truy cập.
+- Dossier Core được egress tới File Management cho tài liệu không OCR và tới `vhm-ocr-ekyc` cho nhánh OCR, cùng TTOL và Message Delivery; provider OCR chỉ do `vhm-ocr-ekyc` truy cập.
 - TLS termination và re-encryption tuân theo platform standard; không hạ cấp clear text qua trust boundary.
 - Backup, log, trace và exported report phải ở vùng dữ liệu được duyệt.
 
@@ -957,7 +958,7 @@ Liquibase quản lý schema theo phiên bản. Baseline hiện có các nhóm mi
 
 Phát hành pipeline: version mới được validate và deploy ở trạng thái inactive, chạy contract/E2E trên STAG rồi mới activate cho hồ sơ tạo mới. Rollback chỉ chuyển active version về definition trước đó cho hồ sơ mới; không đổi version của hồ sơ đã tạo. Definition cũ phải tiếp tục được phục vụ cho đến khi hết hồ sơ active và hoàn tất retention/audit. Migration hồ sơ đang chạy là quy trình ngoại lệ, cần mapping state/reviewer, dry-run, đối soát, audit và rollback riêng.
 
-Migration OCR: Dossier Core thay direct OCR provider bằng client `vhm-ocr-ekyc` sau khi OCR contract, IAM và E2E được duyệt; các client File Management tiếp tục phục vụ tài liệu không OCR. BFF tiếp tục chỉ gọi Dossier Core. Có thể chạy so sánh OCR ở chế độ quan sát nếu được phê duyệt nhưng không dual-write kết quả vào hai nguồn; sau khi ổn định phải loại bỏ provider credential, endpoint và client OCR legacy khỏi Dossier Core.
+Migration OCR: Dossier Core thay direct OCR provider bằng client `vhm-ocr-ekyc` sau khi OCR contract, IAM và E2E được duyệt; các client File Management tiếp tục phục vụ tài liệu không OCR. Agent API và Market API tiếp tục chỉ gọi Dossier Core. Có thể chạy so sánh OCR ở chế độ quan sát nếu được phê duyệt nhưng không dual-write kết quả vào hai nguồn; sau khi ổn định phải loại bỏ provider credential, endpoint và client OCR legacy khỏi Dossier Core.
 
 # 11. Cost & Capacity/Performance
 
@@ -972,7 +973,7 @@ Không dùng mục tiêu `200 req/s` hoặc P95 làm cam kết khi chưa có wor
 | Pipeline action | Actions/minute, contention | Optimistic lock, reviewer/unit unique, notification intent. |
 | Outbox/reminder | Events/minute, oldest age, recovery time | Batch lock, Kafka/Message quota. |
 | Report/download | Rows/file size/concurrency | Memory, temp storage, File/Syncfusion latency. |
-| OCR | Request/minute và polling rate | Dossier Core và `vhm-ocr-ekyc`; Core truyền `Retry-After`, BFF phải tuân thủ. |
+| OCR | Request/minute và polling rate | Dossier Core và `vhm-ocr-ekyc`; Core truyền `Retry-After`, Agent API/Market API phải tuân thủ. |
 
 Trước production, Product cung cấp MAU/DAU, hồ sơ/ngày, peak factor, tài liệu/hồ sơ, retention và report size. Vận hành/DBA chốt pool, timeout, batch, resource request/limit và headroom; QA lưu bằng chứng load/soak test.
 
@@ -988,7 +989,7 @@ Cost drivers gồm PostgreSQL HA/backup, Redis, Kafka retention, object storage/
 - Scale relay/scanner theo leader/DB claim để không xử lý một row đồng thời.
 - Dùng pagination có giới hạn và index cho filter phổ biến; report lớn chạy với quota/batch phù hợp.
 - Cache chỉ tối ưu read; DB vẫn là authority. Cache miss/stale không được mở rộng quyền.
-- Dossier Core điều phối polling và truyền `Retry-After`; BFF phải tuân thủ để tránh polling storm. OCR worker/capacity thuộc service dùng chung.
+- Dossier Core điều phối polling và truyền `Retry-After`; Agent API/Market API phải tuân thủ để tránh polling storm. OCR worker/capacity thuộc service dùng chung.
 - Auto-assignment Redis counter không được chặn manual assignment khi Redis/roster suy giảm.
 
 ## 12.2 Reliability
@@ -1000,7 +1001,7 @@ Cost drivers gồm PostgreSQL HA/backup, Redis, Kafka retention, object storage/
 | Kafka không sẵn sàng | Outbox backlog tăng, hồ sơ vẫn commit | Relay phát lại; alert oldest age. |
 | Message Delivery lỗi | Notification retry/FAILED | Manual replay/runbook; không rollback transition. |
 | Redis lỗi | Security replay fail closed; assignment/cache suy giảm | HA/failover; manual assignment. |
-| Market/TTOL lỗi | Guard bắt buộc fail hoặc auto-assign best effort | Cache/manual path và alert tùy use case. |
+| TTOL lỗi | Auto-assign hoặc lịch nghiệp vụ suy giảm theo use case | Cache/manual path và alert theo contract được duyệt. |
 | `vhm-ocr-ekyc` lỗi | Không tạo/poll OCR hoặc không xử lý được media OCR | Retry/manual entry theo UX; OCR lỗi không tự reject dossier. |
 | File Management lỗi | Không prepare/verify/download tài liệu không OCR; nhánh OCR cũng có thể suy giảm | Retry hữu hạn; không attach path chưa xác minh; không bypass qua đường tích hợp khác. |
 
@@ -1017,7 +1018,7 @@ Cost drivers gồm PostgreSQL HA/backup, Redis, Kafka retention, object storage/
 
 ## 13.1 Yêu cầu nền tảng
 
-- Correlation ID xuyên kênh → BFF → core → external calls/outbox, không dùng PII.
+- Correlation ID xuyên kênh → Agent API/Market API → Core → external calls/outbox, không dùng PII.
 - Structured log có schema/version, environment, service, action, outcome và error code.
 - Metrics cho HTTP, DB pool/query, external dependency, cache, outbox, notification, reminder và pipeline.
 - Distributed trace với sampling phù hợp; body/PII/file URL/token luôn bị loại.
@@ -1033,7 +1034,7 @@ Cost drivers gồm PostgreSQL HA/backup, Redis, Kafka retention, object storage/
 | Data | DB pool saturation, transaction/lock time, unique conflict, slow query, storage growth. |
 | Outbox | Pending count, oldest age, publish/send rate, retry, FAILED. |
 | Assignment | Auto/manual rate, roster/Redis failure, unassigned stage age. |
-| External | File Management, `vhm-ocr-ekyc`, Market, TTOL và Message availability, latency, timeout và error class. |
+| External | File Management, `vhm-ocr-ekyc`, TTOL và Message availability, latency, timeout và error class. |
 | Security | Invalid signature, stale timestamp, nonce replay, actor expiry/role/visibility denial. |
 
 Label không được chứa dossier ID, actor ID, project ID có cardinality cao hoặc PII. Business drill-down dùng log/audit có kiểm soát thay vì metric label.
@@ -1047,7 +1048,7 @@ Label không được chứa dossier ID, actor ID, project ID có cardinality ca
 | Outbox/notification backlog | Oldest age vượt delivery SLO | P1/P2 |
 | Reviewer chưa được assign | Stage age vượt ngưỡng nghiệp vụ | P2 |
 | Signature/replay anomaly | Tăng đột biến hoặc client bị deny liên tục | Security incident |
-| Media/OCR/Market/TTOL dependency | Error/timeout vượt budget | P2; P1 nếu chặn toàn bộ submit |
+| Media/OCR/TTOL dependency | Error/timeout vượt budget | P2; P1 nếu chặn toàn bộ submit |
 | Reminder missed | Scan không chạy hoặc due row quá hạn | P2 |
 
 ## 13.4 SLI/SLO
@@ -1073,7 +1074,7 @@ SLI bắt buộc: availability của read/mutation, successful submit/transition
 - Kafka down, outbox backlog, duplicate publish và poison event.
 - Message Delivery lỗi, notification `FAILED`, dedupe và manual replay.
 - Reviewer roster/Redis counter lỗi, unassigned dossier và manual assignment.
-- Market/special-day cache lỗi ảnh hưởng sinh mã/SLA reminder.
+- Nguồn lịch nghiệp vụ/cache lỗi ảnh hưởng SLA reminder.
 - File ownership/existence/download incident và object mồ côi.
 - `vhm-ocr-ekyc` unavailable, OCR stuck/terminal error và migration rollback.
 - PII/credential xuất hiện trong log, export hoặc event.
@@ -1103,9 +1104,9 @@ Bộ kiểm thử phải bao phủ invariant domain, database concurrency, API/s
 | Database integration | Migration, JSONB, partial index, advisory/row lock, optimistic lock, cascade | Bắt buộc |
 | Concurrency | Concurrent idempotent create, duplicate identity/project, allocate unit, reviewer claim | Bắt buộc |
 | Pipeline definition | Schema, graph integrity, reachability, role/stage reference, revision loop và published-version immutability | Bắt buộc |
-| API/contract | Agent ↔ core DTO/header/status/error/backward compatibility | Bắt buộc |
+| API/contract | Agent API/Market API ↔ Core: DTO/header/status/error, source mapping và backward compatibility | Bắt buộc |
 | Security | Signature, nonce replay, actor expiry/role/visibility/IDOR, body actor injection | Bắt buộc |
-| External contract | File Management, `vhm-ocr-ekyc`, Market, TTOL và Message Delivery | Bắt buộc |
+| External contract | File Management, `vhm-ocr-ekyc`, TTOL và Message Delivery | Bắt buộc |
 | Outbox/reliability | Rollback, broker/send lỗi, publish lặp, retry/FAILED, backlog recovery | Bắt buộc |
 | E2E | Create DRAFT → upload → PATCH → submit → multi-stage decision/revision | Bắt buộc |
 | Performance/soak | Workload model mục 11, report/download và polling OCR | Bắt buộc |
@@ -1115,7 +1116,7 @@ Bộ kiểm thử phải bao phủ invariant domain, database concurrency, API/s
 
 - Create `{}` trả DRAFT/version đúng DB; create không sinh checklist.
 - Concurrent create cùng actor/key trả cùng dossier; actor khác không replay được key.
-- `MARKET` thiếu key bị từ chối; BFF phải gán source theo channel context và từ chối client tự khai nguồn khác.
+- `MARKET` thiếu key bị từ chối; Agent API/Market API phải gán đúng source theo channel context và từ chối client tự khai nguồn khác.
 - Hai hồ sơ active cùng CCCD+dự án bị chặn ở create, full update, submit và DB race guard.
 - Full update file không tồn tại rollback cả dossier/checklist/outbox; xóa documents reset/delete projection đúng.
 - Submit không checklist/thiếu required trả `11017/11018`; required complete mới chuyển trạng thái.
@@ -1146,7 +1147,7 @@ Bằng chứng quality gate phải được lưu theo release, tối thiểu g�
 | AR-001 | Toàn vẹn nghiệp vụ | Tin `documents[].isRequired` từ client có thể làm sai bộ hồ sơ được phép submit | Nghiêm trọng | Tích hợp nguồn Checklist chuẩn, snapshot/version server-side, contract test. |
 | AR-002 | An toàn file | File response chưa chứng minh uploader/upload-grant owner | Nghiêm trọng | File Contract trả owner/grant và verify khi attach; negative E2E. |
 | AR-003 | Determinism | Thiếu pipeline ID/version authoritative có thể route hồ sơ sai quy trình | Cao | Bắt buộc unique selection rule và fail khi kết quả không xác định. |
-| AR-004 | Security | Tin `source=MARKET` từ request body có thể làm sai chính sách theo kênh | Cao | BFF gán source server-side từ channel context; core kiểm tra signed context và có negative test. |
+| AR-004 | Security | Tin `source=MARKET` từ request body có thể làm sai chính sách theo kênh | Cao | Agent API/Market API gán source server-side; Core kiểm tra signed context/client identity và có negative test chéo kênh. |
 | AR-005 | Tích hợp OCR | Duy trì direct synchronous OCR sẽ phá vỡ ranh giới capability dùng chung | Cao | Chỉ tích hợp `vhm-ocr-ekyc`; E2E/contract đạt và loại bỏ legacy trước go-live. |
 | AR-006 | Audit/PIC | Có `picId`/audit table nhưng chưa có use case gán/chuyển PIC hoàn chỉnh | Trung bình | Chốt owner, API, permission và audit semantics hoặc bỏ khỏi contract. |
 | AR-007 | Contract | Dùng không nhất quán `required` và `isRequired` có thể tạo quyết định duyệt khác nhau | Cao | Chỉ công bố một field chuẩn trong Form/Checklist Contract và có regression test. |
@@ -1165,7 +1166,7 @@ Bằng chứng quality gate phải được lưu theo release, tối thiểu g�
 | File ownership/upload-grant cho checklist, ZIP và XLSX | File Team/ANBM | File Contract bao phủ prepare, verify, store và download; E2E cross-owner đạt. |
 | Pipeline selection authoritative | BA/Kiến trúc/Backend | Một pipeline ID/version rõ ràng từ contract/config. |
 | Governance activate/deactivate/retention và migration hồ sơ đang chạy | Product/Kiến trúc/Vận hành | Quy trình phê duyệt version, rollback activation, thời gian giữ definition cũ và tiêu chí migration ngoại lệ được ký duyệt. |
-| Quy tắc ánh xạ kênh sang `source=AGENT\|MARKET` | BFF/Backend | Source do BFF gán server-side, được ký và có negative contract test. |
+| Quy tắc ánh xạ kênh sang `source=AGENT\|MARKET` | Agent API/Market API/Backend | Mỗi BFF chỉ được gán source của chính kênh mình, được ký và có negative contract test. |
 | Contract Dossier Core ↔ `vhm-ocr-ekyc` cho CCCD hai mặt và apply result | OCR Team/Backend | OpenAPI L3, opaque refs, IAM, status/result mapping và E2E ký duyệt. |
 | Ý nghĩa/ownership của `picId` so với stage reviewer | Product/BA/Backend | Use case và permission/audit rõ hoặc bỏ field. |
 | SLO, peak workload, RTO/RPO và capacity/cost | Product/Vận hành/DBA/FinOps | Baseline số được duyệt và load/DR đạt. |
@@ -1183,16 +1184,16 @@ Vấn đề mở không mặc nhiên được chấp nhận. Risk acceptance ph�
 | --- | --- |
 | NOXH | Nhà ở Xã hội. |
 | Dossier | Aggregate hồ sơ đăng ký một applicant cho một project. |
-| BFF | Public boundary xác thực kênh và gọi core bằng signed workload/actor context. |
+| BFF | Public boundary xác thực kênh và gọi Core bằng signed workload/actor context; trong phạm vi này gồm Agent API và Market API. |
 | PKD/PTT/SXD | Các cấp Sales/Procedure/Department-of-Construction trong pipeline. |
 | Checklist | Projection tài liệu bắt buộc/trạng thái upload/OCR/review của dossier. |
 | Pipeline | Cấu hình state/action/role/ownership có phiên bản, thực thi trong core. |
-| Actor context | Payload danh tính nghiệp vụ được BFF ký và core xác minh. |
+| Actor context | Payload danh tính nghiệp vụ được Agent API hoặc Market API ký và Core xác minh. |
 | Visibility | Phạm vi hồ sơ actor được phép đọc/xử lý. |
 | Idempotency key | Khóa opaque để replay an toàn create/OCR. |
 | Transactional outbox | Ghi business state và ý định phát/gửi trong cùng transaction DB. |
 | `vhm-ocr-ekyc` | Capability OCR/eKYC dùng chung, sở hữu media OCR, lifecycle và kết quả OCR chuẩn. |
-| Kênh Market | Kênh nghiệp vụ sử dụng cùng BFF và public contract như kênh Agent/Back Office; hồ sơ được gắn `source=MARKET`. |
+| Kênh Market | Kênh nghiệp vụ đi qua Market API; Market API là BFF ngang hàng với Agent API và gắn `source=MARKET`. |
 | Opaque reference | Identifier tương quan không nhúng PII hoặc secret. |
 
 ## B. References
@@ -1212,12 +1213,12 @@ Vấn đề mở không mặc nhiên được chấp nhận. Risk acceptance ph�
 | File Management contract và ownership/upload-grant | File Team/ANBM | Attachment security và export/download không OCR |
 | Pipeline schema, ID/version selection, activation và retention | BA/Kiến trúc/Vận hành | Cấu hình và thay đổi số cấp duyệt |
 | OCR OpenAPI, IAM, two-side CCCD và apply-result | OCR Team/Backend | E2E media/OCR |
-| Channel-to-source mapping cho AGENT/MARKET | BFF/Backend | Security/API approval |
+| Channel-to-source mapping cho AGENT/MARKET | Agent API/Market API/Backend | Security/API approval |
 | Privacy retention/deletion/encryption | Privacy/Pháp chế/ANBM | Dữ liệu thật |
 | Workload/SLO/capacity/cost | Product/Vận hành/FinOps | Load/OAT |
 | RTO/RPO/backup/restore | DBA/Vận hành | DR/OAT |
 | Dashboard/alert/on-call/runbook | Vận hành | Go-live |
-| Contract test File/`vhm-ocr-ekyc`/Market/TTOL/Message/Kafka | Tích hợp/QA | Release |
+| Contract test File/`vhm-ocr-ekyc`/TTOL/Message/Kafka | Tích hợp/QA | Release |
 
 ## D. Danh mục quyết định kiến trúc (ADR)
 
