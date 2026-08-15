@@ -179,15 +179,19 @@ Tài liệu này mô tả **kiến trúc mục tiêu L2**. Dossier được thi�
 
 ```mermaid
 flowchart LR
-    Agent[Đại lý / BO / Reviewer] --> Channel[Ứng dụng kênh]
-    Channel --> API[BFF]
+    subgraph Channels[Inbound Channels]
+        direction TB
+        AgentChannel[Kênh Agent / Back Office]
+        MarketChannel[Kênh Market]
+    end
+    AgentChannel --> API[BFF]
     API -->|Basic + HMAC + signed actor context| Core[vhm-dossier-core]
+    MarketChannel -->|S2S machine identity - source MARKET| Core
     Core --> PG[(PostgreSQL)]
     Core --> Redis[(Redis / Redisson)]
     Core --> Kafka[(Kafka)]
     Core --> File[Private File Service]
-    Market[Market] -->|S2S - source MARKET| Core
-    Core -->|Project / unit lookup| Market
+    Core -->|Project / unit lookup| MarketAPI[Market API]
     Core --> OCR[vhm-ocr-ekyc]
     OCR --> File
     Core --> Msg[Message Delivery]
@@ -198,9 +202,14 @@ flowchart LR
 
 ```mermaid
 flowchart LR
-    Channel[Kênh Agent / Back Office] --> BFF[BFF]
+    subgraph Channels[Inbound Channels]
+        direction TB
+        AgentChannel[Kênh Agent / Back Office]
+        MarketChannel[Kênh Market]
+    end
+    AgentChannel --> BFF[BFF]
     BFF --> API[Dossier Core API]
-    Market[Market] -->|S2S inbound| API
+    MarketChannel -->|S2S inbound| API
     API --> Domain[Hồ sơ + Checklist + Pipeline]
     Domain -->|Ghi nghiệp vụ và outbox| DB[(PostgreSQL)]
     Relay[Outbox Relay & Scheduler] -->|Đọc bản ghi chờ xử lý| DB
@@ -208,7 +217,7 @@ flowchart LR
     Relay --> Message[Message Delivery]
     API --> OCR[vhm-ocr-ekyc]
     OCR --> File[File Management]
-    API -->|Project / unit lookup| Market
+    API -->|Project / unit lookup| MarketAPI[Market API]
     API --> Enterprise[TTOL / File]
 ```
 
@@ -854,8 +863,13 @@ flowchart LR
     Core --> Redis[(Redis)]
     Core --> Kafka[(Kafka)]
     Core --> Ext[Enterprise Services]
-    BFF[BFF Replicas] --> Core
-    Market[Market] -->|S2S inbound| Core
+    subgraph Inbound[Inbound Callers]
+        direction TB
+        BFF[BFF Replicas]
+        Market[Market Channel]
+    end
+    BFF --> Core
+    Market -->|S2S inbound| Core
     Core --> OCR[vhm-ocr-ekyc]
 ```
 
