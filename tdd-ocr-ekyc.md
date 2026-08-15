@@ -283,7 +283,41 @@ flowchart LR
 `BFF → eKYC Proxy → FPT` và không đi qua Kafka/OCR Processor. Khi chuẩn bị upload,
 OCR API gọi File Management và trả presigned URL về BFF, không qua tầng API trung gian khác.
 
-### 2.2.3 Phân định trách nhiệm module
+### 2.2.3 Sơ đồ kiến trúc eKYC đồng bộ
+
+```mermaid
+flowchart LR
+    CHANNEL([Mobile / Web<br/>FPT SDK])
+    BFF[BFF]
+
+    subgraph APP[vhm-ocr-ekyc]
+        direction TB
+        PROXY[eKYC Proxy]
+        INTEGRATION[Khối tích hợp FPT]
+        DATA[Khối quản lý dữ liệu]
+
+        PROXY -->|gọi FPT| INTEGRATION
+        PROXY -->|lưu request / kết quả| DATA
+    end
+
+    FPT[FPT eKYC]
+    DB[(PostgreSQL<br/>schema ocr_ekyc)]
+
+    CHANNEL -->|request do SDK tạo| BFF
+    BFF -->|request theo contract SDK| PROXY
+    INTEGRATION -->|request + credential phía server| FPT
+    FPT -->|status + headers + body| INTEGRATION
+    INTEGRATION -->|response FPT| PROXY
+    PROXY -->|status/body nguyên trạng<br/>header theo contract| BFF
+    BFF -->|response tương thích SDK| CHANNEL
+    DATA <--> DB
+```
+
+eKYC là luồng đồng bộ, không đi qua Transactional Outbox, Kafka, OCR Processor hoặc
+File Management. Proxy phải tuân theo ranh giới lưu trữ và chính sách header tại
+mục 6.5.2; sơ đồ không hàm ý HTTP FPT và PostgreSQL nằm trong cùng transaction.
+
+### 2.2.4 Phân định trách nhiệm module
 
 | **Component** | **Trách nhiệm** | **Dữ liệu quản lý** | **Lưu trữ** | **Giao tiếp ngoài component** |
 | --- | --- | --- | --- | --- |
@@ -293,7 +327,7 @@ OCR API gọi File Management và trả presigned URL về BFF, không qua tần
 | OCR Processor | Nhận công việc OCR, tải media, gửi/thăm dò FPT và chuẩn hóa kết quả. | Trạng thái xử lý, kết quả OCR và metadata lần gọi FPT. | PostgreSQL schema `ocr_ekyc` | Kafka, File Management và FPT; không tiếp nhận request từ Mobile/Web. |
 | Tích hợp FPT | Quản lý contract, thông tin xác thực, timeout và ánh xạ kỹ thuật với FPT. | Không sở hữu dữ liệu nghiệp vụ. | Không có kho riêng | Được OCR Processor và eKYC Proxy sử dụng; OCR được chuẩn hóa, eKYC tuân theo mục 6.5.2. |
 
-### 2.2.4 Ranh giới tin cậy
+### 2.2.5 Ranh giới tin cậy
 
 | **Ranh giới** | **Mức tin cậy** | **Kiểm soát bắt buộc** | **Tiêu chí phê duyệt** |
 | --- | --- | --- | --- |
@@ -1040,7 +1074,7 @@ sequenceDiagram
     E->>E: kiểm tra giới hạn + chèn credential FPT
     E->>D: lưu request nghiệp vụ + metadata lần gọi
     alt lưu request thất bại
-        E-->>B: lỗi dịch vụ; không gọi FPT
+        E-->>B: lỗi dịch vụ và không gọi FPT
         B-->>C: lỗi theo contract VHM
     else request đã lưu
     E->>F: request giữ nguyên contract SDK
@@ -1048,7 +1082,7 @@ sequenceDiagram
         F-->>E: HTTP status + headers + body
         E->>D: lưu status + header allowlist + body mã hóa
         alt lưu response thất bại
-            E->>E: phát metric/cảnh báo; không gọi lại FPT
+            E->>E: phát metric/cảnh báo và không gọi lại FPT
         end
         E-->>B: status/body nguyên trạng + header theo contract
         B-->>C: response tương thích FPT SDK
@@ -1508,8 +1542,7 @@ mô hình dung lượng trước production.
 Khi triển khai, bộ kiểm thử phải bao phủ API contract, mã hóa, chuẩn hóa OCR, tích
 hợp FPT/FPT Sale, media, Kafka/processor và các nhánh phục hồi trọng yếu. Kiểm thử
 unit không thay thế bằng chứng tích hợp PostgreSQL/Kafka/FPT, an toàn thông tin,
-hiệu năng hoặc phục hồi. TDD không ghi nhận số lượng test hoặc kết quả build tại
-một thời điểm; bằng chứng thực thi phải được lưu cùng pipeline/release tương ứng.
+hiệu năng hoặc phục hồi. Bằng chứng thực thi phải được lưu cùng pipeline/release.
 
 ## 15.2 Cổng chất lượng
 
