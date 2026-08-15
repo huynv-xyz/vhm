@@ -146,8 +146,8 @@ Tài liệu này mô tả **kiến trúc mục tiêu L2**. Dossier được thi�
 
 | **Dữ liệu** | **Mục đích** | **Vị trí** | **Kiểm soát hiện hành/yêu cầu** |
 | --- | --- | --- | --- |
-| CCCD, họ tên, ngày sinh, địa chỉ | Định danh và xử lý hồ sơ | `dossier.form_data` JSONB | Actor visibility, masking, XSS guard, mã hóa hạ tầng/TBD retention. |
-| SĐT/email người nộp và vợ/chồng | Liên hệ, tìm kiếm, notification | JSONB và notification outbox | PKD masking; không ghi body nhạy cảm vào log. |
+| CCCD, họ tên, ngày sinh, giới tính, ngày/nơi cấp và địa chỉ của người nộp/vợ chồng | Định danh và xử lý hồ sơ | `dossier.form_data` JSONB | Mã hóa cấp ứng dụng theo field, actor visibility, masking, XSS guard và retention được phê duyệt. |
+| SĐT/email người nộp và reviewer | Liên hệ, tìm kiếm, notification | JSONB, stage reviewer và notification outbox | Mã hóa cấp ứng dụng, chỉ giải mã theo use case; không ghi body nhạy cảm vào log. |
 | Đường dẫn file | Gắn tài liệu và yêu cầu OCR | JSONB/checklist, File Management và OCR service | Chỉ lưu `s3PathFile`; không persist presigned URL; ownership còn thiếu. |
 | Kết quả/phê duyệt tài liệu | Readiness và quyết định | JSONB/checklist/history | Chỉ actor có quyền được mutation; lịch sử append trong snapshot. |
 | Actor/reviewer | Audit và routing | audit columns, status history, stage reviewer | Actor context có chữ ký; không tin actor do client truyền. |
@@ -176,6 +176,7 @@ Tài liệu này mô tả **kiến trúc mục tiêu L2**. Dossier được thi�
 | ARCH-12 | Core gọi File Management cho tài liệu không OCR; media OCR chỉ đi qua `vhm-ocr-ekyc`, không gọi provider hoặc File Management trực tiếp trong nhánh OCR. |
 | ARCH-13 | Cấp duyệt là cấu hình có phiên bản; không gắn cứng số lượng hoặc thứ tự cấp duyệt vào API, database hay kênh. |
 | ARCH-14 | Pipeline đã công bố là bất biến theo `(pipelineCode, pipelineVersion)`; thay đổi luồng phải tạo phiên bản mới. |
+| ARCH-15 | PII được mã hóa tại persistence boundary bằng khóa có phiên bản; khóa mã hóa và khóa blind index tách biệt, không lưu cùng dữ liệu. |
 
 ## 2.2 Sơ đồ kiến trúc ứng dụng
 
@@ -377,7 +378,7 @@ Các mục tiêu `200 req/s`, P95 cụ thể và availability `99.9%` chưa có 
 | NFR-03 | Concurrency | Idempotency, optimistic lock, unique index, row/Redis lock | `BẮT BUỘC` |
 | NFR-04 | Performance | P95/P99 theo endpoint và peak TPS phải được đo | TBD |
 | NFR-05 | Scalability | Scale ngang API/relay; không dùng session cục bộ làm authority | `BẮT BUỘC` |
-| NFR-06 | Security | Signed request/actor, least privilege, PII masking, secret rotation | `BẮT BUỘC` |
+| NFR-06 | Security | Signed request/actor, least privilege, PII field encryption/masking và versioned-key rotation | `BẮT BUỘC` |
 | NFR-07 | Privacy | Purpose, retention, deletion, audit access cho CCCD | TBD/BẮT BUỘC |
 | NFR-08 | Recoverability | PostgreSQL PITR, outbox replay, backup/restore drill | TBD/BẮT BUỘC |
 | NFR-09 | Observability | Metrics/log/trace/correlation và alert có owner | `BẮT BUỘC` |
@@ -591,16 +592,16 @@ Khi file không đổi, synchronization giữ OCR/review state; khi path đổi 
 
 | **Bảng/aggregate** | **Mục đích** | **Invariant chính** |
 | --- | --- | --- |
-| `dossier` | Aggregate hồ sơ, JSONB form/metadata, source, PIC, pipeline projection, version | UUIDv7; source AGENT/MARKET; active duplicate/unit uniqueness. |
+| `dossier` | Aggregate hồ sơ, JSONB form/metadata, source, PIC, pipeline projection, version | PII trong snapshot được mã hóa; lưu `keyId/keyVersion` và blind index cần thiết; source AGENT/MARKET; active duplicate/unit uniqueness. |
 | `dossier_status_history` | Lịch sử trạng thái/action | Tạo trong cùng transaction với transition. |
 | `dossier_checklist` | Projection readiness/progress và OCR evidence tối thiểu | PK logic template+group; FK cascade; không chứa raw provider result. |
-| `dossier_stage_reviewer` | Người xử lý theo stage | Assignment/claim/review/decision metadata. |
+| `dossier_stage_reviewer` | Người xử lý theo stage | Assignment/claim/review/decision metadata; reviewer name/email được phân loại và bảo vệ như PII. |
 | `dossier_reminder_sent` | Dedup reminder theo cycle | Dossier/state/rule/cycle unique. |
 | `agent_project_permission` | ACL team/project/scope và rotation | Chỉ một permission active theo key. |
 | `outbox_event` | Domain event chưa/đã publish | Không mất event khi business commit. |
-| `notification_outbox` | Ý định notification và retry | Dedupe key/attempt/status. |
-| `dossier_note` | Ghi chú general/hardcopy | Soft-delete theo use case. |
-| `audit_log` | Nền tảng audit cho PIC/operation | Table có nhưng writer/use case PIC chưa hoàn chỉnh. |
+| `notification_outbox` | Ý định notification và retry | Dedupe key/attempt/status; recipient/payload được tối thiểu hóa, mã hóa và có retention riêng. |
+| `dossier_note` | Ghi chú general/hardcopy | Soft-delete theo use case; free text được coi là có khả năng chứa PII. |
+| `audit_log` | Nền tảng audit cho PIC/operation | Không lưu snapshot PII rõ; table có nhưng writer/use case PIC chưa hoàn chỉnh. |
 
 ### 7.1.2 Sơ đồ quan hệ dữ liệu logic
 
@@ -618,7 +619,7 @@ erDiagram
 
 ### 7.1.3 Database invariants
 
-- Partial unique index trên normalized JSON path `applicant.idNumber + projectRegistration.projectId` cho dossier chưa terminal.
+- Partial unique index trên `applicant_id_blind_index + project_id` cho dossier chưa terminal; không lập index trực tiếp trên CCCD rõ.
 - Partial unique index trên unit được cấp cho dossier active.
 - Check constraint cho `source`; MARKET yêu cầu idempotency key.
 - Checklist có constraint enum và `invalid_reason` phù hợp trạng thái.
@@ -736,13 +737,31 @@ Không có đường ghi trực tiếp từ OCR service vào PostgreSQL của do
 
 ### 7.3.1 Phân loại và tối thiểu hóa
 
-- CCCD, ngày sinh, địa chỉ, phone/email là PII; ảnh CCCD là dữ liệu nhạy cảm.
+- `formData.applicant` hiện chứa họ tên, ngày sinh, giới tính, CCCD, ngày/nơi cấp, phone, email, địa chỉ, tình trạng hôn nhân/nhà ở. `formData.spouse` chứa họ tên, ngày sinh, giới tính, CCCD, ngày/nơi cấp và quan hệ đồng đăng ký. Đây là PII; ảnh CCCD là dữ liệu nhạy cảm nằm tại File/OCR capability.
+- Reviewer name/email, địa chỉ người nhận và nội dung notification, comment/note/reason dạng tự do cũng có khả năng chứa PII và phải thuộc data-classification allowlist.
 - Kafka/outbox/event/log chỉ nên chứa identifier và metadata tối thiểu, không chứa raw binary, presigned URL còn hiệu lực hoặc full formData.
 - `idNumber`, `phone`, `email` không được dùng làm metric label hoặc correlation ID.
 - PKD/PKD_LEAD nhận dữ liệu liên hệ đã mask theo response mapping hiện hành.
 - Export/download cần cùng visibility/ownership guard như detail.
 
-### 7.3.2 Danh mục dữ liệu và yêu cầu quản lý
+### 7.3.2 Mã hóa PII và quản lý phiên bản khóa
+
+Hiện trạng persistence lưu `form_data` dưới dạng JSONB và các truy vấn/index đọc trực tiếp `applicant.idNumber`/`fullName`; chưa có mã hóa PII cấp ứng dụng. Mã hóa volume/disk/backup vẫn bắt buộc nhưng không thay thế kiểm soát này vì không bảo vệ trước SQL dump hoặc tài khoản DB đọc được dữ liệu.
+
+Thiết kế đích:
+
+1. Mã hóa các JSON path/cột được phân loại PII tại persistence boundary bằng AEAD `AES-256-GCM`; mỗi giá trị dùng nonce ngẫu nhiên và AAD chứa tối thiểu `dossierId + fieldPath + schemaVersion` để chống tráo ciphertext giữa hồ sơ/trường.
+2. Dùng envelope encryption: sinh DEK theo dossier để mã hóa dữ liệu; DEK được wrap bằng KEK có phiên bản tại KMS/Vault. Database chỉ lưu ciphertext, nonce, thuật toán, wrapped DEK và `kekId/kekVersion`; không lưu plaintext key, salt hoặc key material cùng bản ghi.
+3. Phiên bản mới nhất chỉ dùng cho encrypt; các phiên bản cũ ở trạng thái decrypt-only trong thời gian migration/restore. Reader chọn đúng khóa theo metadata của ciphertext và phải fail closed khi không resolve được khóa.
+4. CCCD dùng cho duplicate guard; phone/email nếu có equality lookup phải dùng blind index `HMAC-SHA-256(indexKey[keyVersion], normalizedValue)` ở cột projection riêng. Khóa blind index độc lập với KEK/DEK. Không dùng hash không khóa và không dùng salt ngẫu nhiên vì sẽ mất khả năng đối chiếu xác định.
+5. Free-text `LIKE` theo họ tên không chạy được trên ciphertext. Trước triển khai phải chốt một trong các hướng: bỏ nhánh tìm theo tên, dùng secure search projection đã được ANBM phê duyệt, hoặc một search capability chuyên biệt; không duy trì bản rõ chỉ để tìm kiếm.
+6. PII trong notification outbox, reviewer email/name, note/comment và audit snapshot phải được tối thiểu hóa trước; phần còn cần lưu áp dụng cùng policy mã hóa hoặc tokenization và retention ngắn theo mục đích.
+
+Rotation định kỳ của KEK dùng quy trình `activate new version → dual-read → new-write bằng version mới → re-wrap DEK → đối soát → retire version cũ`, không cần giải mã rồi mã hóa lại toàn bộ PII. Nếu DEK/thuật toán hoặc plaintext đã lộ thì phải sinh DEK mới và batch re-encrypt; batch có checkpoint, locking, rate limit và metric theo key version. Với blind-index key, cần dual-write/backfill và xác minh unique constraint trên toàn bộ hồ sơ active trước cutover; không bỏ index/khóa cũ khi còn bản ghi hoặc backup hợp lệ cần giải mã. Việc hủy khóa chỉ thực hiện sau retention/restore window và phê duyệt cryptographic erasure.
+
+`Salt` không phải encryption key. Salt chỉ có ý nghĩa trong một số cơ chế hash/KDF; yêu cầu rotate ở đây phải quản lý bằng `keyId/keyVersion` cho encryption key và index key riêng.
+
+### 7.3.3 Danh mục dữ liệu và yêu cầu quản lý
 
 Retention, legal hold, purge, quyền của data subject và phạm vi audit chưa có baseline được phê duyệt; đây là điều kiện production. Xóa DRAFT là hard delete nghiệp vụ, không thay thế chính sách xóa PII cho hồ sơ đã submit/terminal và các bản sao backup/outbox/log.
 
@@ -836,8 +855,9 @@ Authorization áp dụng defense in depth:
 
 ## 9.3 Secrets & Credential Management
 
-- HMAC secret, Basic credential, File/OCR/Message/TTOL credential và encryption key không được nằm trong source, image hoặc tài liệu này. Agent API và Market API dùng credential nội bộ riêng khi gọi Core. Credential File của Core chỉ có scope cho tài liệu không OCR; credential File của nhánh OCR thuộc `vhm-ocr-ekyc`.
+- HMAC secret, Basic credential, File/OCR/Message/TTOL credential, PII encryption key và blind-index key không được nằm trong source, image, application config rõ hoặc tài liệu này. Agent API và Market API dùng credential nội bộ riêng khi gọi Core. Credential File của Core chỉ có scope cho tài liệu không OCR; credential File của nhánh OCR thuộc `vhm-ocr-ekyc`.
 - Secret phải được cấp qua secret manager/runtime, có owner, rotation period và emergency revocation runbook.
+- PII encryption key và blind-index key là hai key ring độc lập, đều có `keyId/keyVersion`, audit quyền sử dụng và policy encrypt/decrypt tách biệt; application chỉ được gọi cryptographic operation cần thiết theo workload identity.
 - Core và `vhm-ocr-ekyc` dùng danh tính workload riêng, audience/scope tối thiểu; dossier không nhận provider credential OCR.
 - Không copy cookie STG vào code/config/log; credential từng được chia sẻ ngoài luồng phải được rotate/revoke.
 - Startup/readiness phải fail khi capability bắt buộc được bật nhưng thiếu secret/config hợp lệ.
@@ -857,7 +877,7 @@ Authorization áp dụng defense in depth:
 | **Trạng thái dữ liệu** | **Kiểm soát bắt buộc** |
 | --- | --- |
 | In transit | TLS; HMAC/mTLS/JWT theo ranh giới; không gửi credential trong query. |
-| At rest | PostgreSQL/object storage encryption theo chuẩn VHM; backup cũng phải mã hóa. |
+| At rest | PII mã hóa cấp ứng dụng bằng AEAD/envelope key có phiên bản; PostgreSQL/object storage/backup đồng thời mã hóa theo chuẩn VHM. |
 | In use | Least privilege, không dump formData/raw OCR vào log/APM; giới hạn export/download. |
 | Event | Chỉ opaque ID và metadata tối thiểu; không PII, media path hoặc presigned URL. |
 | Retention/deletion | Policy theo purpose/legal hold; purge cả primary, object, outbox đã hết hạn và backup theo lịch. |
@@ -878,6 +898,7 @@ Log tối thiểu gồm correlation ID, client ID, actor subject dạng opaque, 
 | TH-06 | PII/secret lọt log/event | Allowlist log/event, scan CI/APM, runbook incident | Cần evidence production. |
 | TH-07 | OCR result tự động gây quyết định sai | Người dùng xác nhận trước PATCH; không auto reject | Manual review UX/contract cần UAT. |
 | TH-08 | Client giả mạo `source=MARKET` | Agent API/Market API gán source theo client identity; Core không tin source do client tự khai | Cần negative contract test chéo hai BFF. |
+| TH-09 | Lộ DB dump/credential hoặc khóa PII | Field encryption, KMS/Vault, tách encryption/index key, key version và rotation có đối soát | Chưa có implementation/migration và evidence diễn tập. |
 
 # 10. Deployment & Infrastructure Topology
 
@@ -959,6 +980,8 @@ Liquibase quản lý schema theo phiên bản. Baseline hiện có các nhóm mi
 Phát hành pipeline: version mới được validate và deploy ở trạng thái inactive, chạy contract/E2E trên STAG rồi mới activate cho hồ sơ tạo mới. Rollback chỉ chuyển active version về definition trước đó cho hồ sơ mới; không đổi version của hồ sơ đã tạo. Definition cũ phải tiếp tục được phục vụ cho đến khi hết hồ sơ active và hoàn tất retention/audit. Migration hồ sơ đang chạy là quy trình ngoại lệ, cần mapping state/reviewer, dry-run, đối soát, audit và rollback riêng.
 
 Migration OCR: Dossier Core thay direct OCR provider bằng client `vhm-ocr-ekyc` sau khi OCR contract, IAM và E2E được duyệt; các client File Management tiếp tục phục vụ tài liệu không OCR. Agent API và Market API tiếp tục chỉ gọi Dossier Core. Có thể chạy so sánh OCR ở chế độ quan sát nếu được phê duyệt nhưng không dual-write kết quả vào hai nguồn; sau khi ổn định phải loại bỏ provider credential, endpoint và client OCR legacy khỏi Dossier Core.
+
+Migration mã hóa PII dùng expand/migrate/contract: bổ sung ciphertext/key metadata và blind-index projection, deploy reader tương thích dữ liệu cũ/mới, new-write bằng active key version, backfill online có checkpoint rồi đối soát nghiệp vụ/unique guard. Chỉ sau khi toàn bộ bản ghi và consumer đã chuyển đổi mới xóa plaintext/index JSON cũ. Job re-encrypt phải tách khỏi Liquibase DDL, idempotent, rate-limited, có khả năng resume và không ghi plaintext vào log/dead-letter. Rollback ứng dụng phải tiếp tục đọc được mọi `keyVersion` còn hiệu lực; backup chứa bản rõ trước migration được quản lý đến hết retention và không dùng để phục hồi ngoài runbook được phê duyệt.
 
 # 11. Cost & Capacity/Performance
 
@@ -1085,7 +1108,7 @@ SLI bắt buộc: availability của read/mutation, successful submit/transition
 - Owner/on-call/escalation matrix cho core và từng dependency.
 - Production config review chứng minh signature, actor, file validation, schema validation và relays đúng default.
 - Dashboard/cảnh báo đã fire thử và route đúng người.
-- Backup/restore, deployment rollback, secret rotation và backlog replay đã diễn tập.
+- Backup/restore, deployment rollback, PII key rotation/re-encryption và backlog replay đã diễn tập.
 - OpenAPI/event/schema/pipeline version được đóng băng và contract test.
 - Privacy retention/deletion/export access được phê duyệt.
 - Mọi vấn đề Critical/High tại mục 16 đã đóng hoặc có risk acceptance hữu hạn, owner và expiry.
@@ -1100,17 +1123,17 @@ Bộ kiểm thử phải bao phủ invariant domain, database concurrency, API/s
 
 | **Lớp kiểm thử** | **Phạm vi bắt buộc** | **Cổng** |
 | --- | --- | --- |
-| Unit/domain | State/action/role/ownership, checklist, code/unit, masking, error mapping | Bắt buộc |
-| Database integration | Migration, JSONB, partial index, advisory/row lock, optimistic lock, cascade | Bắt buộc |
+| Unit/domain | State/action/role/ownership, checklist, code/unit, masking, encrypt/decrypt/AAD, error mapping | Bắt buộc |
+| Database integration | Migration, encrypted JSONB, blind/partial index, advisory/row lock, optimistic lock, cascade | Bắt buộc |
 | Concurrency | Concurrent idempotent create, duplicate identity/project, allocate unit, reviewer claim | Bắt buộc |
 | Pipeline definition | Schema, graph integrity, reachability, role/stage reference, revision loop và published-version immutability | Bắt buộc |
 | API/contract | Agent API/Market API ↔ Core: DTO/header/status/error, source mapping và backward compatibility | Bắt buộc |
-| Security | Signature, nonce replay, actor expiry/role/visibility/IDOR, body actor injection | Bắt buộc |
+| Security | Signature, nonce replay, actor expiry/role/visibility/IDOR, body actor injection, không còn PII rõ trong DB/log/event | Bắt buộc |
 | External contract | File Management, `vhm-ocr-ekyc`, TTOL và Message Delivery | Bắt buộc |
 | Outbox/reliability | Rollback, broker/send lỗi, publish lặp, retry/FAILED, backlog recovery | Bắt buộc |
 | E2E | Create DRAFT → upload → PATCH → submit → multi-stage decision/revision | Bắt buộc |
 | Performance/soak | Workload model mục 11, report/download và polling OCR | Bắt buộc |
-| OAT/DR | Deploy/rollback, restore, secret rotation, alert/runbook | Bắt buộc |
+| OAT/DR | Deploy/rollback, restore, versioned-key rotation/re-encryption, emergency revocation, alert/runbook | Bắt buộc |
 
 ## 15.3 Kịch bản kiểm thử trọng yếu
 
@@ -1118,6 +1141,9 @@ Bộ kiểm thử phải bao phủ invariant domain, database concurrency, API/s
 - Concurrent create cùng actor/key trả cùng dossier; actor khác không replay được key.
 - `MARKET` thiếu key bị từ chối; Agent API/Market API phải gán đúng source theo channel context và từ chối client tự khai nguồn khác.
 - Hai hồ sơ active cùng CCCD+dự án bị chặn ở create, full update, submit và DB race guard.
+- Database dump không chứa PII rõ; ciphertext đổi theo nonce dù plaintext giống nhau; ciphertext/AAD bị sửa hoặc tráo field/dossier phải fail closed.
+- Reader giải mã được các key version còn hiệu lực; new-write chỉ dùng active version; batch rotate resume được sau lỗi và không phá duplicate/search blind index.
+- Rotate blind-index key phải dual-write/backfill đầy đủ và vẫn chặn duplicate CCCD+dự án trong suốt cutover.
 - Full update file không tồn tại rollback cả dossier/checklist/outbox; xóa documents reset/delete projection đúng.
 - Submit không checklist/thiếu required trả `11017/11018`; required complete mới chuyển trạng thái.
 - If-Match cũ, concurrent command, allocate cùng căn và double claim không làm lost update.
@@ -1157,6 +1183,7 @@ Bằng chứng quality gate phải được lưu theo release, tối thiểu g�
 | AR-011 | Privacy | Retention/deletion/legal hold/audit access cho CCCD chưa được định nghĩa | Nghiêm trọng | DPIA/policy/runbook và bằng chứng purge/restore. |
 | AR-012 | Availability | Full E2E phụ thuộc File Management, `vhm-ocr-ekyc` và nhiều enterprise dependency | Cao | Sandbox/SLA, timeout/degradation, synthetic probe và runbook. |
 | AR-013 | Linh động pipeline | State machine có cấu hình nhưng assignment, notification, reminder, report hoặc audit vẫn gắn cứng tên stage sẽ làm cấp duyệt mới chạy thiếu side effect | Cao | Mọi consumer dùng stage policy/metadata; quality gate bắt buộc chứng minh add/remove một cấp chỉ bằng definition mới. |
+| AR-014 | Bảo vệ PII | `form_data`, notification/reviewer/note/audit hiện có thể lưu PII rõ; DB encryption không bảo vệ SQL dump hoặc DB reader | Nghiêm trọng | Field encryption + versioned KMS key, blind index, migration xóa plaintext và rotation drill trước dữ liệu thật. |
 
 ## 16.2 Vấn đề thiết kế cần quyết định
 
@@ -1171,6 +1198,7 @@ Bằng chứng quality gate phải được lưu theo release, tối thiểu g�
 | Ý nghĩa/ownership của `picId` so với stage reviewer | Product/BA/Backend | Use case và permission/audit rõ hoặc bỏ field. |
 | SLO, peak workload, RTO/RPO và capacity/cost | Product/Vận hành/DBA/FinOps | Baseline số được duyệt và load/DR đạt. |
 | Retention, deletion, legal hold, encryption và audit access | Privacy/Pháp chế/ANBM | Policy/DPIA/runbook được phê duyệt. |
+| KMS/Vault, phạm vi field PII, key lifecycle và free-text search theo họ tên | ANBM/Privacy/DBA/Backend/Product | Key contract/IAM, field classification, blind-index/search decision, migration và rotation runbook được duyệt. |
 | Notification channels và recipient authority | Product/Message Team | Contract channel/dedupe/template/address và test đạt. |
 | Form schema enforcement và backward compatibility | BA/Backend/QA | Bật trên STAG, clean data report và regression đạt. |
 
@@ -1195,6 +1223,10 @@ Vấn đề mở không mặc nhiên được chấp nhận. Risk acceptance ph�
 | `vhm-ocr-ekyc` | Capability OCR/eKYC dùng chung, sở hữu media OCR, lifecycle và kết quả OCR chuẩn. |
 | Kênh Market | Kênh nghiệp vụ đi qua Market API; Market API là BFF ngang hàng với Agent API và gắn `source=MARKET`. |
 | Opaque reference | Identifier tương quan không nhúng PII hoặc secret. |
+| PII | Dữ liệu có thể nhận diện trực tiếp hoặc gián tiếp một cá nhân. |
+| AEAD | Mã hóa xác thực, đồng thời bảo vệ tính bí mật và phát hiện dữ liệu bị sửa/tráo. |
+| DEK/KEK | DEK mã hóa dữ liệu; KEK trong KMS/Vault wrap DEK và được quản lý theo phiên bản. |
+| Blind index | Giá trị HMAC của dữ liệu đã chuẩn hóa, dùng equality/unique lookup mà không lưu PII rõ. |
 
 ## B. References
 
@@ -1214,7 +1246,8 @@ Vấn đề mở không mặc nhiên được chấp nhận. Risk acceptance ph�
 | Pipeline schema, ID/version selection, activation và retention | BA/Kiến trúc/Vận hành | Cấu hình và thay đổi số cấp duyệt |
 | OCR OpenAPI, IAM, two-side CCCD và apply-result | OCR Team/Backend | E2E media/OCR |
 | Channel-to-source mapping cho AGENT/MARKET | Agent API/Market API/Backend | Security/API approval |
-| Privacy retention/deletion/encryption | Privacy/Pháp chế/ANBM | Dữ liệu thật |
+| Privacy retention/deletion và PII field classification | Privacy/Pháp chế/ANBM | Dữ liệu thật |
+| KMS/Vault, versioned encryption/blind-index key và rotation runbook | ANBM/DBA/Backend | Dữ liệu thật |
 | Workload/SLO/capacity/cost | Product/Vận hành/FinOps | Load/OAT |
 | RTO/RPO/backup/restore | DBA/Vận hành | DR/OAT |
 | Dashboard/alert/on-call/runbook | Vận hành | Go-live |
@@ -1237,3 +1270,4 @@ Vấn đề mở không mặc nhiên được chấp nhận. Risk acceptance ph�
 | ADR-011 | OCR chỉ áp dụng sau xác nhận và PATCH dossier | OCR không tự quyết định nghiệp vụ; giữ optimistic/business guards | ĐỀ XUẤT — chờ phê duyệt |
 | ADR-012 | Phân tuyến file theo mục đích nghiệp vụ | Tài liệu không OCR đi File Management; media OCR đi `vhm-ocr-ekyc`, không để client tự chọn đường | ĐỀ XUẤT — chờ phê duyệt |
 | ADR-013 | Cấp duyệt cấu hình và pipeline version bất biến | Add/remove bằng version mới; hồ sơ pin đúng version, consumer dùng policy/metadata thay vì tên stage | ĐỀ XUẤT — chờ phê duyệt |
+| ADR-014 | Mã hóa PII cấp ứng dụng bằng versioned envelope key và blind index riêng | Bảo vệ khi lộ dump/DB reader, vẫn giữ equality/duplicate guard; free-text search và migration/rotation cần quyết định, kiểm thử riêng | ĐỀ XUẤT — chờ ANBM/Privacy/DBA phê duyệt |
