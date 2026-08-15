@@ -96,7 +96,7 @@ Tài liệu này mô tả **kiến trúc mục tiêu L2**. Dossier được thi�
 | Luồng đăng ký công khai | Create DRAFT → prepare upload → PATCH snapshot → submit | `BẮT BUỘC` |
 | Checklist | Snapshot từ nguồn chuẩn, progress, missing/invalid, readiness submit | `BẮT BUỘC` |
 | Pipeline | State/action/role/ownership trong modular monolith | `BẮT BUỘC` |
-| Phân công reviewer | Manual, round-robin PKD và roster TTOL cho PTT/SXD | `BẮT BUỘC` |
+| Phân công reviewer | Manual, round-robin PKD và danh sách nhân sự TTOL cho PTT/SXD | `BẮT BUỘC` |
 | Quyền dự án | Grant/revoke/list/group theo team/project/scope | `BẮT BUỘC` |
 | OCR CCCD | Tích hợp capability dùng chung `vhm-ocr-ekyc` theo mô hình bất đồng bộ | `BẮT BUỘC` |
 | Tài liệu/media | Chuẩn bị upload, xác minh reference/quyền attach, download và lưu artefact xuất | `BẮT BUỘC` |
@@ -193,13 +193,13 @@ flowchart LR
     AgentAPI -->|Basic + HMAC + signed actor context| Core[vhm-dossier-core]
     MarketAPI -->|Basic + HMAC + signed actor context| Core
     Core --> PG[(PostgreSQL)]
-    Core --> Redis[(Redis / Redisson)]
+    Core --> Redis[(Redis)]
     Core --> Kafka[(Kafka)]
     Core --> File[File Management]
     Core --> OCR[vhm-ocr-ekyc]
     OCR --> File
     Core --> Msg[Message Delivery]
-    Core --> TTOL[TTOL roster / holiday]
+    Core --> TTOL[TTOL]
 ```
 
 ### 2.2.2 Sơ đồ thành phần
@@ -391,7 +391,7 @@ Các mục tiêu `200 req/s`, P95 cụ thể và availability `99.9%` chưa có 
 | Java 25, Spring Boot 4.1 | Runtime/service framework | Stack nền tảng của dịch vụ; cần image/JVM production được chứng nhận. |
 | Spring Data JPA/Hibernate | Aggregate persistence, optimistic lock | Phù hợp transaction domain; cần tránh N+1 và giữ `open-in-view=false`. |
 | PostgreSQL, Liquibase | Source of truth, JSONB, constraint, advisory lock | Hỗ trợ transaction/partial index; migration phải forward-safe. |
-| Redis/Redisson | Replay/nonce, counter phân công, cache/lock hỗ trợ | Không được là source of truth của dossier. |
+| Redis | Replay/nonce, counter phân công, cache/lock hỗ trợ | Không được là source of truth của dossier. |
 | Kafka | Phát domain event từ outbox | At-least-once; consumer cần idempotent. |
 | Caffeine | Cache cục bộ cho dữ liệu tham chiếu | Giảm latency; cần invalidation/TTL rõ ràng. |
 | JSON Schema 2020-12 | Validate form Social Housing v1 | Cho phép evolution schema; enforcement hiện phụ thuộc config. |
@@ -412,7 +412,7 @@ ADR chi tiết nằm tại Phụ lục D. Các quyết định nền tảng: mod
 | INT-02 | Market API → Dossier Core | Inbound | HTTP sync | Market registration/list/detail/action, `source=MARKET` | Signature/actor fail closed |
 | INT-03 | Dossier Core → File Management | Outbound | Client sync | Tài liệu không OCR: prepare upload, existence/ownership, download và lưu artefact xuất | Fail hard cho validation bắt buộc |
 | INT-04 | Dossier Core → `vhm-ocr-ekyc` | Outbound | HTTP async resource | Media OCR, OCR CCCD và kết quả chuẩn | Idempotent create, polling hữu hạn, không retry mù |
-| INT-05 | TTOL | Outbound | HTTP/cache | Roster reviewer/holiday | Auto-assign best effort; manual fallback |
+| INT-05 | TTOL | Outbound | HTTP sync | Lấy danh sách nhân sự PTT/SXD theo dự án và vai trò để auto-assign reviewer | Best effort; manual assignment fallback |
 | INT-06 | Message Delivery | Outbound | Outbox relay | Email notification | Retry/backoff → FAILED |
 | INT-07 | Kafka | Outbound | Async | Domain event đã commit | Outbox retry; publish có feature flag |
 
@@ -1001,7 +1001,7 @@ Cost drivers gồm PostgreSQL HA/backup, Redis, Kafka retention, object storage/
 | Kafka không sẵn sàng | Outbox backlog tăng, hồ sơ vẫn commit | Relay phát lại; alert oldest age. |
 | Message Delivery lỗi | Notification retry/FAILED | Manual replay/runbook; không rollback transition. |
 | Redis lỗi | Security replay fail closed; assignment/cache suy giảm | HA/failover; manual assignment. |
-| TTOL lỗi | Auto-assign hoặc lịch nghiệp vụ suy giảm theo use case | Cache/manual path và alert theo contract được duyệt. |
+| TTOL lỗi | Không lấy được danh sách nhân sự để auto-assign PTT/SXD | Giữ hồ sơ ở trạng thái chưa phân công; lead phân công thủ công và có cảnh báo. |
 | `vhm-ocr-ekyc` lỗi | Không tạo/poll OCR hoặc không xử lý được media OCR | Retry/manual entry theo UX; OCR lỗi không tự reject dossier. |
 | File Management lỗi | Không prepare/verify/download tài liệu không OCR; nhánh OCR cũng có thể suy giảm | Retry hữu hạn; không attach path chưa xác minh; không bypass qua đường tích hợp khác. |
 
