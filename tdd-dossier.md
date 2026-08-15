@@ -40,7 +40,7 @@
 
 | **Tài liệu L3** | **Trạng thái** | **Chủ sở hữu** | **Cổng bắt buộc** | **Tham chiếu** |
 | --- | --- | --- | --- | --- |
-| OpenAPI Agent API/Market API ↔ Dossier Core | DRAFT | Backend/Tích hợp | Trước duyệt API | Hai BFF sử dụng cùng internal contract; liên kết chính thức: TBD |
+| OpenAPI Agent API/Market API ↔ Dossier Core | DRAFT | Backend/Tích hợp/ANBM | Trước duyệt API | Cùng business API nhưng signed claims khác theo channel; liên kết chính thức: TBD |
 | Form Data Contract Social Housing v1 | DRAFT | Backend/BA | Trước UAT | Liên kết tài liệu chính thức: TBD |
 | Pipeline Definition Schema, Social Housing v1 và activation/migration policy | DRAFT | Backend/BA/Kiến trúc/Vận hành | Trước UAT | Liên kết tài liệu chính thức: TBD |
 | Contract Checklist chuẩn | **CHƯA CÓ** | BA/Tích hợp/Backend | Trước production | Chưa chốt nguồn authority và version |
@@ -64,14 +64,14 @@ Tài liệu này mô tả **kiến trúc mục tiêu L2**. Dossier được thi�
 
 ### Business Context & Objectives
 
-`vhm-dossier-core` số hóa việc tiếp nhận, cập nhật, kiểm tra và phê duyệt hồ sơ đăng ký Nhà ở Xã hội. Kênh Agent hoặc Market tạo bản nháp, tải tài liệu, hoàn thiện snapshot hồ sơ rồi chủ động nộp. Hồ sơ được xử lý qua các nhóm PKD, PTT và đầu mối SXD; mọi hành động hợp lệ được quyết định bởi pipeline nội bộ và actor context đã ký.
+`vhm-dossier-core` số hóa việc tiếp nhận, cập nhật, kiểm tra và phê duyệt hồ sơ đăng ký Nhà ở Xã hội. Kênh Agent hoặc Market tạo bản nháp, tải tài liệu, hoàn thiện snapshot hồ sơ rồi chủ động nộp. Hồ sơ được xử lý qua các nhóm PKD, PTT và đầu mối SXD. Kênh Market kiểm soát theo authenticated data subject tại Market API; kênh Agent/Back Office kiểm soát theo role do BUS định nghĩa, scope và pipeline policy.
 
 #### Current Business Problem
 
 - Hồ sơ giấy/Excel/email khó kiểm soát tính đầy đủ, phiên bản và lịch sử xử lý.
 - Nhập tay CCCD và thông tin khách hàng dễ sai; tài liệu thiếu hoặc không tồn tại chỉ được phát hiện muộn.
 - Nhiều người có thể tạo hồ sơ cho cùng khách hàng và dự án, dẫn đến trùng nghiệp vụ và tranh chấp căn.
-- Quyền xem/xử lý theo người dùng, đội nhóm, dự án và cấp duyệt phải được thực thi nhất quán giữa Agent API, Market API và Core.
+- Market API phải xác thực customer và ràng buộc đúng chủ thể dữ liệu; Agent API phải truyền role BUS và scope đã xác thực. Core áp dụng signed context tương ứng cùng state/invariant nghiệp vụ.
 - Luồng trả bổ sung cần SLA, nhắc hẹn, lịch sử và khả năng tiếp tục đúng cấp duyệt.
 - Các tích hợp File, OCR, TTOL và Message Delivery có độ sẵn sàng khác nhau; không được làm mất trạng thái đã commit.
 
@@ -95,7 +95,7 @@ Tài liệu này mô tả **kiến trúc mục tiêu L2**. Dossier được thi�
 | Nguồn tạo hồ sơ | Kênh Agent/Back Office qua Agent API; kênh Market qua Market API | `BẮT BUỘC` |
 | Luồng đăng ký công khai | Create DRAFT → prepare upload → PATCH snapshot → submit | `BẮT BUỘC` |
 | Checklist | Snapshot từ nguồn chuẩn, progress, missing/invalid, readiness submit | `BẮT BUỘC` |
-| Pipeline | State/action/role/ownership trong modular monolith | `BẮT BUỘC` |
+| Pipeline | State/action; Market dùng data-subject ownership, Agent/Back Office dùng BUS role/scope/ownership | `BẮT BUỘC` |
 | Phân công reviewer | Manual, round-robin PKD và danh sách nhân sự TTOL cho PTT/SXD | `BẮT BUỘC` |
 | Quyền dự án | Grant/revoke/list/group theo team/project/scope | `BẮT BUỘC` |
 | OCR CCCD | Tích hợp capability dùng chung `vhm-ocr-ekyc` theo mô hình bất đồng bộ | `BẮT BUỘC` |
@@ -128,18 +128,22 @@ Tài liệu này mô tả **kiến trúc mục tiêu L2**. Dossier được thi�
 | A-08 | OCR tài liệu đi qua `vhm-ocr-ekyc`; dossier không gọi provider trực tiếp | Quyết định kiến trúc mục tiêu | Cần OpenAPI L3, workload IAM và migration khỏi client OCR legacy. |
 | A-09 | Tài liệu không OCR đi trực tiếp File Management; media OCR đi qua `vhm-ocr-ekyc` | Quyết định kiến trúc mục tiêu | Phân tuyến theo mục đích sử dụng, không theo extension hoặc lựa chọn từ client. |
 | A-10 | External services có contract/SLA riêng | `BÊN NGOÀI` | Cần timeout, retry hữu hạn, monitoring và contract test. |
+| A-11 | Market Customer không dùng business role | Quyết định phân quyền | Market API xác thực và kiểm tra data-subject ownership; Core không yêu cầu role Agent cho request Market. |
+| A-12 | Agent/Back Office dùng role catalogue do BUS định nghĩa | Quyết định phân quyền | Role/scope phải đến từ nguồn tin cậy, được Agent API ký và được pipeline map tới action. |
 
 ### Stakeholders & Personas
 
 | **Nhóm** | **Trách nhiệm/quyền** |
 | --- | --- |
-| Agent / `APPLICANT_AGENT` | Tạo và cập nhật DRAFT, upload, submit/resubmit, xem hồ sơ trong phạm vi. |
+| Market Customer | Không có business role; Market API xác thực và chỉ cho thao tác trên hồ sơ của đúng data subject theo trạng thái nghiệp vụ. |
+| Agent / `APPLICANT_AGENT` | Role thuộc catalogue BUS; tạo/cập nhật/upload/submit/resubmit và xem hồ sơ trong project/scope được cấp. |
 | PKD / `PKD`, `PKD_LEAD` | Phân công/nhận hồ sơ, cấp căn, duyệt, trả bổ sung, từ chối, hồ sơ giấy. |
 | PTT / `PTT`, `PTT_LEAD` | Kiểm tra thủ tục, duyệt/trả bổ sung/từ chối, chuyển SXD. |
 | Đầu mối SXD | Được mô hình hóa bằng stage `SXD` nhưng xử lý qua roster/role PTT hiện hành. |
 | BO/Admin | Quản lý quyền dự án, tra cứu/báo cáo và vận hành. |
-| Agent API | BFF của kênh Agent/Back Office; xác thực kênh, map DTO, gán `source=AGENT`, ký request và actor context khi gọi Core. |
-| Market API | BFF của kênh Market; xác thực kênh, map DTO, gán `source=MARKET`, ký request và actor context khi gọi Core. |
+| BUS | Chủ sở hữu catalogue role Agent/Back Office và mapping semantics nghiệp vụ; cơ chế phân phối/runtime source cần được đóng băng ở contract L3. |
+| Agent API | BFF Agent/Back Office; xác thực actor, lấy/kiểm tra role BUS và scope, map DTO, gán `source=AGENT`, ký request/actor context. |
+| Market API | BFF Market; xác thực customer, kiểm tra data-subject/object ownership, map DTO, gán `source=MARKET`, ký request/data-subject context; không phát sinh role Agent giả. |
 | File/`vhm-ocr-ekyc`/Message Delivery/TTOL | Cung cấp năng lực tích hợp không thuộc sở hữu core. |
 
 ### Personal Data Processing Summary
@@ -230,14 +234,14 @@ flowchart LR
 
 ### 2.2.3 Sơ đồ kiến trúc pipeline nội bộ
 
-Pipeline Social Housing là cấu hình có phiên bản được nạp cùng ứng dụng. Khi tạo hồ sơ, core ghi phiên bản pipeline và trạng thái khởi tạo; mỗi command được kiểm tra role, ownership và guard nghiệp vụ rồi cập nhật projection, history, reviewer và outbox trong một transaction. Không có process instance Camunda và không có ranh giới eventual consistency với workflow engine ngoài.
+Pipeline Social Housing là cấu hình có phiên bản được nạp cùng ứng dụng. Khi tạo hồ sơ, core ghi phiên bản pipeline và trạng thái khởi tạo. Command Market được kiểm tra channel/data-subject ownership và state; command Agent/Back Office được kiểm tra BUS role, scope, pipeline ownership và guard nghiệp vụ. Projection, history, reviewer và outbox được cập nhật trong một transaction. Không có process instance Camunda và không có ranh giới eventual consistency với workflow engine ngoài.
 
 ### 2.2.4 Phân định trách nhiệm module
 
 | **Khối kiến trúc** | **Trách nhiệm** | **Dữ liệu quản lý** | **Không chịu trách nhiệm** |
 | --- | --- | --- | --- |
-| Agent API | BFF cho Agent/Back Office, public contract, xác thực kênh, object authorization và truyền actor context | Không sở hữu hồ sơ | Business invariant và persistence cuối. |
-| Market API | BFF cho Market, public contract, xác thực kênh, object authorization và truyền actor context | Không sở hữu hồ sơ | Business invariant và persistence cuối. |
+| Agent API | BFF Agent/Back Office; xác thực actor, BUS role/project scope, public authorization và ký actor context | Không sở hữu dossier aggregate hoặc tự định nghĩa role | State/invariant, pipeline mapping và persistence cuối. |
+| Market API | BFF Market; xác thực customer, data-subject/object authorization và ký subject context | Không sở hữu dossier aggregate hoặc role catalogue | State/invariant, signed subject binding và persistence cuối. |
 | Dossier domain | Vòng đời hồ sơ, validation, duplicate, checklist, pipeline, phân công và điều phối OCR | Aggregate dossier và projection liên quan | Identity kênh, file binary, OCR raw. |
 | Outbox/Scheduler | Phát sự kiện, gửi notification và nhắc SLA sau commit | Trạng thái delivery/dedup | Thay đổi quyết định nghiệp vụ đã commit. |
 | `vhm-ocr-ekyc` | Quản lý media phục vụ OCR, tài nguyên OCR bất đồng bộ và chuẩn hóa kết quả | OCR lifecycle, media OCR và kết quả chuẩn | Sở hữu dossier, xử lý tài liệu không OCR hoặc tự áp kết quả vào form. |
@@ -248,9 +252,11 @@ Pipeline Social Housing là cấu hình có phiên bản được nạp cùng �
 
 | **Ranh giới** | **Mức tin cậy** | **Kiểm soát** | **Khoảng trống** |
 | --- | --- | --- | --- |
-| Client → Agent API/Market API | Không tin cậy | Auth kênh, role, validation, rate limit tầng gateway | Thuộc phạm vi từng kênh/platform. |
+| Customer → Market API | Không tin cậy | Authentication, data-subject/object ownership, validation và rate limit; không dùng business role | Market public boundary. |
+| Agent/BO → Agent API | Không tin cậy | Authentication, BUS role, project/team scope, validation và rate limit | Agent public boundary. |
 | Agent API/Market API → Core | Zero Trust nội bộ | Client identity riêng, Basic Auth, HMAC, timestamp/nonce/body hash, actor signature | Cần allowlist và secret rotation độc lập cho từng BFF. |
-| Actor context → business | Chỉ tin sau verify | `subject`, role, visibility, expiry, JTI | JTI replay đang có thể tắt theo môi trường. |
+| Market subject context → business | Chỉ tin sau verify | `channel=MARKET`, actor subject, data-subject binding, expiry, JTI; không chứa Agent roles | Core kiểm tra client/channel và subject–dossier binding. |
+| Agent actor context → business | Chỉ tin sau verify | `channel=AGENT`, actor subject, BUS roles, project/team scope, visibility, expiry, JTI | Role/scope không nhận từ request body. |
 | Core → `vhm-ocr-ekyc` | Zero Trust nội bộ | Workload identity, audience/scope, object context, idempotency | OpenAPI/IAM L3 và E2E chưa hoàn tất. |
 | Core → File Management | Dependency ngoài process | Workload identity, object scope, checksum và owner/upload grant | Chỉ dành cho tài liệu không OCR. |
 | Core → TTOL/Message | Dependency ngoài process | Credential server-side, timeout/retry/config | Contract/SLA cần chốt. |
@@ -345,6 +351,7 @@ Create/update/transition/delete ghi business row và `outbox_event` trong cùng 
 | FR-14 | Xóa bản nháp | Chỉ DRAFT; xóa checklist và dữ liệu phụ thuộc | `BẮT BUỘC` |
 | FR-15 | PIC hồ sơ | Use case, permission và audit semantics | `TBD` |
 | FR-16 | Thêm/bớt cấp duyệt | Công bố pipeline version mới; không đổi schema DB/public API và không làm đổi luồng hồ sơ đang chạy | `BẮT BUỘC` |
+| FR-17 | Phân quyền theo kênh | Market dùng authenticated data-subject ownership tại Market API; Agent/Back Office dùng BUS role/scope | `BẮT BUỘC` |
 
 ## 3.2 Quy tắc nghiệp vụ
 
@@ -360,13 +367,14 @@ Create/update/transition/delete ghi business row và `outbox_event` trong cùng 
 | BR-08 | Update không được ghi đè `source`, `assignedUnitCode` hoặc `assignedUnitId` do server quản lý. |
 | BR-09 | Media identity applicant/spouse được xác minh qua `vhm-ocr-ekyc`; `documents[].s3PathFile` không OCR được xác minh qua File Management khi file-validation bật. |
 | BR-10 | Không kiểm tra file path prefix theo dossier ID. |
-| BR-11 | Mọi command phải hợp lệ theo state, role và ownership (`OWNER`, `CLAIMER`, `NONE`). |
+| BR-11 | Mọi command phải hợp lệ theo state và channel policy: Market cần signed data-subject ownership; Agent/Back Office cần BUS role, scope và ownership tương ứng. |
 | BR-12 | Lần submit đầu sinh mã `<sapId>-<agencyId>-<ddMMyy>-<sequence4>`; PKD approve chuẩn hóa thành `<sapId>-<sequence5>`. |
 | BR-13 | Reject/revoke unit phải giải phóng căn đang cấp. |
 | BR-14 | DRAFT delete xóa checklist tường minh; FK checklist cũng có `ON DELETE CASCADE`. |
 | BR-15 | Comment hiện là optional theo pipeline/config; không mô tả là bắt buộc nếu chưa bật guard. |
 | BR-16 | Mỗi dossier được gắn bất biến với đúng `(pipelineCode, pipelineVersion)` trong suốt vòng đời, trừ migration có kiểm soát được phê duyệt. |
 | BR-17 | Không sửa hoặc xóa definition đã có hồ sơ tham chiếu; ngừng dùng một cấp duyệt chỉ áp dụng cho pipeline version mới. |
+| BR-18 | Hồ sơ `source=MARKET` phải bind `ownerSubject` opaque từ signed Market context tại create; field này server-owned, không nhận từ body và mọi Market access phải khớp binding. |
 
 # 4. Non-Functional Requirements
 
@@ -410,8 +418,8 @@ ADR chi tiết nằm tại Phụ lục D. Các quyết định nền tảng: mod
 
 | **ID** | **Tích hợp** | **Hướng** | **Kiểu** | **Mục đích** | **Failure policy** |
 | --- | --- | --- | --- | --- | --- |
-| INT-01 | Agent API → Dossier Core | Inbound | HTTP sync | Agent/Back Office registration/list/detail/action, `source=AGENT` | Signature/actor fail closed |
-| INT-02 | Market API → Dossier Core | Inbound | HTTP sync | Market registration/list/detail/action, `source=MARKET` | Signature/actor fail closed |
+| INT-01 | Agent API → Dossier Core | Inbound | HTTP sync | Agent/Back Office registration/list/detail/action với signed BUS role/scope, `source=AGENT` | Signature/role/scope fail closed |
+| INT-02 | Market API → Dossier Core | Inbound | HTTP sync | Market registration/list/detail/action với signed data-subject context, `source=MARKET`; không business role | Signature/subject binding fail closed |
 | INT-03 | Dossier Core → File Management | Outbound | Client sync | Tài liệu không OCR: prepare upload, existence/ownership, download và lưu artefact xuất | Fail hard cho validation bắt buộc |
 | INT-04 | Dossier Core → `vhm-ocr-ekyc` | Outbound | HTTP async resource | Tạo/poll/confirm OCR và proxy dữ liệu chuẩn; không persist bản sao | Idempotent create, polling hữu hạn, không retry mù |
 | INT-05 | TTOL | Outbound | HTTP sync | Lấy danh sách nhân sự PTT/SXD theo dự án và vai trò để auto-assign reviewer | Best effort; manual assignment fallback |
@@ -422,7 +430,7 @@ ADR chi tiết nằm tại Phụ lục D. Các quyết định nền tảng: mod
 
 ### 6.2.1 Registration flow qua Agent API/Market API
 
-Kênh Agent/Back Office đi qua Agent API; kênh Market đi qua Market API. Hai BFF ngang hàng sử dụng cùng internal contract của Dossier Core và cùng chuỗi xử lý. Mỗi BFF gán `source` tương ứng từ channel context đã xác thực rồi gọi Core bằng workload identity riêng và signed actor context; client không được tự chọn `source` trong request body.
+Kênh Agent/Back Office đi qua Agent API; kênh Market đi qua Market API. Hai BFF ngang hàng sử dụng cùng internal business API nhưng mang security context khác nhau. Agent API gửi signed actor context chứa BUS role/scope; Market API gửi signed data-subject context và không gửi Agent roles. Mỗi BFF gán `source` tương ứng từ channel context đã xác thực rồi gọi Core bằng workload identity riêng; client không được tự chọn `source`, role, scope, owner hoặc data subject trong request body.
 
 | **Bước** | **API Agent/Market** | **Kết quả bắt buộc** |
 | --- | --- | --- |
@@ -512,13 +520,25 @@ Khi `COMPLETED`, kênh cho người dùng kiểm tra và xác nhận kết quả
 
 Các action chính gồm `UPDATE`, `SUBMIT`, `RESUBMIT`, `ASSIGN`, `REASSIGN`, `CLAIM`, `ALLOCATE_UNIT`, `APPROVE`, `REJECT`, `REQUEST_REVISION`, `RETURN_TO_SALES`, `SUBMIT_HARDCOPY`, `CONFIRM_HARDCOPY`, `REVOKE_UNIT`. Tập action khả dụng phải lấy từ response `availableActions`, không hard-code theo status ở kênh.
 
-### 6.5.2 Role và ownership
+### 6.5.2 Channel policy, role và ownership
 
-Pipeline kiểm tra cả role (`APPLICANT_AGENT`, `PKD`, `PKD_LEAD`, `PTT`, `PTT_LEAD`) và ownership:
+Pipeline không áp dụng một ma trận role chung cho cả hai kênh:
 
-- `OWNER`: actor tạo hồ sơ.
-- `CLAIMER`: reviewer đang claim stage.
-- `NONE`: không yêu cầu ownership nhưng vẫn yêu cầu role.
+| **Principal** | **Điều kiện authorization** | **Không được làm** |
+| --- | --- | --- |
+| Market Customer | Market API đã xác thực customer và object ownership; Core verify signed `channel=MARKET`, data subject khớp dossier và action hợp lệ theo state | Không yêu cầu hoặc tự gán `APPLICANT_AGENT`; không dùng `ALL/TEAM/ASSIGNED`; không thực hiện reviewer/lead action. |
+| Agent/Back Office | Agent API xác thực actor; Core kiểm tra signed BUS role, project/team scope, pipeline action và ownership | Không nhận role/scope từ body; role không tự mở quyền ngoài project/scope hoặc ownership. |
+
+Catalogue minh họa hiện gồm `APPLICANT_AGENT`, `PKD`, `PKD_LEAD`, `PTT`, `PTT_LEAD`; BUS là authority chốt danh sách và semantics chính thức. Pipeline Definition map role BUS tới stage/action, không để Agent API tự diễn giải state machine.
+
+Ownership policy gồm:
+
+- `DATA_SUBJECT`: chỉ dùng cho Market; data subject trong signed context khớp owner subject đã bind server-side với dossier.
+- `OWNER`: actor Agent tạo/được giao quản lý hồ sơ trong scope hợp lệ.
+- `CLAIMER`: reviewer Agent/Back Office đang claim stage.
+- `NONE`: không yêu cầu object ownership nhưng với Agent vẫn cần BUS role/scope; không dùng để mở quyền Market.
+
+`availableActions` được Core tính theo state/invariant và policy tương ứng của channel. Market API có thể tiếp tục lọc UX nhưng không được mở rộng action ngoài response Core.
 
 ### 6.5.3 Pipeline selection
 
@@ -531,7 +551,7 @@ Một cấp duyệt không chỉ là một state `APPROVE`. Pipeline Definition 
 | **Nhóm cấu hình** | **Nội dung bắt buộc** |
 | --- | --- |
 | Định danh và hiển thị | Stage code bất biến trong một version, thứ tự, nhãn hiển thị và business status ánh xạ. |
-| Quyền xử lý | Reviewer role, lead role, ownership rule và tập action được phép. |
+| Quyền xử lý | Market subject action/ownership policy; Agent reviewer/lead BUS role, scope, ownership rule và tập action được phép. |
 | Phân công | `MANUAL`, `ROUND_ROBIN` hoặc `EXTERNAL_ROSTER`; nguồn candidate và chính sách giữ reviewer khi quay lại stage. |
 | Quyết định | Đích của `APPROVE`, `REJECT`, `REQUEST_REVISION`, `RETURN` và các guard nghiệp vụ áp dụng. |
 | Bổ sung hồ sơ | Stage nhận yêu cầu bổ sung, actor được cập nhật, stage tiếp nhận lại và điểm tiếp tục sau resubmit. |
@@ -592,7 +612,7 @@ Khi file không OCR không đổi, synchronization giữ review state; khi path 
 
 | **Bảng/aggregate** | **Mục đích** | **Invariant chính** |
 | --- | --- | --- |
-| `dossier` | Aggregate hồ sơ, JSONB business form/metadata, opaque `subjectRef`, source, PIC, pipeline projection, version | Không chứa media/kết quả/PII OCR; source AGENT/MARKET; active subject/project và unit uniqueness. |
+| `dossier` | Aggregate hồ sơ, JSONB business form/metadata, opaque `subjectRef`, Market `ownerSubject`, source, PIC, pipeline projection, version | Không chứa media/kết quả/PII OCR; `ownerSubject` server-owned cho MARKET; active subject/project và unit uniqueness. |
 | `dossier_status_history` | Lịch sử trạng thái/action | Tạo trong cùng transaction với transition. |
 | `dossier_checklist` | Projection readiness/progress tài liệu nghiệp vụ | PK logic template+group; FK cascade; không chứa OCR status/result/evidence. |
 | `dossier_stage_reviewer` | Người xử lý theo stage | Chỉ lưu reviewer ID/role và decision metadata cần thiết; tên/email resolve từ nguồn authoritative. |
@@ -622,6 +642,7 @@ erDiagram
 - Partial unique index trên `subject_ref + project_id` cho dossier chưa terminal; `subject_ref` do `vhm-ocr-ekyc` cấp và không chứa/khôi phục được PII.
 - Partial unique index trên unit được cấp cho dossier active.
 - Check constraint cho `source`; MARKET yêu cầu idempotency key.
+- Dossier `source=MARKET` yêu cầu `owner_subject` không rỗng; giá trị chỉ được bind từ signed Market context và không cho update.
 - Checklist có constraint enum và `invalid_reason` phù hợp trạng thái.
 - Optimistic `version` được JPA quản lý; response create được dựng sau flush.
 - `pipeline_code + pipeline_version` xác định duy nhất definition của dossier; `current_stage_code/group` phải tồn tại trong đúng version đó.
@@ -643,6 +664,7 @@ sequenceDiagram
 
     U->>A: POST registrations {} / partial
     A->>C: Create dossier + signed actor
+    C->>C: MARKET bind ownerSubject / AGENT validate BUS context
     C->>D: Insert DRAFT + pipeline + history + outbox
     D-->>C: Commit/version
     C-->>A: dossierId, DRAFT, version
@@ -679,7 +701,7 @@ sequenceDiagram
 ```mermaid
 sequenceDiagram
     actor R as Reviewer
-    participant A as Agent API / Market API
+    participant A as Agent API
     participant C as Dossier Core Pipeline
     participant D as PostgreSQL
     participant N as Notification Relay
@@ -687,7 +709,7 @@ sequenceDiagram
     R->>A: command(action, version, payload)
     A->>C: Signed actor context
     C->>D: Lock/load dossier + current reviewer
-    C->>C: Validate state, role, ownership, business guards
+    C->>C: Validate state, BUS role, scope, ownership, business guards
     C->>D: Update state/reviewer/history/unit/outbox/noti intent
     D-->>C: Commit
     C-->>R: New state/version/actions
@@ -830,24 +852,32 @@ Khi reviewer request revision, hồ sơ đi về stage intake tương ứng ho�
 
 ## 9.1 Identity & Authentication
 
-Kênh Agent/Back Office xác thực tại Agent API; kênh Market xác thực tại Market API. Hai BFF xác định channel/source, thực thi public authorization rồi gọi Dossier Core bằng cùng internal contract nhưng workload identity độc lập. Request vào Core có Basic Auth/HMAC và business actor context được ký, chứa `subject`, display name, pipeline roles, visibility, thời hạn và JTI.
+Kênh Agent/Back Office xác thực tại Agent API; kênh Market Customer xác thực tại Market API. Hai BFF xác định channel/source, thực thi public authorization rồi gọi Dossier Core bằng workload identity độc lập. Request vào Core có Basic Auth/HMAC và security context được ký, nhưng claim theo channel khác nhau:
+
+| **Context** | **Claim bắt buộc** | **Claim không hợp lệ** |
+| --- | --- | --- |
+| Market | `channel=MARKET`, actor subject, data-subject ID/owner binding, issued/expiry, JTI | Agent/PKD/PTT role, `ALL/TEAM/ASSIGNED` visibility hoặc owner do request body cung cấp. |
+| Agent/Back Office | `channel=AGENT`, actor subject, BUS roles, project/team scope, visibility, issued/expiry, JTI | Role/scope/visibility tự khai trong request body. |
+
+Khi Market tạo hồ sơ, Core bind owner subject từ signed Market context vào dossier; không lấy từ form. Market API phải kiểm tra data subject trước mỗi list/detail/mutation, còn Core xác minh lại client/channel, chữ ký và subject–dossier binding. Khi Agent/Back Office xử lý hồ sơ, Core dùng BUS roles và scope đã ký; `source` của dossier không tự cấp hoặc tước quyền reviewer.
 
 Ở STAG/PROD, chữ ký nội bộ và actor context là bắt buộc. Timestamp giới hạn replay window; nonce được kiểm tra qua Redis. Basic username phải khớp client ID đã đăng ký riêng cho Agent API hoặc Market API. `source=AGENT|MARKET` do BFF tương ứng gán từ channel context đã xác thực, không lấy trực tiếp từ body của client. Local bypass chỉ hợp lệ khi active profile chính xác là `local`; bypass không được xuất hiện ở STAG/PROD.
 
 ## 9.2 Authorization & Access Control
 
-Authorization áp dụng defense in depth:
+Authorization áp dụng defense in depth nhưng ma trận khác nhau theo channel:
 
-| **Lớp** | **Kiểm soát** |
-| --- | --- |
-| Kênh/Agent API/Market API | Xác thực actor, nhận diện channel, gán `source`, kiểm tra public scope và object-level authorization. |
-| Visibility core | `ALL`, `TEAM`, `SELF_CREATED`, `ASSIGNED`; các mode chưa hỗ trợ phải deny by default. |
-| Project permission | Team/project/scope active quyết định phạm vi người dùng và nguồn auto-assignment. |
-| Pipeline role | Mỗi action chỉ dành cho role đã cấu hình. |
-| Ownership | `OWNER` hoặc `CLAIMER` khi action yêu cầu. |
-| Dữ liệu | Core chỉ proxy field OCR/PII đúng persona; download/export dùng cùng phạm vi với detail và không tạo bản sao local. |
+| **Kiểm soát** | **Market Customer** | **Agent/Back Office** |
+| --- | --- | --- |
+| Public boundary | Market API verify authentication và customer là đúng data subject/object owner. | Agent API verify authentication, BUS roles và project/team scope. |
+| Context vào Core | Signed subject context, không có business role. | Signed actor context có BUS roles, scope và visibility. |
+| List/detail | Luôn ép filter owner subject; client filter không được mở rộng phạm vi. | `ALL`, `TEAM`, `SELF_CREATED`, `ASSIGNED` theo role/scope được ký. |
+| Mutation hồ sơ | Chỉ dossier của data subject và action dành cho Market ở state hiện tại. | Role + project/team scope + pipeline action + `OWNER/CLAIMER/NONE`. |
+| Review/lead/admin | Không được phép. | Chỉ role BUS tương ứng và scope hợp lệ. |
+| Dữ liệu OCR/PII | Market API/Core proxy đúng subject và purpose; không persist/cache. | Chỉ persona nghiệp vụ được BUS/pipeline cho phép; không persist/cache tại Core. |
+| Core defense | Verify workload, HMAC, channel, signed subject và subject–dossier binding; thực thi state/invariant. | Verify workload, HMAC, BUS role/scope/visibility, ownership và state/invariant. |
 
-`REGION` và `DEPARTMENT` hiện không có semantics đầy đủ trong core nên bị từ chối, không được mở rộng bằng fallback `ALL`. Lịch sử assignment có thể được dùng cho read visibility nếu feature tương ứng được bật và phê duyệt.
+Các visibility `REGION` và `DEPARTMENT` hiện chưa có semantics đầy đủ cho Agent nên bị từ chối, không fallback `ALL`. Chúng không áp dụng cho Market. Lịch sử assignment chỉ mở read visibility Agent khi feature tương ứng được bật và phê duyệt. `source=MARKET|AGENT` là nguồn tạo hồ sơ, không thay thế data-subject ownership hoặc BUS authorization.
 
 ## 9.3 Secrets & Credential Management
 
@@ -861,7 +891,7 @@ Authorization áp dụng defense in depth:
 
 ### Kiểm soát request và file
 
-- Body bị từ chối nếu chứa các trường giả mạo actor như `actorId`, `actorDisplayName`, `roles` ở bất kỳ cấp lồng nhau.
+- Body bị từ chối nếu chứa các trường giả mạo security context như `actorId`, `actorDisplayName`, `roles`, `scope`, `visibility`, `dataSubjectId` hoặc `ownerSubject` ở bất kỳ cấp lồng nhau.
 - Dossier persistence API từ chối CCCD, họ tên, ngày sinh, phone/email, media OCR, OCR result/confidence/provider metadata và `subjectRef` do client tự khai; dữ liệu applicant đi qua OCR contract chuyên biệt.
 - Structural guard giới hạn shape/kích thước; JSON Schema bảo vệ semantic khi feature được bật; XSS sanitizer chạy trước persistence/render.
 - File type/size/magic/checksum phải được kiểm soát tại File Contract cho tài liệu không OCR và OCR Contract cho media OCR; Core chỉ lưu path opaque của tài liệu không OCR.
@@ -886,7 +916,7 @@ Log tối thiểu gồm correlation ID, client ID, actor subject dạng opaque, 
 
 | **ID** | **Mối đe dọa** | **Kiểm soát** | **Tồn dư** |
 | --- | --- | --- | --- |
-| TH-01 | IDOR đọc/sửa dossier ngoài phạm vi | Signed actor, visibility, project ACL, ownership | Cần E2E negative matrix. |
+| TH-01 | IDOR đọc/sửa dossier ngoài phạm vi | Market: signed data subject + owner binding; Agent: BUS role/scope/visibility/ownership | Cần E2E negative matrix riêng theo channel. |
 | TH-02 | Giả mạo request nội bộ/replay | HMAC body hash, timestamp, nonce, Redis | Rotation/HA Redis cần runbook. |
 | TH-03 | Race tạo hồ sơ/cấp căn trùng | Advisory lock, optimistic lock, partial unique index | Cần load/concurrency test. |
 | TH-04 | Attach file của actor khác | Access-before-upload + existence check | Chưa có owner/upload-grant; rủi ro cao. |
@@ -895,6 +925,8 @@ Log tối thiểu gồm correlation ID, client ID, actor subject dạng opaque, 
 | TH-07 | OCR result tự động gây quyết định sai | Người dùng xác nhận tại OCR capability; Dossier không copy/apply result vào snapshot và không auto reject | Manual review UX/contract cần UAT. |
 | TH-08 | Client giả mạo `source=MARKET` | Agent API/Market API gán source theo client identity; Core không tin source do client tự khai | Cần negative contract test chéo hai BFF. |
 | TH-09 | OCR/PII bị nhân bản vào Dossier DB/outbox/log/report | Persistence denylist, opaque reference, no-cache/no-body-log và data scan quality gate | Cần migration xóa dữ liệu legacy và E2E chứng minh không còn bản sao. |
+| TH-10 | Market Customer truy cập dossier của data subject khác | Market API object authorization, signed subject context, Core subject–dossier binding và forced owner filter | Cần test list/detail/mutation/export chéo customer. |
+| TH-11 | Agent tự khai/nâng role hoặc vượt project scope | BUS authority, Agent API ký role/scope, Core allowlist/mapping deny-by-default | Cần contract/version và negative test role/scope. |
 
 # 10. Deployment & Infrastructure Topology
 
@@ -1054,7 +1086,7 @@ Cost drivers gồm PostgreSQL HA/backup, Redis, Kafka retention, object storage/
 | Outbox | Pending count, oldest age, publish/send rate, retry, FAILED. |
 | Assignment | Auto/manual rate, roster/Redis failure, unassigned stage age. |
 | External | File Management, `vhm-ocr-ekyc`, TTOL và Message availability, latency, timeout và error class. |
-| Security | Invalid signature, stale timestamp, nonce replay, actor expiry/role/visibility denial. |
+| Security | Invalid signature, stale timestamp, nonce replay, Market subject-binding denial hoặc Agent actor expiry/role/scope/visibility denial. |
 
 Label không được chứa dossier ID, actor ID, project ID có cardinality cao hoặc PII. Business drill-down dùng log/audit có kiểm soát thay vì metric label.
 
@@ -1088,7 +1120,7 @@ SLI bắt buộc: availability của read/mutation, successful submit/transition
 
 ## 14.2 Runbook bắt buộc
 
-- Invalid HMAC/actor signature, nonce store lỗi và luân chuyển/revoke secret.
+- Invalid HMAC/Agent actor/Market subject signature, subject-binding denial, nonce store lỗi và luân chuyển/revoke secret.
 - PostgreSQL failover/PITR, Liquibase lỗi, unique-index migration và data reconciliation.
 - Kafka down, outbox backlog, duplicate publish và poison event.
 - Message Delivery lỗi, notification `FAILED`, dedupe và manual replay.
@@ -1119,12 +1151,12 @@ Bộ kiểm thử phải bao phủ invariant domain, database concurrency, API/s
 
 | **Lớp kiểm thử** | **Phạm vi bắt buộc** | **Cổng** |
 | --- | --- | --- |
-| Unit/domain | State/action/role/ownership, checklist, code/unit, OCR/PII persistence denylist và error mapping | Bắt buộc |
+| Unit/domain | State/action, Market subject ownership, Agent BUS role/scope/ownership, checklist, code/unit, OCR/PII persistence denylist và error mapping | Bắt buộc |
 | Database integration | Migration/purge legacy, `subjectRef` partial index, advisory/row lock, optimistic lock, cascade | Bắt buộc |
 | Concurrency | Concurrent idempotent create, duplicate identity/project, allocate unit, reviewer claim | Bắt buộc |
 | Pipeline definition | Schema, graph integrity, reachability, role/stage reference, revision loop và published-version immutability | Bắt buộc |
-| API/contract | Agent API/Market API ↔ Core: DTO/header/status/error, source mapping và backward compatibility | Bắt buộc |
-| Security | Signature, nonce replay, actor expiry/role/visibility/IDOR, body actor injection, không còn PII rõ trong DB/log/event | Bắt buộc |
+| API/contract | Agent API/Market API ↔ Core: DTO/header/status/error, channel-specific signed claims, source mapping và backward compatibility | Bắt buộc |
+| Security | Market subject binding/IDOR; Agent role/scope/visibility; signature, nonce replay, actor expiry, body context injection và no-copy PII | Bắt buộc |
 | External contract | File Management, `vhm-ocr-ekyc`, TTOL và Message Delivery | Bắt buộc |
 | Outbox/reliability | Rollback, broker/send lỗi, publish lặp, retry/FAILED, backlog recovery | Bắt buộc |
 | E2E | Create DRAFT → upload → PATCH → submit → multi-stage decision/revision | Bắt buộc |
@@ -1136,6 +1168,10 @@ Bộ kiểm thử phải bao phủ invariant domain, database concurrency, API/s
 - Create `{}` trả DRAFT/version đúng DB; create không sinh checklist.
 - Concurrent create cùng actor/key trả cùng dossier; actor khác không replay được key.
 - `MARKET` thiếu key bị từ chối; Agent API/Market API phải gán đúng source theo channel context và từ chối client tự khai nguồn khác.
+- Market Customer không có role vẫn tạo/xem/sửa/submit đúng dossier của mình theo state; customer khác hoặc subject mismatch bị từ chối ở list/detail/mutation/export.
+- Market request mang `APPLICANT_AGENT`, `ALL/TEAM/ASSIGNED`, owner hoặc data subject tự khai phải bị từ chối; Core không yêu cầu role Agent hợp lệ cho Market owner action.
+- Agent action phải khớp BUS role, project/team scope và ownership; role hợp lệ nhưng sai scope, role hết hiệu lực hoặc role lạ đều bị deny-by-default.
+- Agent reviewer xử lý dossier `source=MARKET` chỉ khi policy BUS/project scope cho phép; `source` không tự cấp quyền.
 - Hai hồ sơ active cùng `subjectRef` authoritative+dự án bị chặn ở create, full update, submit và DB race guard.
 - Client tự khai/sửa `subjectRef` hoặc gửi CCCD, họ tên, ngày sinh, contact, OCR result/media metadata vào persistence API phải bị từ chối.
 - Database dump, outbox, audit, cache, log và report staging không chứa media/kết quả/PII applicant; chỉ có opaque reference và business metadata allowlist.
@@ -1180,6 +1216,7 @@ Bằng chứng quality gate phải được lưu theo release, tối thiểu g�
 | AR-012 | Availability | Full E2E phụ thuộc File Management, `vhm-ocr-ekyc` và nhiều enterprise dependency | Cao | Sandbox/SLA, timeout/degradation, synthetic probe và runbook. |
 | AR-013 | Linh động pipeline | State machine có cấu hình nhưng assignment, notification, reminder, report hoặc audit vẫn gắn cứng tên stage sẽ làm cấp duyệt mới chạy thiếu side effect | Cao | Mọi consumer dùng stage policy/metadata; quality gate bắt buộc chứng minh add/remove một cấp chỉ bằng definition mới. |
 | AR-014 | Trùng lặp dữ liệu | `form_data`, checklist, outbox/reviewer/note/audit/report legacy có thể nhân bản OCR/PII khỏi nguồn tập trung | Nghiêm trọng | Chỉ lưu opaque reference, persistence denylist, migrate/purge bản sao và data scan gate trước dữ liệu thật. |
+| AR-015 | Phân quyền theo kênh | Gộp Market Customer vào role `APPLICANT_AGENT` hoặc áp visibility Agent cho Market có thể gây cấp quyền sai/IDOR | Nghiêm trọng | Tách signed context/matrix; Market subject binding, Agent BUS role/scope và negative E2E riêng. |
 
 ## 16.2 Vấn đề thiết kế cần quyết định
 
@@ -1190,6 +1227,9 @@ Bằng chứng quality gate phải được lưu theo release, tối thiểu g�
 | Pipeline selection authoritative | BA/Kiến trúc/Backend | Một pipeline ID/version rõ ràng từ contract/config. |
 | Governance activate/deactivate/retention và migration hồ sơ đang chạy | Product/Kiến trúc/Vận hành | Quy trình phê duyệt version, rollback activation, thời gian giữ definition cũ và tiêu chí migration ngoại lệ được ký duyệt. |
 | Quy tắc ánh xạ kênh sang `source=AGENT\|MARKET` | Agent API/Market API/Backend | Mỗi BFF chỉ được gán source của chính kênh mình, được ký và có negative contract test. |
+| Claim định danh data subject của Market và cách bind `ownerSubject` | Market API/ANBM/Backend | Claim authoritative, ổn định, signed; create/list/detail/mutation và cross-customer E2E được duyệt. |
+| Catalogue role BUS, runtime source, version và mapping role → scope/action | BUS/Agent API/Backend/ANBM | Role codes/semantics/expiry, signed context, pipeline mapping và deny-by-default contract được duyệt. |
+| Agent/Back Office review dossier `source=MARKET` | BUS/Product/Backend | Chốt role/project scope và policy cross-channel; source không được dùng thay authorization. |
 | Contract Dossier Core ↔ `vhm-ocr-ekyc` cho CCCD hai mặt, confirm, `subjectRef`, batch read/search/export và delete | OCR Team/Backend/ANBM | OpenAPI L3, IAM, stable/non-reversible reference, failure/SLA và E2E ký duyệt. |
 | Ý nghĩa/ownership của `picId` so với stage reviewer | Product/BA/Backend | Use case và permission/audit rõ hoặc bỏ field. |
 | SLO, peak workload, RTO/RPO và capacity/cost | Product/Vận hành/DBA/FinOps | Baseline số được duyệt và load/DR đạt. |
@@ -1208,12 +1248,16 @@ Vấn đề mở không mặc nhiên được chấp nhận. Risk acceptance ph�
 | --- | --- |
 | NOXH | Nhà ở Xã hội. |
 | Dossier | Aggregate hồ sơ đăng ký một applicant cho một project. |
-| BFF | Public boundary xác thực kênh và gọi Core bằng signed workload/actor context; trong phạm vi này gồm Agent API và Market API. |
+| BFF | Public boundary xác thực kênh và gọi Core bằng workload identity cùng signed security context theo channel; gồm Agent API và Market API. |
+| BUS role | Role catalogue và semantics nghiệp vụ cho Agent/Back Office do BUS làm authority; được map tới scope/action của pipeline. |
+| Data subject | Customer/chủ thể dữ liệu đã được Market API xác thực và dùng để giới hạn object access. |
+| `ownerSubject` | Định danh data subject opaque được Core bind server-side cho dossier MARKET; khác `subjectRef` dùng liên kết OCR/duplicate. |
 | PKD/PTT/SXD | Các cấp Sales/Procedure/Department-of-Construction trong pipeline. |
 | Checklist | Projection tài liệu bắt buộc/trạng thái upload/review của dossier; không lưu OCR status/result. |
 | Pipeline | Cấu hình state/action/role/ownership có phiên bản, thực thi trong core. |
-| Actor context | Payload danh tính nghiệp vụ được Agent API hoặc Market API ký và Core xác minh. |
-| Visibility | Phạm vi hồ sơ actor được phép đọc/xử lý. |
+| Agent actor context | Payload actor, BUS role, scope và visibility được Agent API ký và Core xác minh. |
+| Market subject context | Payload customer/data-subject ownership không chứa business role, được Market API ký và Core xác minh. |
+| Visibility | Phạm vi hồ sơ Agent/Back Office được phép đọc/xử lý; không dùng cho Market Customer. |
 | Idempotency key | Khóa opaque để replay an toàn create/OCR. |
 | Transactional outbox | Ghi business state và ý định phát/gửi trong cùng transaction DB. |
 | `vhm-ocr-ekyc` | Capability OCR/eKYC dùng chung, sở hữu media OCR, lifecycle và kết quả OCR chuẩn. |
@@ -1240,6 +1284,8 @@ Vấn đề mở không mặc nhiên được chấp nhận. Risk acceptance ph�
 | Pipeline schema, ID/version selection, activation và retention | BA/Kiến trúc/Vận hành | Cấu hình và thay đổi số cấp duyệt |
 | OCR OpenAPI, IAM, CCCD hai mặt, confirm, `subjectRef`, batch read/search/export và delete | OCR Team/Backend/ANBM | E2E media/OCR và data ownership |
 | Channel-to-source mapping cho AGENT/MARKET | Agent API/Market API/Backend | Security/API approval |
+| Market subject claim và `ownerSubject` binding contract | Market API/ANBM/Backend | Market authorization/IDOR gate |
+| BUS role catalogue, scope và signed Agent context | BUS/Agent API/ANBM/Backend | Agent authorization/pipeline gate |
 | Privacy retention/deletion, no-copy policy và purge dữ liệu legacy | Privacy/Pháp chế/ANBM/OCR Team | Dữ liệu thật |
 | Workload/SLO/capacity/cost | Product/Vận hành/FinOps | Load/OAT |
 | RTO/RPO/backup/restore | DBA/Vận hành | DR/OAT |
@@ -1257,10 +1303,11 @@ Vấn đề mở không mặc nhiên được chấp nhận. Risk acceptance ph�
 | ADR-005 | Advisory lock + actor-scoped replay + DB unique | Chống concurrent forwarding race và key reuse sai actor | CHẤP NHẬN |
 | ADR-006 | Partial unique index là race guard cuối cho `subjectRef`+dự án | Không persist CCCD; OCR capability bảo đảm reference ổn định/non-reversible, DB bảo đảm invariant local | ĐỀ XUẤT — chờ OCR Contract L3 |
 | ADR-007 | Transactional outbox cho event/notification | Không mất intent sau commit; chấp nhận at-least-once | CHẤP NHẬN |
-| ADR-008 | Signed actor context và deny-by-default visibility | Không tin identity/role từ client body | CHẤP NHẬN |
+| ADR-008 | Signed context theo channel và deny-by-default | Market ký data subject không role; Agent ký BUS role/scope; Core không tin security claim từ body | ĐỀ XUẤT — chờ contract ANBM/BUS/Market |
 | ADR-009 | File path opaque, không kiểm tra dossier-prefix | Upload namespace độc lập; ownership phải dựa File Contract | CHẤP NHẬN có điều kiện |
 | ADR-010 | OCR qua capability dùng chung `vhm-ocr-ekyc` | Dossier không sở hữu provider/worker/raw result; cần migration legacy | ĐỀ XUẤT — chờ phê duyệt |
 | ADR-011 | Kết quả OCR được xác nhận và lưu tại `vhm-ocr-ekyc`, không PATCH vào snapshot dossier | Một nguồn authoritative; Core chỉ proxy và giữ opaque `subjectRef` | ĐỀ XUẤT — chờ phê duyệt |
 | ADR-012 | Phân tuyến file theo mục đích nghiệp vụ | Tài liệu không OCR đi File Management; media OCR đi `vhm-ocr-ekyc`, không để client tự chọn đường | ĐỀ XUẤT — chờ phê duyệt |
 | ADR-013 | Cấp duyệt cấu hình và pipeline version bất biến | Add/remove bằng version mới; hồ sơ pin đúng version, consumer dùng policy/metadata thay vì tên stage | ĐỀ XUẤT — chờ phê duyệt |
 | ADR-014 | Không nhân bản OCR/PII tại Dossier Core | Media/result/PII, encryption và key lifecycle tập trung ở `vhm-ocr-ekyc`; Core lưu opaque reference và dùng API authoritative cho read/search/export/delete | ĐỀ XUẤT — chờ OCR/ANBM/Privacy phê duyệt |
+| ADR-015 | Tách ma trận authorization Market và Agent | Market authorization tại Market API theo authenticated data subject và Core recheck owner binding; Agent dùng BUS role/scope/pipeline ownership | ĐỀ XUẤT — chờ BUS/Market/ANBM phê duyệt |
