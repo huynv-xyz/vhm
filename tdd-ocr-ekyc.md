@@ -848,45 +848,45 @@ erDiagram
 ### 7.2.1 Luồng điều khiển/dữ liệu OCR
 
 ```mermaid
-flowchart LR
-    CHANNEL([Mobile / Web])
-    BFF[Domain BFF]
-    DOMAIN[Domain Backend Service]
-    API[vhm-ocr-ekyc]
-    FILE[File Management]
-    STORAGE[(Kho object riêng tư)]
-    DB[(PostgreSQL)]
-    OUTBOX[Outbox Publisher]
-    KAFKA[(Kafka)]
-    WORKER[OCR Worker]
-    PROVIDER[FPT]
+flowchart TB
+    subgraph CHANNEL_DOMAIN[Kênh và miền nghiệp vụ]
+        direction LR
+        CHANNEL([Mobile / Web])
+        BFF[Domain BFF]
+        DOMAIN[Domain Backend Service]
+        API[vhm-ocr-ekyc]
 
-    CHANNEL -->|yêu cầu chuẩn bị upload| BFF
-    BFF -->|request theo kênh| DOMAIN
-    DOMAIN -->|metadata file| API
-    API -->|yêu cầu presigned PUT| FILE
-    FILE -->|presigned URL + headers + s3PathFile| API
-    FILE -.->|quản lý presigned access| STORAGE
-    API -->|presigned URL + headers + s3PathFile| DOMAIN
-    DOMAIN -->|response nghiệp vụ| BFF
-    BFF -->|presigned URL| CHANNEL
+        CHANNEL <-->|upload · OCR command/status| BFF
+        BFF <-->|contract theo kênh| DOMAIN
+        DOMAIN <-->|OCR command/query + opaque context| API
+    end
+
+    subgraph MEDIA[Media plane]
+        direction LR
+        FILE[File Management]
+        STORAGE[(Kho object riêng tư)]
+        FILE -.->|quản lý presigned access| STORAGE
+    end
+
+    subgraph ASYNC[OCR asynchronous plane]
+        direction LR
+        DB[(PostgreSQL)]
+        OUTBOX[Outbox Publisher]
+        KAFKA[(Kafka)]
+        WORKER[OCR Worker]
+        PROVIDER[FPT]
+
+        DB -->|event đã commit| OUTBOX
+        OUTBOX -->|eventId + OCR ID| KAFKA
+        KAFKA -->|chỉ OCR ID| WORKER
+        WORKER ==>|media multipart / kết quả| PROVIDER
+    end
+
+    API <-->|presigned PUT metadata| FILE
     CHANNEL ==>|PUT media trực tiếp| STORAGE
-    CHANNEL -->|yêu cầu tạo OCR| BFF
-    BFF -->|request theo kênh| DOMAIN
-    DOMAIN -->|POST /ocr + s3PathFile + ngữ cảnh| API
-    API -->|trạng thái / kết quả| DOMAIN
-    DOMAIN -->|projection nghiệp vụ| BFF
-    BFF -->|phản hồi nghiệp vụ| CHANNEL
     API -->|transaction: OCR + media refs + outbox| DB
-    DB -->|event đã commit| OUTBOX
-    OUTBOX -->|eventId + OCR ID| KAFKA
-    KAFKA -->|chỉ OCR ID| WORKER
-    WORKER -->|yêu cầu presigned GET| FILE
-    FILE -->|URL tải xuống hạn ngắn| WORKER
-    WORKER -->|GET media| STORAGE
+    WORKER <-->|presigned GET metadata| FILE
     STORAGE ==>|media bytes| WORKER
-    WORKER ==>|media multipart| PROVIDER
-    PROVIDER -->|kết quả FPT| WORKER
     WORKER -->|kết quả chuẩn đã mã hóa| DB
 ```
 
