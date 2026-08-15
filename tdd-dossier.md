@@ -42,7 +42,7 @@
 | --- | --- | --- | --- | --- |
 | OpenAPI BFF ↔ Dossier Core | DRAFT | Backend/Tích hợp | Trước duyệt API | Liên kết tài liệu chính thức: TBD |
 | Form Data Contract Social Housing v1 | DRAFT | Backend/BA | Trước UAT | Liên kết tài liệu chính thức: TBD |
-| Pipeline Definition Social Housing v1 | DRAFT | Backend/BA | Trước UAT | Liên kết tài liệu chính thức: TBD |
+| Pipeline Definition Schema, Social Housing v1 và activation/migration policy | DRAFT | Backend/BA/Kiến trúc/Vận hành | Trước UAT | Liên kết tài liệu chính thức: TBD |
 | Contract Checklist chuẩn | **CHƯA CÓ** | BA/Tích hợp/Backend | Trước production | Chưa chốt nguồn authority và version |
 | Contract File Management cho tài liệu không OCR | **CHƯA ĐỦ** | File Team/ANBM | Trước production | Chưa có owner/upload-grant contract |
 | OpenAPI Dossier Core ↔ `vhm-ocr-ekyc` | DRAFT | OCR Team/Backend/ANBM | Trước production | Cần chốt media CCCD hai mặt, IAM và apply-result |
@@ -174,6 +174,8 @@ Tài liệu này mô tả **kiến trúc mục tiêu L2**. Dossier được thi�
 | ARCH-10 | Mọi khoảng trống production phải được quản lý bằng risk/open issue, không mô tả như đã triển khai. |
 | ARCH-11 | Dossier chỉ tích hợp contract chuẩn của `vhm-ocr-ekyc`; không biết provider, credential, queue hoặc raw response. |
 | ARCH-12 | Core gọi File Management cho tài liệu không OCR; media OCR chỉ đi qua `vhm-ocr-ekyc`, không gọi provider hoặc File Management trực tiếp trong nhánh OCR. |
+| ARCH-13 | Cấp duyệt là cấu hình có phiên bản; không gắn cứng số lượng hoặc thứ tự cấp duyệt vào API, database hay kênh. |
+| ARCH-14 | Pipeline đã công bố là bất biến theo `(pipelineCode, pipelineVersion)`; thay đổi luồng phải tạo phiên bản mới. |
 
 ## 2.2 Sơ đồ kiến trúc ứng dụng
 
@@ -193,9 +195,9 @@ flowchart LR
     Core --> Redis[(Redis / Redisson)]
     Core --> Kafka[(Kafka)]
     Core -->|Project / unit lookup| MarketAPI[Market API]
-    Core -->|Tài liệu không OCR| File[File Management]
-    Core -->|Media OCR| OCR[vhm-ocr-ekyc]
-    OCR -->|Lưu/đọc media OCR| File
+    Core --> File[File Management]
+    Core --> OCR[vhm-ocr-ekyc]
+    OCR --> File
     Core --> Msg[Message Delivery]
     Core --> TTOL[TTOL roster / holiday]
 ```
@@ -217,9 +219,9 @@ flowchart LR
     Relay[Outbox Relay & Scheduler] -->|Đọc bản ghi chờ xử lý| DB
     Relay --> Kafka[(Kafka)]
     Relay --> Message[Message Delivery]
-    API -->|Tài liệu không OCR| File[File Management]
-    API -->|Media OCR| OCR[vhm-ocr-ekyc]
-    OCR -->|Lưu/đọc media OCR| File
+    API --> File[File Management]
+    API --> OCR[vhm-ocr-ekyc]
+    OCR --> File
     API -->|Project / unit lookup| MarketAPI[Market API]
     API --> Enterprise[TTOL]
 ```
@@ -286,6 +288,8 @@ stateDiagram-v2
     REJECTED --> [*]
 ```
 
+Sơ đồ trên là snapshot của Social Housing pipeline v1, không phải giới hạn cố định ba cấp duyệt. Việc thêm hoặc bỏ một cấp duyệt được thực hiện bằng pipeline version mới; API vẫn trả stage timeline và `availableActions` theo definition đã gắn với từng hồ sơ.
+
 ## 2.4 Tính nhất quán và Idempotency
 
 ### 2.4.1 Tạo tài nguyên và idempotency
@@ -338,6 +342,7 @@ Create/update/transition/delete ghi business row và `outbox_event` trong cùng 
 | FR-13 | Tra cứu/báo cáo | List/detail/statistics/by-contact/export | `BẮT BUỘC` |
 | FR-14 | Xóa bản nháp | Chỉ DRAFT; xóa checklist và dữ liệu phụ thuộc | `BẮT BUỘC` |
 | FR-15 | PIC hồ sơ | Use case, permission và audit semantics | `TBD` |
+| FR-16 | Thêm/bớt cấp duyệt | Công bố pipeline version mới; không đổi schema DB/public API và không làm đổi luồng hồ sơ đang chạy | `BẮT BUỘC` |
 
 ## 3.2 Quy tắc nghiệp vụ
 
@@ -358,6 +363,8 @@ Create/update/transition/delete ghi business row và `outbox_event` trong cùng 
 | BR-13 | Reject/revoke unit phải giải phóng căn đang cấp. |
 | BR-14 | DRAFT delete xóa checklist tường minh; FK checklist cũng có `ON DELETE CASCADE`. |
 | BR-15 | Comment hiện là optional theo pipeline/config; không mô tả là bắt buộc nếu chưa bật guard. |
+| BR-16 | Mỗi dossier được gắn bất biến với đúng `(pipelineCode, pipelineVersion)` trong suốt vòng đời, trừ migration có kiểm soát được phê duyệt. |
+| BR-17 | Không sửa hoặc xóa definition đã có hồ sơ tham chiếu; ngừng dùng một cấp duyệt chỉ áp dụng cho pipeline version mới. |
 
 # 4. Non-Functional Requirements
 
@@ -375,6 +382,7 @@ Các mục tiêu `200 req/s`, P95 cụ thể và availability `99.9%` chưa có 
 | NFR-08 | Recoverability | PostgreSQL PITR, outbox replay, backup/restore drill | TBD/BẮT BUỘC |
 | NFR-09 | Observability | Metrics/log/trace/correlation và alert có owner | `BẮT BUỘC` |
 | NFR-10 | Maintainability | Versioned migration/schema/pipeline; backward-compatible API | `BẮT BUỘC` |
+| NFR-11 | Workflow configurability | Thêm/bớt một cấp duyệt bằng definition mới, không cần đổi DB/public API; hồ sơ version cũ tiếp tục xử lý được | `BẮT BUỘC` |
 
 # 5. Technology Stack & Justification
 
@@ -514,6 +522,40 @@ Pipeline kiểm tra cả role (`APPLICANT_AGENT`, `PKD`, `PKD_LEAD`, `PTT`, `PTT
 
 Tại create, pipeline phải được xác định bằng pipeline ID/version authoritative từ contract nghiệp vụ hoặc một rule selection duy nhất. Trường hợp không tìm thấy hoặc có nhiều kết quả phải bị từ chối bằng lỗi cấu hình rõ ràng; không chọn theo thứ tự khai báo.
 
+### 6.5.4 Mô hình cấp duyệt có thể cấu hình
+
+Một cấp duyệt không chỉ là một state `APPROVE`. Pipeline Definition L3 phải mô tả đầy đủ các policy sau để runtime và các consumer không phụ thuộc tên stage cụ thể:
+
+| **Nhóm cấu hình** | **Nội dung bắt buộc** |
+| --- | --- |
+| Định danh và hiển thị | Stage code bất biến trong một version, thứ tự, nhãn hiển thị và business status ánh xạ. |
+| Quyền xử lý | Reviewer role, lead role, ownership rule và tập action được phép. |
+| Phân công | `MANUAL`, `ROUND_ROBIN` hoặc `EXTERNAL_ROSTER`; nguồn candidate và chính sách giữ reviewer khi quay lại stage. |
+| Quyết định | Đích của `APPROVE`, `REJECT`, `REQUEST_REVISION`, `RETURN` và các guard nghiệp vụ áp dụng. |
+| Bổ sung hồ sơ | Stage nhận yêu cầu bổ sung, actor được cập nhật, stage tiếp nhận lại và điểm tiếp tục sau resubmit. |
+| SLA và thông báo | Deadline/reminder, recipient policy và event/template intent theo transition. |
+| Audit và hiển thị | Reviewer decision, lịch sử transition, timeline stage, report/export semantics. |
+
+Kênh không hard-code chuỗi `SALES → PROCEDURE → SXD`; kênh render timeline theo danh sách stage và chỉ hiển thị action do Core trả. Database lưu stage code dạng tham chiếu và không tạo cột riêng cho từng cấp duyệt. Assignment, notification, reminder, audit và report phải dùng metadata/policy của pipeline thay vì rẽ nhánh theo tên stage.
+
+Nếu một cấp không hỗ trợ yêu cầu bổ sung, definition có thể không khai báo `REQUEST_REVISION`. Nếu có hỗ trợ, definition bắt buộc chỉ rõ toàn bộ đường đi yêu cầu bổ sung và quay lại review; không suy luận theo cấp đứng trước hoặc đứng sau.
+
+### 6.5.5 Phiên bản và thay đổi số cấp duyệt
+
+| **Tình huống** | **Cách thực hiện bắt buộc** | **Ảnh hưởng hồ sơ đang chạy** |
+| --- | --- | --- |
+| Thêm một cấp duyệt | Tạo version mới, khai báo stage/state/role/assignment/transition/revision/SLA/notification, validate rồi mới activate | Không ảnh hưởng; hồ sơ cũ tiếp tục dùng version cũ. |
+| Bỏ một cấp duyệt | Tạo version mới và nối lại rõ các transition/guard giữa hai phía của cấp bị bỏ | Không tự động bỏ qua stage của hồ sơ cũ. |
+| Đổi role hoặc chính sách phân công | Tạo version mới nếu làm thay đổi quyền hoặc routing nghiệp vụ | Reviewer/history của version cũ được giữ nguyên. |
+| Sửa nhãn không đổi semantics | Cho phép bản vá metadata có audit nếu policy quản trị chấp thuận; không đổi code/transition | Không thay đổi state hoặc quyền. |
+| Chuyển hồ sơ đang chạy sang version mới | Chỉ dùng migration plan riêng có state mapping, reviewer mapping, precondition, dry-run, audit và rollback | Không hỗ trợ migration ngầm hoặc hàng loạt mặc định. |
+
+Pipeline registry phải tra cứu chính xác bằng `(pipelineCode, pipelineVersion)`, cho phép nhiều version cùng tồn tại và chỉ có một version active cho create theo rule đã duyệt. Version cũ chỉ được ngừng phục vụ sau khi không còn hồ sơ active tham chiếu và retention/audit cho phép.
+
+### 6.5.6 Cổng kiểm tra Pipeline Definition
+
+Definition phải bị từ chối trước khi activate nếu vi phạm một trong các điều kiện: trùng stage/state/action trong cùng scope; initial state không tồn tại; transition trỏ tới state không tồn tại; stage/role reference không hợp lệ; có state không thể tới từ initial state; non-terminal state bị cụt; không có đường hợp lệ tới kết quả cuối; revision loop thiếu đường quay lại; business status mapping không hợp lệ; assignment/recipient policy thiếu dữ liệu bắt buộc; hoặc thay đổi một published version.
+
 ## 6.6 Mô hình checklist chuẩn hóa
 
 | **Thuộc tính** | **Giá trị/ngữ nghĩa** |
@@ -581,6 +623,8 @@ erDiagram
 - Check constraint cho `source`; MARKET yêu cầu idempotency key.
 - Checklist có constraint enum và `invalid_reason` phù hợp trạng thái.
 - Optimistic `version` được JPA quản lý; response create được dựng sau flush.
+- `pipeline_code + pipeline_version` xác định duy nhất definition của dossier; `current_stage_code/group` phải tồn tại trong đúng version đó.
+- Stage reviewer dùng khóa `(dossier_id, stage_code)`, vì vậy thêm cấp duyệt không yêu cầu thêm cột hoặc bảng nghiệp vụ mới.
 - Không có FK đến user/PIC/project master vì các định danh này thuộc hệ thống ngoài.
 
 ## 7.2 Data Flow Diagram
@@ -911,6 +955,8 @@ Liquibase quản lý schema theo phiên bản. Baseline hiện có các nhóm mi
 4. Có backup/PITR marker và rollback application plan; rollback DDL chỉ dùng khi thực sự an toàn.
 5. Đối soát row count, constraint/index, version và sample business query sau deploy.
 
+Phát hành pipeline: version mới được validate và deploy ở trạng thái inactive, chạy contract/E2E trên STAG rồi mới activate cho hồ sơ tạo mới. Rollback chỉ chuyển active version về definition trước đó cho hồ sơ mới; không đổi version của hồ sơ đã tạo. Definition cũ phải tiếp tục được phục vụ cho đến khi hết hồ sơ active và hoàn tất retention/audit. Migration hồ sơ đang chạy là quy trình ngoại lệ, cần mapping state/reviewer, dry-run, đối soát, audit và rollback riêng.
+
 Migration OCR: Dossier Core thay direct OCR provider bằng client `vhm-ocr-ekyc` sau khi OCR contract, IAM và E2E được duyệt; các client File Management tiếp tục phục vụ tài liệu không OCR. BFF tiếp tục chỉ gọi Dossier Core. Có thể chạy so sánh OCR ở chế độ quan sát nếu được phê duyệt nhưng không dual-write kết quả vào hai nguồn; sau khi ổn định phải loại bỏ provider credential, endpoint và client OCR legacy khỏi Dossier Core.
 
 # 11. Cost & Capacity/Performance
@@ -1056,6 +1102,7 @@ Bộ kiểm thử phải bao phủ invariant domain, database concurrency, API/s
 | Unit/domain | State/action/role/ownership, checklist, code/unit, masking, error mapping | Bắt buộc |
 | Database integration | Migration, JSONB, partial index, advisory/row lock, optimistic lock, cascade | Bắt buộc |
 | Concurrency | Concurrent idempotent create, duplicate identity/project, allocate unit, reviewer claim | Bắt buộc |
+| Pipeline definition | Schema, graph integrity, reachability, role/stage reference, revision loop và published-version immutability | Bắt buộc |
 | API/contract | Agent ↔ core DTO/header/status/error/backward compatibility | Bắt buộc |
 | Security | Signature, nonce replay, actor expiry/role/visibility/IDOR, body actor injection | Bắt buộc |
 | External contract | File Management, `vhm-ocr-ekyc`, Market, TTOL và Message Delivery | Bắt buộc |
@@ -1074,6 +1121,9 @@ Bộ kiểm thử phải bao phủ invariant domain, database concurrency, API/s
 - Submit không checklist/thiếu required trả `11017/11018`; required complete mới chuyển trạng thái.
 - If-Match cũ, concurrent command, allocate cùng căn và double claim không làm lost update.
 - Mọi state/action/role/ownership branch của pipeline, gồm revision loop và revoke sau approve.
+- Thêm một cấp duyệt vào version mới: hồ sơ mới đi qua đủ assignment/approve/revision/notification/timeline; hồ sơ version cũ không đổi hành vi.
+- Bỏ một cấp duyệt ở version mới: transition được nối lại, không có state cụt; hồ sơ cũ đang ở cấp bị bỏ vẫn tiếp tục xử lý bằng version cũ.
+- Definition lỗi, sửa published version hoặc thiếu policy bắt buộc phải fail trước activation; rollback active version không remap hồ sơ đã tạo.
 - Signature/body hash/timestamp/nonce/actor JTI/visibility negative matrix và không có body actor spoofing.
 - Outbox crash trước/sau broker acknowledgement có thể phát lặp nhưng không mất event.
 - Notification retry/dedupe/FAILED và reminder T+6/T+18 qua ngày nghỉ/cycle mới.
@@ -1105,6 +1155,7 @@ Bằng chứng quality gate phải được lưu theo release, tối thiểu g�
 | AR-010 | Event delivery | Kafka outbox publish có thể mặc định tắt | Cao | Production config gate, readiness/metric và backlog verification. |
 | AR-011 | Privacy | Retention/deletion/legal hold/audit access cho CCCD chưa được định nghĩa | Nghiêm trọng | DPIA/policy/runbook và bằng chứng purge/restore. |
 | AR-012 | Availability | Full E2E phụ thuộc File Management, `vhm-ocr-ekyc` và nhiều enterprise dependency | Cao | Sandbox/SLA, timeout/degradation, synthetic probe và runbook. |
+| AR-013 | Linh động pipeline | State machine có cấu hình nhưng assignment, notification, reminder, report hoặc audit vẫn gắn cứng tên stage sẽ làm cấp duyệt mới chạy thiếu side effect | Cao | Mọi consumer dùng stage policy/metadata; quality gate bắt buộc chứng minh add/remove một cấp chỉ bằng definition mới. |
 
 ## 16.2 Vấn đề thiết kế cần quyết định
 
@@ -1113,6 +1164,7 @@ Bằng chứng quality gate phải được lưu theo release, tối thiểu g�
 | Nguồn Checklist chuẩn, contract và version/snapshot | BA/Checklist Team/Backend | API/schema/authority được duyệt; client không tự quyết `isRequired`. |
 | File ownership/upload-grant cho checklist, ZIP và XLSX | File Team/ANBM | File Contract bao phủ prepare, verify, store và download; E2E cross-owner đạt. |
 | Pipeline selection authoritative | BA/Kiến trúc/Backend | Một pipeline ID/version rõ ràng từ contract/config. |
+| Governance activate/deactivate/retention và migration hồ sơ đang chạy | Product/Kiến trúc/Vận hành | Quy trình phê duyệt version, rollback activation, thời gian giữ definition cũ và tiêu chí migration ngoại lệ được ký duyệt. |
 | Quy tắc ánh xạ kênh sang `source=AGENT\|MARKET` | BFF/Backend | Source do BFF gán server-side, được ký và có negative contract test. |
 | Contract Dossier Core ↔ `vhm-ocr-ekyc` cho CCCD hai mặt và apply result | OCR Team/Backend | OpenAPI L3, opaque refs, IAM, status/result mapping và E2E ký duyệt. |
 | Ý nghĩa/ownership của `picId` so với stage reviewer | Product/BA/Backend | Use case và permission/audit rõ hoặc bỏ field. |
@@ -1158,7 +1210,7 @@ Vấn đề mở không mặc nhiên được chấp nhận. Risk acceptance ph�
 | --- | --- | --- |
 | Checklist authority/version/snapshot | BA/Checklist Team | Submit/UAT |
 | File Management contract và ownership/upload-grant | File Team/ANBM | Attachment security và export/download không OCR |
-| Pipeline ID/version selection | BA/Kiến trúc | Cấu hình pipeline |
+| Pipeline schema, ID/version selection, activation và retention | BA/Kiến trúc/Vận hành | Cấu hình và thay đổi số cấp duyệt |
 | OCR OpenAPI, IAM, two-side CCCD và apply-result | OCR Team/Backend | E2E media/OCR |
 | Channel-to-source mapping cho AGENT/MARKET | BFF/Backend | Security/API approval |
 | Privacy retention/deletion/encryption | Privacy/Pháp chế/ANBM | Dữ liệu thật |
@@ -1183,3 +1235,4 @@ Vấn đề mở không mặc nhiên được chấp nhận. Risk acceptance ph�
 | ADR-010 | OCR qua capability dùng chung `vhm-ocr-ekyc` | Dossier không sở hữu provider/worker/raw result; cần migration legacy | ĐỀ XUẤT — chờ phê duyệt |
 | ADR-011 | OCR chỉ áp dụng sau xác nhận và PATCH dossier | OCR không tự quyết định nghiệp vụ; giữ optimistic/business guards | ĐỀ XUẤT — chờ phê duyệt |
 | ADR-012 | Phân tuyến file theo mục đích nghiệp vụ | Tài liệu không OCR đi File Management; media OCR đi `vhm-ocr-ekyc`, không để client tự chọn đường | ĐỀ XUẤT — chờ phê duyệt |
+| ADR-013 | Cấp duyệt cấu hình và pipeline version bất biến | Add/remove bằng version mới; hồ sơ pin đúng version, consumer dùng policy/metadata thay vì tên stage | ĐỀ XUẤT — chờ phê duyệt |
