@@ -96,7 +96,7 @@ Tài liệu này là **as-built L2**, không phải bản mô tả kiến trúc 
 | Pipeline | State/action/role/ownership trong modular monolith | `ĐÃ TRIỂN KHAI` |
 | Phân công reviewer | Manual, round-robin PKD và roster TTOL cho PTT/SXD | `ĐÃ TRIỂN KHAI`, best effort |
 | Quyền dự án | Grant/revoke/list/group theo team/project/scope | `ĐÃ TRIỂN KHAI` |
-| OCR CCCD | Validate hai mặt đồng bộ qua một provider cấu hình | `MỘT PHẦN` — không ghi checklist |
+| OCR CCCD | Tích hợp capability dùng chung `vhm-ocr-ekyc` theo mô hình bất đồng bộ | `MỤC TIÊU` — core hiện còn client OCR trực tiếp, cần migration |
 | File | Chuẩn bị upload, validate tồn tại trước create/update | `MỘT PHẦN` — chưa chứng minh ownership |
 | Notification/reminder | Transactional outbox email và nhắc bổ sung T+6/T+18 | `MỘT PHẦN` — kênh khác chưa dispatch |
 | Báo cáo/tải file | Export danh sách NOXH; tải hợp đồng/tệp đính kèm | `ĐÃ TRIỂN KHAI` |
@@ -107,7 +107,7 @@ Tài liệu này là **as-built L2**, không phải bản mô tả kiến trúc 
 - Tách UC-01 đến UC-06 thành processor/microservice mới.
 - Camunda/Zeebe hoặc BPMN engine bên ngoài; pipeline hiện chạy trong cùng ứng dụng và transaction.
 - Sở hữu master data dự án, người dùng, đội nhóm, ngày nghỉ hoặc file binary.
-- Thuật toán OCR; core chỉ điều phối client OCR được chọn bằng cấu hình.
+- Thuật toán, provider credential, queue/worker và dữ liệu raw OCR; toàn bộ thuộc `vhm-ocr-ekyc`.
 - Quyết định pháp lý về đủ điều kiện NOXH dựa riêng vào OCR.
 - Quản trị checklist chuẩn ở trình duyệt; `isRequired` do client gửi chưa thể là authority production.
 - Thanh toán, ký điện tử và tích hợp tự động trực tiếp với cơ quan SXD.
@@ -125,7 +125,8 @@ Tài liệu này là **as-built L2**, không phải bản mô tả kiến trúc 
 | A-06 | File path là opaque; namespace upload độc lập với dossier ID | Đã xác minh STG | Không áp dụng kiểm tra prefix `registrations/{dossierId}/`. |
 | A-07 | Chỉ một pipeline Social Housing khớp sản phẩm | Giả định tạm thời | Nếu có nhiều pipeline, selection hiện lấy bản đầu tiên; phải đóng OI-003. |
 | A-08 | Schema validation nâng cao có thể bật/tắt bằng cấu hình | Hiện trạng | Structural guard luôn chạy; JSON Schema mặc định tắt nếu không cấu hình. |
-| A-09 | External services có contract/SLA riêng | `BÊN NGOÀI` | Cần timeout, retry hữu hạn, monitoring và contract test. |
+| A-09 | OCR tài liệu đi qua `vhm-ocr-ekyc`; dossier không gọi provider trực tiếp | Quyết định kiến trúc mục tiêu | Cần OpenAPI L3, workload IAM và migration khỏi client OCR legacy. |
+| A-10 | External services có contract/SLA riêng | `BÊN NGOÀI` | Cần timeout, retry hữu hạn, monitoring và contract test. |
 
 ### Stakeholders & Personas
 
@@ -137,7 +138,7 @@ Tài liệu này là **as-built L2**, không phải bản mô tả kiến trúc 
 | Đầu mối SXD | Được mô hình hóa bằng stage `SXD` nhưng xử lý qua roster/role PTT hiện hành. |
 | BO/Admin | Quản lý quyền dự án, tra cứu/báo cáo và vận hành. |
 | Agent API | Xác thực kênh, map DTO, ký request và actor context khi gọi core. |
-| File/Market/OCR/Message Delivery/TTOL | Cung cấp năng lực tích hợp không thuộc sở hữu core. |
+| File/Market/`vhm-ocr-ekyc`/Message Delivery/TTOL | Cung cấp năng lực tích hợp không thuộc sở hữu core. |
 
 ### Personal Data Processing Summary
 
@@ -145,7 +146,7 @@ Tài liệu này là **as-built L2**, không phải bản mô tả kiến trúc 
 | --- | --- | --- | --- |
 | CCCD, họ tên, ngày sinh, địa chỉ | Định danh và xử lý hồ sơ | `dossier.form_data` JSONB | Actor visibility, masking, XSS guard, mã hóa hạ tầng/TBD retention. |
 | SĐT/email người nộp và vợ/chồng | Liên hệ, tìm kiếm, notification | JSONB và notification outbox | PKD masking; không ghi body nhạy cảm vào log. |
-| Đường dẫn file | Gắn tài liệu và gọi OCR | JSONB/checklist | Chỉ lưu path; kiểm tra tồn tại; ownership còn thiếu. |
+| Đường dẫn file | Gắn tài liệu và yêu cầu OCR | JSONB/checklist và OCR service | Chỉ lưu `s3PathFile`; không persist presigned URL; ownership còn thiếu. |
 | Kết quả/phê duyệt tài liệu | Readiness và quyết định | JSONB/checklist/history | Chỉ actor có quyền được mutation; lịch sử append trong snapshot. |
 | Actor/reviewer | Audit và routing | audit columns, status history, stage reviewer | Actor context có chữ ký; không tin actor do client truyền. |
 
@@ -162,13 +163,14 @@ Tài liệu này là **as-built L2**, không phải bản mô tả kiến trúc 
 | ARCH-01 | Core là modular monolith; không tạo service xử lý pipeline riêng. |
 | ARCH-02 | PostgreSQL là nguồn sự thật; mutation hồ sơ, checklist, history và outbox cùng transaction. |
 | ARCH-03 | Create và submit tách biệt; mọi create thành công trả về `DRAFT`. |
-| ARCH-04 | Pipeline được cấu hình bằng YAML nhưng thực thi trong process bởi `LocalPipelineOrchestrator`. |
+| ARCH-04 | Pipeline được cấu hình bằng phiên bản và thực thi trong cùng process/transaction với dossier. |
 | ARCH-05 | Không tin actor/role từ request body; dùng actor context có chữ ký. |
 | ARCH-06 | Dùng optimistic lock cho update/command và DB constraint cho race cuối. |
 | ARCH-07 | Idempotency replay được kiểm tra trước validation và được serialize bằng advisory lock. |
 | ARCH-08 | Event/notification dùng transactional outbox, chấp nhận at-least-once. |
 | ARCH-09 | File path là tham chiếu opaque; không suy luận ownership từ prefix. |
 | ARCH-10 | Mọi khoảng trống production phải được quản lý bằng risk/open issue, không mô tả như đã triển khai. |
+| ARCH-11 | Dossier chỉ tích hợp contract chuẩn của `vhm-ocr-ekyc`; không biết provider, credential, queue hoặc raw response. |
 
 ## 2.2 Sơ đồ kiến trúc ứng dụng
 
@@ -184,7 +186,7 @@ flowchart LR
     Core --> Kafka[(Kafka)]
     Core --> File[Private File Service]
     Core --> Market[Market / Project]
-    Core --> OCR[OCR Provider]
+    Core --> OCR[vhm-ocr-ekyc]
     Core --> Msg[Message Delivery]
     Core --> TTOL[TTOL roster / holiday]
 ```
@@ -192,40 +194,32 @@ flowchart LR
 ### 2.2.2 Sơ đồ thành phần
 
 ```mermaid
-flowchart TB
-    Controller[REST Controllers] --> Dossier[DossierServiceImpl]
-    Controller --> Permission[AgentProjectPermissionService]
-    Controller --> Report[Report / Notes / Download]
-    Dossier --> Guard[Structural + JSON Schema + XSS + File Guards]
-    Dossier --> Checklist[DossierChecklistService]
-    Dossier --> Pipeline[LocalPipelineOrchestrator]
-    Pipeline --> Assignment[PKD / PTT / SXD Assignment]
-    Dossier --> Outbox[Outbox Event]
-    Pipeline --> Noti[Notification Outbox]
-    Dossier --> Repo[JPA Repositories]
-    Checklist --> Repo
-    Pipeline --> Repo
-    Outbox --> Repo
-    Noti --> Repo
-    Repo --> DB[(PostgreSQL)]
-    Outbox --> Kafka[(Kafka)]
-    Noti --> Message[Message Delivery]
+flowchart LR
+    Channel[Kênh Agent / Back Office] --> BFF[Agent API / BFF]
+    BFF --> API[Dossier Core API]
+    API --> Domain[Hồ sơ + Checklist + Pipeline]
+    Domain --> DB[(PostgreSQL)]
+    Domain --> Relay[Outbox & Scheduler]
+    Relay --> Kafka[(Kafka)]
+    Relay --> Message[Message Delivery]
+    BFF --> OCR[vhm-ocr-ekyc]
+    OCR --> File[File Management]
+    API --> Enterprise[Market / TTOL / File]
 ```
 
 ### 2.2.3 Sơ đồ kiến trúc pipeline nội bộ
 
-Core tải `social-housing-standard-v1.yaml` từ classpath qua repository in-memory. Khi tạo hồ sơ, service chọn pipeline hỗ trợ `SOCIAL_HOUSING`, ghi `pipeline_code`, `pipeline_version`, state hiện tại và khởi tạo history trong cùng transaction. Mỗi command tiếp theo được `LocalPipelineOrchestrator` kiểm tra role, ownership, guard nghiệp vụ, version rồi cập nhật projection/history/reviewer/outbox một cách nguyên tử. Không có process instance Camunda và không có eventual consistency giữa core với workflow engine.
+Pipeline Social Housing là cấu hình có phiên bản được nạp cùng ứng dụng. Khi tạo hồ sơ, core ghi phiên bản pipeline và trạng thái khởi tạo; mỗi command được kiểm tra role, ownership và guard nghiệp vụ rồi cập nhật projection, history, reviewer và outbox trong một transaction. Không có process instance Camunda và không có ranh giới eventual consistency với workflow engine ngoài.
 
 ### 2.2.4 Phân định trách nhiệm module
 
-| **Component** | **Trách nhiệm** | **Dữ liệu quản lý** | **Không chịu trách nhiệm** |
+| **Khối kiến trúc** | **Trách nhiệm** | **Dữ liệu quản lý** | **Không chịu trách nhiệm** |
 | --- | --- | --- | --- |
-| `vhm-agent-api` | Public API, auth kênh, DTO mapping, ký request/actor, kiểm tra quyền trước prepare-upload | Không sở hữu dossier | Business invariant cuối và persistence. |
-| `DossierServiceImpl` | CRUD, validation, duplicate/idempotency, transaction aggregate | `dossier`, children, create/update outbox | UI/session authentication. |
-| `DossierChecklistService` | Đồng bộ checklist snapshot và tính progress | `dossier_checklist` | Nguồn checklist chuẩn bên ngoài. |
-| `LocalPipelineOrchestrator` | State/action/role/ownership, code, unit, reviewer, reminder intent | pipeline projection/history/reviewer | Workflow engine bên ngoài. |
-| Relays/scanners | Publish Kafka, gửi email, quét reminder | outbox/reminder sent | Thay đổi quyết định nghiệp vụ đã commit. |
-| External clients | File, OCR, Market, Message Delivery, TTOL | Cache/response transient | Sở hữu aggregate dossier. |
+| Agent API/BFF | Public contract, xác thực kênh, object authorization và truyền actor context | Không sở hữu hồ sơ | Business invariant và persistence cuối. |
+| Dossier domain | Vòng đời hồ sơ, validation, duplicate, checklist, pipeline và phân công | Aggregate dossier và projection liên quan | Identity kênh, file binary, OCR raw. |
+| Outbox/Scheduler | Phát sự kiện, gửi notification và nhắc SLA sau commit | Trạng thái delivery/dedup | Thay đổi quyết định nghiệp vụ đã commit. |
+| `vhm-ocr-ekyc` | Upload media OCR, tài nguyên OCR bất đồng bộ, chuẩn hóa kết quả | OCR lifecycle, media reference, kết quả chuẩn | Sở hữu dossier hoặc tự áp kết quả vào form. |
+| Enterprise services | File, Market, TTOL, Message Delivery | Dữ liệu thuộc từng miền | Sở hữu aggregate dossier. |
 
 ### 2.2.5 Ranh giới tin cậy
 
@@ -234,7 +228,8 @@ Core tải `social-housing-standard-v1.yaml` từ classpath qua repository in-me
 | Client → Agent API | Không tin cậy | Auth kênh, role, validation, rate limit tầng gateway | Thuộc phạm vi Agent API/platform. |
 | Agent API → core | Zero Trust nội bộ | Basic Auth, HMAC, timestamp/nonce/body hash, actor signature | Cần vận hành secret rotation. |
 | Actor context → business | Chỉ tin sau verify | `subject`, role, visibility, expiry, JTI | JTI replay đang có thể tắt theo môi trường. |
-| Core → File/OCR/Market/TTOL/Message | Dependency ngoài process | Credential server-side, timeout/retry/config | Contract/SLA và ownership file cần chốt. |
+| BFF/core → `vhm-ocr-ekyc` | Zero Trust nội bộ | Workload identity, audience/scope, object context, idempotency | OpenAPI/IAM L3 và E2E chưa hoàn tất. |
+| Core → File/Market/TTOL/Message | Dependency ngoài process | Credential server-side, timeout/retry/config | Contract/SLA và ownership file cần chốt. |
 | Core → Kafka | At-least-once | Transactional outbox, retry, idempotent consumer | Publish mặc định có thể tắt theo config. |
 
 ## 2.3 Vòng đời hồ sơ
@@ -291,7 +286,7 @@ Create/update/transition/delete ghi business row và `outbox_event` trong cùng 
 | Create/update | Dossier, pipeline projection, status history, checklist, outbox | Kafka publish, downstream processing |
 | Command pipeline | Dossier/status, reviewer, history, unit, outbox, notification intent | Gửi message và consumer ngoài hệ thống |
 | Reminder | Claim/dedup reminder và notification intent | Message Delivery |
-| OCR validate | Không thay đổi dossier/checklist | File download/presign và OCR provider |
+| OCR bất đồng bộ | Không thay đổi dossier khi tạo/poll OCR | `vhm-ocr-ekyc` quản lý media, lifecycle và kết quả chuẩn |
 
 ### 2.4.4 Concurrency guards
 
@@ -313,11 +308,11 @@ Create/update/transition/delete ghi business row và `outbox_event` trong cùng 
 | FR-04 | Nộp hồ sơ | Command `SUBMIT`, duplicate guard, checklist readiness, sinh mã | Đạt |
 | FR-05 | Chống trùng | Service precheck + partial unique index | Đạt |
 | FR-06 | Checklist/progress | Sync theo template+group; counts/missing/invalid | Đạt một phần |
-| FR-07 | Phê duyệt nhiều cấp | Pipeline YAML và `LocalPipelineOrchestrator` | Đạt |
+| FR-07 | Phê duyệt nhiều cấp | Pipeline versioned thực thi trong core | Đạt |
 | FR-08 | Phân công reviewer | Manual/reassign/claim + auto round-robin | Đạt |
 | FR-09 | Cấp/thu hồi căn | Atomic allocation/approve; unique active unit | Đạt |
 | FR-10 | Hồ sơ giấy | Submit/confirm hardcopy và timeline | Đạt |
-| FR-11 | OCR CCCD | Validate hai mặt đồng bộ, provider chọn bằng config | Đạt một phần |
+| FR-11 | OCR CCCD | `vhm-ocr-ekyc`: tạo `202`, poll trạng thái/kết quả, người dùng xác nhận trước khi áp dụng | Chưa tích hợp theo kiến trúc đích |
 | FR-12 | Notification/reminder | Outbox, email, T+6/T+18 và manual trigger | Đạt một phần |
 | FR-13 | Tra cứu/báo cáo | List/detail/statistics/by-contact/export | Đạt |
 | FR-14 | Xóa bản nháp | Chỉ DRAFT; xóa checklist và child rows | Đạt |
@@ -371,7 +366,7 @@ Các mục tiêu số trong bản cũ (`200 req/s`, P95 cụ thể, `99.9%`) ch�
 | Kafka | Phát domain event từ outbox | At-least-once; consumer cần idempotent. |
 | Caffeine | Cache cục bộ cho dữ liệu tham chiếu | Giảm latency; cần invalidation/TTL rõ ràng. |
 | JSON Schema 2020-12 | Validate form Social Housing v1 | Cho phép evolution schema; enforcement hiện phụ thuộc config. |
-| Thrift/HTTP clients | File, OCR và tích hợp nội bộ | Contract bên ngoài cần timeout/retry/test. |
+| Thrift/HTTP clients | File, `vhm-ocr-ekyc` và tích hợp nội bộ | Contract bên ngoài cần timeout/retry/test. |
 | Syncfusion/Apache POI | Export/tạo tài liệu | Cần quản lý license, template và kiểm thử output. |
 
 ## 5.1 ADR Log
@@ -386,7 +381,7 @@ ADR chi tiết nằm tại Phụ lục D. Các quyết định nền tảng: mod
 | --- | --- | --- | --- | --- | --- |
 | INT-01 | Agent API | Inbound | HTTP sync | Public registration/list/detail/action | Signature/actor fail closed |
 | INT-02 | Private File Service | Outbound | Client sync | Prepare upload, existence, download/presign | Fail hard cho validation bắt buộc |
-| INT-03 | OCR provider | Outbound | HTTP sync | Validate CCCD trước/sau | Không auto failover; trả lỗi tường minh |
+| INT-03 | `vhm-ocr-ekyc` | Outbound | HTTP async resource | OCR CCCD/tài liệu và kết quả chuẩn | Idempotent create, polling hữu hạn, không retry mù |
 | INT-04 | Market/Project | Outbound | HTTP sync + cache | SAP/project/unit/special days | Tùy use case: fail hard hoặc best effort |
 | INT-05 | TTOL | Outbound | HTTP/cache | Roster reviewer/holiday | Auto-assign best effort; manual fallback |
 | INT-06 | Message Delivery | Outbound | Outbox relay | Email notification | Retry/backoff → FAILED |
@@ -403,25 +398,9 @@ ADR chi tiết nằm tại Phụ lục D. Các quyết định nền tảng: mod
 | 3 | `PATCH /v1/social-housing/registrations/{id}` | Ghi snapshot form/documents đầy đủ. |
 | 4 | `POST /v1/social-housing/registrations/{id}/submit` | Chuyển vào pipeline nếu mọi guard đạt. |
 
-### 6.2.2 Core dossier endpoints
+### 6.2.2 Nhóm năng lực API nội bộ
 
-Base path: `/internal/v1/dossiers`.
-
-| **Method/path** | **Mục đích** | **Ghi chú contract** |
-| --- | --- | --- |
-| `POST /` | Create DRAFT | `source`, idempotency và signed actor. |
-| `GET /`, `GET /{id}` | List/detail | Visibility, masking, progress/actions. |
-| `PUT /{id}` | Full/contact update | `If-Match` optional; Agent PATCH được map sang đây. |
-| `DELETE /{id}` | Hard delete DRAFT | `If-Match` optional. |
-| `POST /{id}/commands/{action}` | Pipeline action | State/role/ownership/version guards. |
-| `POST /{id}/documents/approve` | Document decision | Ghi approval/history trong form snapshot. |
-| `POST /prepare-upload` | Tạo upload path/URL | Core nhận registration UUID. |
-| `POST /validate-identity-document` | OCR/validate CCCD | Sync, không persistence checklist. |
-| `GET /statistics`, `GET /by-contact` | Thống kê/tra cứu | Theo visibility của actor. |
-| `GET /{id}/download` | Contracts/attachments | `type=CONTRACTS|ATTACHMENTS`. |
-| `POST /{id}/revision-reminders/trigger` | Nhắc thủ công | Role PKD/PKD_LEAD. |
-
-Các endpoint hỗ trợ khác gồm `/internal/v1/agent-project-permissions`, `/internal/v1/dossiers/{id}/notes` và `/internal/v1/reports/social-housing/export`.
+Core công bố API nội bộ có version cho các nhóm năng lực: quản lý hồ sơ, command pipeline, quyết định tài liệu, quyền dự án, notes/hardcopy, download/export, statistics và reminder. Public contract không phản chiếu nguyên xi endpoint nội bộ; Agent API chịu trách nhiệm map DTO, HTTP semantics và ẩn cấu trúc nội bộ. Danh sách path/field đầy đủ thuộc OpenAPI L3, không lặp lại trong tài liệu L2 này.
 
 ### 6.2.3 Envelope và phân trang
 
@@ -435,13 +414,43 @@ Core trả `ServiceResponse { code, message, data }`, trong đó `code=0` là th
 - Agent API phải đọc dossier bằng actor context trước khi xin URL.
 - Sau upload, create/update kiểm tra file tồn tại khi feature bật; response File Service hiện chưa có uploader/grant owner nên OI-002 vẫn mở.
 
-## 6.4 Contract OCR
+## 6.4 Contract OCR dùng chung
 
-- `ocr-model-active` chọn **chính xác một** provider `IN_HOUSE` hoặc `VINBIGDATA` tại runtime; không tự động chuyển provider.
-- Request cần path mặt trước và mặt sau.
-- In-house dùng presigned download rồi gọi OCR client; VinBigData tải binary từ private file và gửi hai mặt theo contract vendor.
-- Core kiểm tra số giấy tờ/ngày sinh, tuổi tối thiểu 18, ngày hết hạn, ngày/nơi cấp và trả dữ liệu chuẩn hóa cùng URL xem ngắn hạn.
-- Kết quả OCR không tự động ghi vào `dossier_checklist.ocr_result` và không tự sửa `formData`; caller phải quyết định áp dụng.
+### 6.4.1 Ranh giới tích hợp
+
+Dossier không tích hợp trực tiếp provider OCR. Agent API/BFF gọi `vhm-ocr-ekyc` bằng workload identity; capability OCR tự quản lý File Management, PostgreSQL/outbox, Kafka, processor, provider credential, polling provider và kết quả chuẩn. Dossier chỉ biết contract VHM và các opaque reference.
+
+Current-state: core còn endpoint/client OCR đồng bộ. Thành phần này là legacy compatibility trong giai đoạn chuyển đổi, không phải kiến trúc đích và phải được loại bỏ/disable sau khi E2E với `vhm-ocr-ekyc` đạt quality gate.
+
+### 6.4.2 Tạo tài nguyên OCR
+
+Contract mục tiêu dùng `POST /ocr` với `Idempotency-Key` bắt buộc và trả HTTP `202` cùng `Retry-After`. Context tối thiểu:
+
+| **Trường** | **Ý nghĩa/kiểm soát** |
+| --- | --- |
+| `source` | `DOSSIER`; dùng cho authorization, quota và idempotency scope. |
+| `referenceId` | Dossier ID dạng opaque business reference. |
+| `requestBy` | Opaque actor reference, không nhúng PII. |
+| `subjectRef` | Opaque applicant/customer reference. |
+| `channel`, `platform` | Context kênh đã allowlist. |
+| `documentType`/loại OCR | `NATIONAL_ID` hoặc contract CCCD hai mặt được đóng băng ở OpenAPI L3. |
+| `s3PathFile`/media roles | Chỉ reference do service chấp nhận; không gửi presigned URL vào DB/event. |
+
+Cùng idempotency key và cùng request trả tài nguyên hiện hữu; cùng key nhưng request khác trả `409`. Provider không phải tham số do dossier/client lựa chọn.
+
+### 6.4.3 Vòng đời và áp dụng kết quả
+
+Trạng thái công bố cho BFF gồm `QUEUED`, `PROCESSING`, `COMPLETED`, `FAILED`, `EXPIRED`. BFF thăm dò `/ocr/result`; `nextAction` hướng dẫn `POLL`, `RETRY` hoặc `CONFIRM_AND_APPLY`.
+
+Khi `COMPLETED`, UI phải cho người dùng kiểm tra kết quả chuẩn trước khi áp dụng. Việc áp dụng chỉ diễn ra qua PATCH snapshot dossier bình thường; OCR service không ghi trực tiếp vào database dossier. Dossier có thể lưu `ocrId` và outcome tối thiểu để trace/readiness sau khi contract L3 được duyệt, nhưng không lưu raw provider response hoặc provider job ID.
+
+### 6.4.4 Tính nhất quán và failure semantics
+
+- `vhm-ocr-ekyc` tạo request, media refs và outbox trong một transaction rồi mới trả `202`.
+- Kafka chỉ chứa OCR ID tối thiểu; worker idempotent và trạng thái terminal bất biến.
+- Dossier/BFF không retry mù khi kết quả submit không rõ; dùng cùng idempotency key hoặc đối soát theo `ocrId`.
+- OCR thất bại/timeout không tự động biến hồ sơ thành `REJECTED`; người dùng có thể retry theo policy hoặc nhập/đối chiếu thủ công.
+- Các giới hạn MIME, size, checksum, retention và deadline dùng đúng baseline của tài liệu L2 `vhm-ocr-ekyc`; không định nghĩa lại khác trong dossier.
 
 ## 6.5 Contract pipeline
 
@@ -543,7 +552,7 @@ sequenceDiagram
     participant D as PostgreSQL
 
     U->>A: POST registrations {} / partial
-    A->>C: POST /internal/v1/dossiers + signed actor
+    A->>C: Create dossier + signed actor
     C->>D: Insert DRAFT + pipeline + history + outbox
     D-->>C: Commit/version
     C-->>A: dossierId, DRAFT, version
@@ -570,7 +579,7 @@ sequenceDiagram
 sequenceDiagram
     actor R as Reviewer
     participant A as Agent API
-    participant C as LocalPipelineOrchestrator
+    participant C as Dossier Core Pipeline
     participant D as PostgreSQL
     participant N as Notification Relay
 
@@ -584,6 +593,35 @@ sequenceDiagram
     N->>D: Claim notification outbox
     N->>N: Dispatch + retry independently
 ```
+
+### 7.2.3 Luồng OCR CCCD qua capability dùng chung
+
+```mermaid
+sequenceDiagram
+    actor U as Người dùng
+    participant B as Agent API / BFF
+    participant O as vhm-ocr-ekyc
+    participant F as File Management
+    participant C as Dossier Core
+
+    U->>B: Yêu cầu chuẩn bị media OCR
+    B->>O: Prepare upload + workload identity
+    O->>F: Xin presigned PUT
+    F-->>O: URL ngắn hạn + s3PathFile
+    O-->>B: Upload contract
+    U->>F: PUT media trực tiếp
+    B->>O: POST /ocr + Idempotency-Key + opaque context
+    O-->>B: 202 + ocrId + Retry-After
+    loop Cho tới terminal/deadline
+        B->>O: /ocr/result
+        O-->>B: QUEUED / PROCESSING / terminal
+    end
+    B-->>U: Hiển thị kết quả chuẩn để xác nhận
+    U->>B: Xác nhận áp dụng
+    B->>C: PATCH dossier snapshot
+```
+
+Không có đường ghi trực tiếp từ OCR service vào PostgreSQL của dossier. Ranh giới xác nhận giúp OCR không tự trở thành quyết định nghiệp vụ và giữ optimistic version/duplicate/file guards tại dossier core.
 
 ## 7.3 Data Privacy & PII
 
@@ -653,7 +691,7 @@ Khi reviewer request revision, hồ sơ đi về stage intake tương ứng ho�
 | External reviewer roster lỗi | Bỏ auto-assign, cho manual path | Best effort | Transition có thể vẫn commit theo action |
 | Kafka down | Outbox giữ pending | Relay retry | Business commit không mất |
 | Message Delivery lỗi | Notification outbox retry/backoff | Hữu hạn rồi FAILED | Transition không rollback |
-| OCR timeout/provider lỗi | Trả lỗi sync | Caller retry có kiểm soát | Không ghi checklist/form |
+| OCR `FAILED`/`EXPIRED`/timeout | Kết thúc polling, hiển thị retry/manual review | Theo `nextAction` và cùng idempotency policy | Không tự sửa/reject dossier |
 | Redis security nonce lỗi khi required | Fail closed | Theo runbook | Không xử lý request |
 
 ## 8.3 Chuẩn hóa dữ liệu
