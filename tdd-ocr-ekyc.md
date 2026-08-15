@@ -8,7 +8,7 @@
 | **Trường** | **Nội dung** |
 | --- | --- |
 | **Trạng thái** | **ĐANG THẨM ĐỊNH (UNDER REVIEW)** |
-| **Phiên bản & Lịch sử thay đổi** | `v0.9.31` — 15/08/2026 — Chuẩn hóa topology kênh–miền: BFF là ingress của Mobile/Web; Domain Backend Service sở hữu ngữ cảnh nghiệp vụ và gọi trực tiếp capability OCR/eKYC |
+| **Phiên bản & Lịch sử thay đổi** | `v0.9.31` — 15/08/2026 — Chuẩn hóa topology kênh–miền: Domain BFF là ingress của Mobile/Web; Domain Backend Service sở hữu ngữ cảnh nghiệp vụ và gọi trực tiếp capability OCR/eKYC |
 | **Chủ sở hữu tài liệu** | TBD — một cá nhân chịu trách nhiệm tài liệu |
 | **Chủ sở hữu hệ thống** | TBD |
 | **Hệ thống** | `vhm-ocr-ekyc` — năng lực OCR/eKYC dùng chung |
@@ -114,7 +114,7 @@ liệu nhạy cảm sang từng ứng dụng.
 | OCR hồ sơ Sale | CCCD trước/sau + PLHĐ; gửi hồ sơ và thăm dò kết quả FPT | `BẮT BUỘC` |
 | OCR status/result | Tài nguyên VHM, polling, kết quả được mã hóa | `BẮT BUỘC` |
 | eKYC qua FPT SDK | Proxy đồng bộ; giữ nguyên HTTP status/body, chuyển tiếp end-to-end header theo contract SDK; lưu request/kết quả eKYC trong PostgreSQL | `BẮT BUỘC` |
-| File Management | `vhm-ocr-ekyc` xin presigned URL và trả qua Domain Backend Service/BFF; Mobile/Web PUT trực tiếp lên kho riêng tư | `BẮT BUỘC` |
+| File Management | `vhm-ocr-ekyc` xin presigned URL và trả qua Domain Backend Service/Domain BFF; Mobile/Web PUT trực tiếp lên kho riêng tư | `BẮT BUỘC` |
 
 ## 1.2 Out of Scope
 
@@ -132,14 +132,14 @@ liệu nhạy cảm sang từng ứng dụng.
 
 | **ID** | **Giả định/Ràng buộc** | **Trạng thái** | **Ảnh hưởng** |
 | --- | --- | --- | --- |
-| A-01 | OCR luôn bất đồng bộ từ góc nhìn kênh, kể cả khi lời gọi provider đồng bộ | Quyết định kiến trúc | API trả `202`; Domain Backend Service thăm dò OCR, chiếu kết quả nghiệp vụ qua BFF cho Mobile/Web. |
+| A-01 | OCR luôn bất đồng bộ từ góc nhìn kênh, kể cả khi lời gọi provider đồng bộ | Quyết định kiến trúc | API trả `202`; Domain Backend Service thăm dò OCR, chiếu kết quả nghiệp vụ qua Domain BFF cho Mobile/Web. |
 | A-02 | eKYC init/OCR/liveness đồng bộ và không tự thử lại mutation | Quyết định kiến trúc | Timeout/không rõ sau khi gửi phải trả lỗi, không phát lại mù. |
-| A-03 | `vhm-ocr-ekyc` gọi File Management để lấy presigned URL ngắn hạn và trả qua Domain Backend Service/BFF; Mobile/Web PUT trực tiếp lên kho riêng tư | Quyết định kiến trúc | Processor lấy URL tải xuống qua File Management bằng tham chiếu đã lưu. |
+| A-03 | `vhm-ocr-ekyc` gọi File Management để lấy presigned URL ngắn hạn và trả qua Domain Backend Service/Domain BFF; Mobile/Web PUT trực tiếp lên kho riêng tư | Quyết định kiến trúc | Processor lấy URL tải xuống qua File Management bằng tham chiếu đã lưu. |
 | A-04 | Kafka chuyển phát at-least-once; consumer phải idempotent | Giả định nền tảng | Thông điệp trùng không gọi FPT sau khi OCR đã được nhận xử lý hoặc đã kết thúc. |
 | A-05 | FPT Sale giữ kết quả 30 ngày, thăm dò tối thiểu mỗi 3 giây, xử lý tối đa 5 phút | Theo tài liệu API OCR FPT cung cấp cho Vinhomes | Cần kiểm thử contract/SLA chính thức trước production. |
 | A-06 | Mỗi file Sale ≤20 MB; đúng 3 file; provider tổng request ≤60 MB | `BÊN NGOÀI` | Bộ nhớ/dung lượng phải được tính theo ba file. |
-| A-07 | Luồng phiên FPT eKYC duy trì cùng ngữ cảnh phiên và thông tin thiết bị xuyên suốt các bước | Yêu cầu tích hợp FPT | BFF, Domain Backend Service và `vhm-ocr-ekyc` giữ nguyên dữ liệu phiên/thiết bị, status/body và các header cần thiết theo contract SDK. |
-| A-08 | Luồng kênh đi theo `Mobile/Web → BFF → Domain Backend Service → vhm-ocr-ekyc` | Yêu cầu kiến trúc | BFF xác thực kênh; Domain Backend Service phân quyền đối tượng/ngữ cảnh nghiệp vụ và là caller trực tiếp được `vhm-ocr-ekyc` xác thực bằng danh tính workload. Backend process có thể đi vào Domain Backend Service mà không qua BFF. |
+| A-07 | Luồng phiên FPT eKYC duy trì cùng ngữ cảnh phiên và thông tin thiết bị xuyên suốt các bước | Yêu cầu tích hợp FPT | Domain BFF, Domain Backend Service và `vhm-ocr-ekyc` giữ nguyên dữ liệu phiên/thiết bị, status/body và các header cần thiết theo contract SDK. |
+| A-08 | Luồng kênh đi theo `Mobile/Web → Domain BFF → Domain Backend Service → vhm-ocr-ekyc` | Yêu cầu kiến trúc | Domain BFF xác thực kênh; Domain Backend Service phân quyền đối tượng/ngữ cảnh nghiệp vụ và là caller trực tiếp được `vhm-ocr-ekyc` xác thực bằng danh tính workload. Backend process có thể đi vào Domain Backend Service mà không qua Domain BFF. |
 | A-09 | Credential provider/khóa mã hóa được cấp qua secret manager/runtime | `BẮT BUỘC` | Không được có secret trong source code, image, manifest hoặc log. |
 | A-10 | Purpose, consent, retention, residency và deletion policy được duyệt | Yêu cầu tuân thủ | Áp dụng trước khi xử lý dữ liệu thật trên production. |
 | A-11 | `source`, `referenceId`, `requestBy`, `subjectRef` là opaque reference, không nhúng PII | Contract | Vi phạm làm tăng rò rỉ ở DB/log. |
@@ -149,8 +149,8 @@ liệu nhạy cảm sang từng ứng dụng.
 | **Nhóm người dùng** | **Trách nhiệm/quyền** |
 | --- | --- |
 | End User | Upload/capture media và nhận trạng thái/kết quả qua ứng dụng Mobile/Web VHM. |
-| Mobile/Web | Giao tiếp với BFF; không gọi trực tiếp dịch vụ OCR/eKYC hoặc FPT. |
-| BFF Service | Ingress theo kênh: xác thực phiên/token, kiểm soát kênh và chuyển đổi contract presentation; không sở hữu quyết định nghiệp vụ hoặc gọi trực tiếp `vhm-ocr-ekyc`. |
+| Mobile/Web | Giao tiếp với Domain BFF của miền; không gọi trực tiếp Domain Backend Service, dịch vụ OCR/eKYC hoặc FPT. |
+| Domain BFF | Ingress theo kênh của một miền nghiệp vụ: xác thực phiên/token, kiểm soát kênh và chuyển đổi contract presentation; không sở hữu quyết định nghiệp vụ hoặc gọi trực tiếp `vhm-ocr-ekyc`. |
 | Domain Backend Service | Phân quyền business object, cấp opaque context, gọi trực tiếp OCR/eKYC và áp dụng kết quả sau xác nhận; tên service cụ thể phụ thuộc domain, ví dụ `vhm-dossier-core`. |
 | Platform Operator | Vận hành queue, worker, provider, DB, dashboard và incident. |
 | Security/Data Privacy | Phê duyệt purpose, access, encryption, retention và bằng chứng tuân thủ. |
@@ -195,7 +195,7 @@ Lỗi OCR/eKYC không được tự biến thành quyết định nghiệp vụ 
 | ARCH-08 | eKYC giữ nguyên status/body FPT, chỉ chuyển tiếp end-to-end header theo contract SDK và lưu request/kết quả theo chính sách dữ liệu; credential và provider job ID không thuộc contract công khai. |
 | ARCH-09 | Thay đổi PostgreSQL schema phải được quản lý bằng migration có phiên bản và có phương án rollback. |
 | ARCH-10 | Consumer Kafka phải idempotent; proxy eKYC không thay đổi response FPT và không tự phát lại mutation khi kết quả gửi chưa rõ. |
-| ARCH-11 | Với luồng Mobile/Web, BFF là ingress còn Domain Backend Service là caller trực tiếp của `vhm-ocr-ekyc`; backend process có thể gọi Domain Backend Service mà không bắt buộc đi qua BFF. |
+| ARCH-11 | Với luồng Mobile/Web, Domain BFF là ingress còn Domain Backend Service là caller trực tiếp của `vhm-ocr-ekyc`; backend process có thể gọi Domain Backend Service mà không bắt buộc đi qua Domain BFF. |
 
 ## 2.2 Sơ đồ kiến trúc ứng dụng
 
@@ -205,7 +205,7 @@ Lỗi OCR/eKYC không được tự biến thành quyết định nghiệp vụ 
 flowchart LR
     USER([Người dùng])
     APP[Mobile / Web]
-    BFF[VHM BFF]
+    BFF[Domain BFF]
     DOMAIN[Domain Backend Service]
     OCR[vhm-ocr-ekyc]
     FILE[File Management]
@@ -230,7 +230,7 @@ flowchart LR
 
 ```mermaid
 flowchart LR
-    BFF[BFF]
+    BFF[Domain BFF]
     DOMAIN[Domain Backend Service]
 
     subgraph APP[vhm-ocr-ekyc]
@@ -265,10 +265,10 @@ flowchart LR
 ```
 
 Đọc sơ đồ từ trái sang phải: OCR đi theo luồng bất đồng bộ
-`BFF → Domain Backend Service → OCR API → PostgreSQL/Outbox → Kafka → OCR Processor → FPT`;
-eKYC đi theo luồng đồng bộ `BFF → Domain Backend Service → eKYC Proxy → FPT` và
+`Domain BFF → Domain Backend Service → OCR API → PostgreSQL/Outbox → Kafka → OCR Processor → FPT`;
+eKYC đi theo luồng đồng bộ `Domain BFF → Domain Backend Service → eKYC Proxy → FPT` và
 không đi qua Kafka/OCR Processor. Khi chuẩn bị upload, OCR API gọi File Management
-và trả presigned URL qua Domain Backend Service/BFF. Domain Backend Service là tên
+và trả presigned URL qua Domain Backend Service/Domain BFF. Domain Backend Service là tên
 vai trò bao quát; triển khai cụ thể có thể là `vhm-dossier-core` hoặc backend của miền khác.
 
 ### 2.2.3 Sơ đồ kiến trúc eKYC đồng bộ
@@ -276,7 +276,7 @@ vai trò bao quát; triển khai cụ thể có thể là `vhm-dossier-core` ho�
 ```mermaid
 flowchart LR
     CHANNEL([Mobile / Web<br/>FPT SDK])
-    BFF[BFF]
+    BFF[Domain BFF]
     DOMAIN[Domain Backend Service]
 
     subgraph APP[vhm-ocr-ekyc]
@@ -322,10 +322,10 @@ mục 6.5.2; sơ đồ không hàm ý HTTP FPT và PostgreSQL nằm trong cùng 
 
 | **Ranh giới** | **Mức tin cậy** | **Kiểm soát bắt buộc** | **Tiêu chí phê duyệt** |
 | --- | --- | --- | --- |
-| Mobile/Web → BFF | Không tin cậy | OIDC/JWT, kiểm soát phiên/kênh, giới hạn tần suất/body | BFF phải vượt kiểm thử xác thực và lạm dụng. |
-| BFF → Domain Backend Service | Zero Trust nội bộ | Danh tính workload/mTLS/JWT, audience/scope; truyền actor context có kiểm soát | Bắt buộc kiểm thử giả mạo actor context và sai phạm vi. |
+| Mobile/Web → Domain BFF | Không tin cậy | OIDC/JWT, kiểm soát phiên/kênh, giới hạn tần suất/body | Domain BFF phải vượt kiểm thử xác thực và lạm dụng. |
+| Domain BFF → Domain Backend Service | Zero Trust nội bộ | Danh tính workload/mTLS/JWT, audience/scope; truyền actor context có kiểm soát | Bắt buộc kiểm thử giả mạo actor context và sai phạm vi. |
 | Domain Backend Service → `vhm-ocr-ekyc` | Zero Trust nội bộ | Danh tính workload/mTLS/JWT, audience/scope, chống phát lại; phân quyền business object trước lời gọi | Bắt buộc kiểm thử danh tính workload, IDOR và sai phạm vi. |
-| Mobile/Web → kho riêng tư | Đầu vào media không tin cậy | Presigned PUT chính xác, hạn ngắn, checksum, không đọc/liệt kê | URL phải đi theo File Management → `vhm-ocr-ekyc` → Domain Backend Service → BFF. |
+| Mobile/Web → kho riêng tư | Đầu vào media không tin cậy | Presigned PUT chính xác, hạn ngắn, checksum, không đọc/liệt kê | URL phải đi theo File Management → `vhm-ocr-ekyc` → Domain Backend Service → Domain BFF. |
 | Service/processor → File Management/kho riêng tư | Hạn chế | Danh tính workload, TLS, phạm vi object và giới hạn byte | Bắt buộc kiểm thử truy cập chéo object và giới hạn dữ liệu. |
 | Service/processor → FPT | Bên ngoài | TLS, endpoint cố định, credential bí mật, timeout, quota | Bắt buộc kiểm thử contract, timeout và quota. |
 | Service → PostgreSQL/Kafka | Hạn chế | Mạng riêng, TLS/xác thực, đặc quyền tối thiểu | Bắt buộc có bằng chứng cấu hình và kiểm thử truy cập. |
@@ -369,7 +369,7 @@ thêm trạng thái vòng đời cho bên gọi.
 - FPT Sale: deadline `5 phút`; worker kiểm tra trước mỗi lần thăm dò và chuyển sang
   `FAILED` với `errorCode=PROCESSING_TIMEOUT` khi vượt thời hạn.
 - Ngân sách timeout phải được cấu hình theo từng thao tác và thỏa mãn thứ tự:
-  timeout FPT < deadline `vhm-ocr-ekyc` < deadline Domain Backend Service < deadline BFF < deadline Mobile/Web. Giá trị cụ
+  timeout FPT < deadline `vhm-ocr-ekyc` < deadline Domain Backend Service < deadline Domain BFF < deadline Mobile/Web. Giá trị cụ
   thể phải được xác nhận bằng SLA FPT và kiểm thử tải trước production.
 
 ## 2.4 Tính nhất quán và Idempotency
@@ -434,7 +434,7 @@ tài nguyên xử lý hoặc transaction PostgreSQL trong thời gian chờ FPT.
 
 | **FR ID** | **Năng lực** | **Yêu cầu** | **Tiêu chí nghiệm thu** |
 | --- | --- | --- | --- |
-| FR-001 | Chuẩn bị upload | `vhm-ocr-ekyc` kiểm tra role/MIME/size, tạo path do server kiểm soát, gọi File Management và trả presigned URL qua Domain Backend Service/BFF | Bắt buộc kiểm thử allowlist, kích thước và path. |
+| FR-001 | Chuẩn bị upload | `vhm-ocr-ekyc` kiểm tra role/MIME/size, tạo path do server kiểm soát, gọi File Management và trả presigned URL qua Domain Backend Service/Domain BFF | Bắt buộc kiểm thử allowlist, kích thước và path. |
 | FR-002 | Media sẵn sàng | Chỉ chấp nhận managed path tồn tại và đúng metadata/checksum trước khi tạo OCR | Bắt buộc kiểm thử media giả mạo, thiếu và truy cập chéo. |
 | FR-003 | Tạo OCR | Commit yêu cầu, tham chiếu media và outbox event trong cùng transaction; trả `202 + Retry-After: 3` sau commit | Bắt buộc kiểm thử rollback, phát lại outbox và Kafka trùng. |
 | FR-004 | Idempotency | Cùng key/payload trả tài nguyên cũ; khác payload trả xung đột | Bắt buộc kiểm thử request tuần tự và đồng thời. |
@@ -444,7 +444,7 @@ tài nguyên xử lý hoặc transaction PostgreSQL trong thời gian chờ FPT.
 | FR-008 | Kết quả | Chỉ trả khi có kết quả đã mã hóa; nếu chưa có trả `409` | Bắt buộc kiểm thử phân quyền, giải mã và trạng thái chưa sẵn sàng. |
 | FR-009 | OCR chuẩn hóa | Allowlist field/confidence/warning, không trả raw provider payload | Bắt buộc contract test theo schema kết quả chuẩn. |
 | FR-010 | Kết quả Sale | Chỉ giữ các khối allowlist `processing_time_ms`, `completeness`, `documents`, `matching`, `signature_seal` trong `details` | Bắt buộc contract test với mọi trạng thái FPT Sale. |
-| FR-011 | eKYC đồng bộ | FPT SDK gọi qua BFF, Domain Backend Service và proxy; các hop trung gian stream có backpressure, service chèn credential, giữ nguyên status/body và chuyển tiếp end-to-end header theo ma trận contract | Bắt buộc E2E theo từng phiên bản SDK hỗ trợ, gồm cả non-2xx. |
+| FR-011 | eKYC đồng bộ | FPT SDK gọi qua Domain BFF, Domain Backend Service và proxy; các hop trung gian stream có backpressure, service chèn credential, giữ nguyên status/body và chuyển tiếp end-to-end header theo ma trận contract | Bắt buộc E2E theo từng phiên bản SDK hỗ trợ, gồm cả non-2xx. |
 | FR-012 | Lưu request/kết quả eKYC | Lưu request nghiệp vụ trước khi gọi FPT và lưu response FPT mã hóa; không lưu media raw/credential; lỗi lưu response không được thay response FPT hoặc kích hoạt gọi lại mutation | Bắt buộc kiểm thử lỗi DB trước/sau lời gọi FPT và cảnh báo vận hành. |
 | FR-013 | Đối soát/phục hồi OCR | Phát hiện yêu cầu quá hạn, tiếp tục job FPT đã biết và không gửi lại khi kết quả lần gửi chưa rõ | Bắt buộc kiểm thử dừng worker và kết quả gửi không rõ. |
 | FR-014 | Tương quan chủ thể | Lưu `subjectRef` opaque trong `ocr_ekyc.ocr_ekyc_requests` và dùng cùng `source`/`referenceId` cho kiểm soát phạm vi | Bắt buộc kiểm thử tương quan, phân quyền và idempotency. |
@@ -466,7 +466,7 @@ tài nguyên xử lý hoặc transaction PostgreSQL trong thời gian chờ FPT.
 | BR-011 | Response eKYC phải tương thích wire contract FPT SDK theo mục 6.5.2; quyết định nghiệp vụ VHM phải được đặc tả riêng và không sửa status/body FPT. |
 | BR-012 | Terminal OCR không bị xử lý lại bởi duplicate Kafka message. |
 | BR-013 | File/path chỉ được tạo hoặc xác minh bởi `vhm-ocr-ekyc` theo managed prefix. |
-| BR-014 | Chỉ chấp nhận `WEB/WEB`, `MOBILE/ANDROID`, `MOBILE/IOS`; luồng kênh bắt buộc đi `Mobile/Web → BFF → Domain Backend Service → vhm-ocr-ekyc`. BFF không bắt buộc cho backend process, nhưng mọi lời gọi capability vẫn đi qua Domain Backend Service. |
+| BR-014 | Chỉ chấp nhận `WEB/WEB`, `MOBILE/ANDROID`, `MOBILE/IOS`; luồng kênh bắt buộc đi `Mobile/Web → Domain BFF → Domain Backend Service → vhm-ocr-ekyc`. Domain BFF không bắt buộc cho backend process, nhưng mọi lời gọi capability vẫn đi qua Domain Backend Service. |
 
 <a id="muc-4"></a>
 
@@ -477,7 +477,7 @@ tài nguyên xử lý hoặc transaction PostgreSQL trong thời gian chờ FPT.
 | NFR-001 | Tính sẵn sàng | Đo riêng SLO dịch vụ và SLA FPT; triển khai nhiều replica/Multi-AZ | SLO cụ thể được phê duyệt và kiểm thử trước production. |
 | NFR-002 | Độ trễ tiếp nhận OCR | Không gọi FPT khi tạo; p95 theo SLO API VHM | Mục tiêu p95 và kết quả kiểm thử tải được phê duyệt. |
 | NFR-003 | Hoàn tất OCR | Sale ≤5 phút theo contract FPT; OCR thường theo SLO được duyệt | Kiểm thử E2E và tải đáp ứng deadline. |
-| NFR-004 | Độ trễ eKYC | Timeout FPT < deadline `vhm-ocr-ekyc` < deadline Domain Backend Service < deadline BFF < deadline Mobile/Web | Ngân sách theo từng thao tác được duyệt và kiểm thử. |
+| NFR-004 | Độ trễ eKYC | Timeout FPT < deadline `vhm-ocr-ekyc` < deadline Domain Backend Service < deadline Domain BFF < deadline Mobile/Web | Ngân sách theo từng thao tác được duyệt và kiểm thử. |
 | NFR-005 | Tính toàn vẹn | Transactional Outbox, idempotency, loại trùng và phục hồi trạng thái quá hạn | Vượt kiểm thử rollback, crash window, phát lặp và đồng thời. |
 | NFR-006 | An toàn thông tin | TLS, xác thực workload, secret manager, endpoint cố định và log không chứa dữ liệu nhạy cảm | Vượt kiểm thử ANBM trước production. |
 | NFR-007 | Quyền riêng tư | Mã hóa, tối thiểu hóa dữ liệu, lưu giữ/xóa, DPA/DPIA | Chính sách và bằng chứng tuân thủ được phê duyệt. |
@@ -500,7 +500,7 @@ tài nguyên xử lý hoặc transaction PostgreSQL trong thời gian chờ FPT.
 | Lưu trữ media | File Management và kho object riêng tư | `vhm-ocr-ekyc` lấy presigned URL; Mobile/Web upload trực tiếp, không truyền media qua Kafka hoặc lưu binary trong PostgreSQL | Cần checksum, thời hạn lưu và kiểm soát truy cập. |
 | Mã hóa | Tiêu chuẩn mã hóa và quản lý khóa của VHM | Bảo vệ kết quả OCR/eKYC được lưu trữ | Cần bằng chứng quản lý/luân chuyển khóa trước production. |
 | Quan sát hệ thống | Metric và log theo nền tảng VHM | Theo dõi API, outbox, Kafka, worker và FPT | Không ghi PII hoặc dữ liệu sinh trắc. |
-| Tài liệu API | OpenAPI có phiên bản | Contract giữa Domain Backend Service và capability OCR/eKYC; contract kênh BFF thuộc domain | Cần xuất bản đặc tả L3 trước go-live. |
+| Tài liệu API | OpenAPI có phiên bản | Contract giữa Domain Backend Service và capability OCR/eKYC; contract kênh Domain BFF thuộc domain | Cần xuất bản đặc tả L3 trước go-live. |
 
 ## 5.1 ADR Log
 
@@ -522,7 +522,7 @@ tập trung, kết quả OCR chuẩn, lưu kết quả eKYC, media riêng tư v�
 | EVT-01 | Điều phối OCR sau khi tiếp nhận | `vhm.ocr-ekyc.job.created.v1` | Outbox Publisher | OCR Processor qua Kafka | Kafka | Bất đồng bộ | `eventId`, định danh OCR và phiên bản contract |
 | FPT-01 | Nhận dạng một tài liệu | Contract FPT được quản lý nội bộ | OCR Processor | FPT | HTTPS/multipart | Đồng bộ bên trong luồng OCR bất đồng bộ | Media tài liệu và kết quả FPT |
 | FPT-02 | Gửi và thăm dò hồ sơ Sale | Contract FPT được quản lý nội bộ | OCR Processor | FPT | HTTPS/multipart/JSON | Bất đồng bộ theo nghiệp vụ | Ba tài liệu, mã giao dịch nội bộ và kết quả FPT |
-| EKYC-01 | Proxy các thao tác do FPT SDK điều phối | Nhóm API tại mục 6.5 | FPT SDK qua BFF và Domain Backend Service | FPT qua `vhm-ocr-ekyc` | HTTPS/JSON hoặc multipart | Đồng bộ | Request SDK; status/body FPT và end-to-end header theo ma trận contract |
+| EKYC-01 | Proxy các thao tác do FPT SDK điều phối | Nhóm API tại mục 6.5 | FPT SDK qua Domain BFF và Domain Backend Service | FPT qua `vhm-ocr-ekyc` | HTTPS/JSON hoặc multipart | Đồng bộ | Request SDK; status/body FPT và end-to-end header theo ma trận contract |
 
 ## 6.2 Contract API OCR VHM
 
@@ -594,7 +594,7 @@ gần nhất và `result=null` để Domain Backend Service tiếp tục thăm d
 
 ## 6.3 Contract presigned upload
 
-Mobile/Web không gọi File Management trực tiếp. Mobile/Web gửi yêu cầu qua BFF tới
+Mobile/Web không gọi File Management trực tiếp. Mobile/Web gửi yêu cầu qua Domain BFF tới
 Domain Backend Service; Domain Backend Service gọi `vhm-ocr-ekyc`, service kiểm tra
 metadata và gọi File Management để nhận presigned URL rồi trả ngược qua hai tầng.
 Đầu vào logic gồm `source`, `referenceId`,
@@ -650,7 +650,7 @@ diễn lại. Cảnh báo chữ ký/con dấu chỉ là bằng chứng hỗ tr�
 ## 6.5 Contract proxy eKYC tương thích FPT SDK
 
 FPT SDK chạy trên Mobile/Web và được cấu hình gọi theo tuyến
-`BFF → Domain Backend Service → vhm-ocr-ekyc`. Service làm proxy đồng bộ tới FPT,
+`Domain BFF → Domain Backend Service → vhm-ocr-ekyc`. Service làm proxy đồng bộ tới FPT,
 quản lý credential phía server và không điều phối
 thứ tự các bước thay SDK. Contract proxy và việc lưu PostgreSQL là hai trách nhiệm
 riêng: lỗi lưu sau khi nhận response không được làm thay đổi response dành cho SDK.
@@ -658,7 +658,7 @@ riêng: lỗi lưu sau khi nhận response không được làm thay đổi resp
 ### 6.5.1 Danh mục API eKYC VHM
 
 Các đường dẫn dưới đây là contract giữa Domain Backend Service và `vhm-ocr-ekyc`;
-contract presentation giữa BFF và Domain Backend Service thuộc từng miền. Đây không phải
+contract presentation giữa Domain BFF và Domain Backend Service thuộc từng miền. Đây không phải
 endpoint OCR document bất đồng bộ tại mục 6.2 và không công bố địa chỉ downstream
 của FPT.
 
@@ -669,7 +669,7 @@ của FPT.
 | Liveness và face match | `POST /v1/ekyc-sdk/face/liveness` | Multipart dùng `selfies` hoặc `video`; `session-id`, `device-type`; tùy chọn `auto`, `lang`, `sdk-version` | Kiểm tra sống và đối sánh khuôn mặt với giấy tờ đã OCR trong cùng phiên. |
 | Kiểm tra NFC | `POST /v1/ekyc-sdk/check_chip` | JSON các data group NFC; `session-id`, `device-type`, `auto`; tùy chọn `lang`, `sdk-version` | Kiểm tra dữ liệu chip trong phiên trên kênh Mobile được hỗ trợ. |
 
-`api-key` FPT không thuộc contract BFF/Domain Backend Service và không được gửi từ Mobile/Web. Thông tin
+`api-key` FPT không thuộc contract Domain BFF/Domain Backend Service và không được gửi từ Mobile/Web. Thông tin
 xác thực này được `vhm-ocr-ekyc` bổ sung ở biên tích hợp. Bốn thao tác trên là đồng
 bộ; SDK quyết định thứ tự gọi và xử lý response.
 
@@ -681,7 +681,7 @@ quy tắc nhất quán dưới đây.
 
 | **Nội dung** | **Contract bắt buộc** |
 | --- | --- |
-| Request tới FPT | BFF và Domain Backend Service stream có backpressure, không full-buffer hoặc dựng lại body. `vhm-ocr-ekyc` giữ nguyên method, path logic, body/multipart và các end-to-end header được liệt kê theo từng thao tác/phiên bản SDK; xác thực workload Domain Backend Service, loại credential phía client và tự chèn credential FPT. |
+| Request tới FPT | Domain BFF và Domain Backend Service stream có backpressure, không full-buffer hoặc dựng lại body. `vhm-ocr-ekyc` giữ nguyên method, path logic, body/multipart và các end-to-end header được liệt kê theo từng thao tác/phiên bản SDK; xác thực workload Domain Backend Service, loại credential phía client và tự chèn credential FPT. |
 | Response về SDK | Giữ nguyên HTTP status và body FPT; không bọc envelope, đổi mã lỗi hoặc chuẩn hóa payload. Chỉ chuyển tiếp end-to-end header thuộc allowlist của contract SDK. |
 | Header không được chuyển tiếp | Không chuyển tiếp hop-by-hop header (`Connection`, `Keep-Alive`, `Transfer-Encoding`, `TE`, `Trailer`, `Upgrade`, `Proxy-*`), `Host`, `Content-Length` gốc, credential/cookie hoặc header nội bộ VHM. `Content-Length` phải do HTTP stack tính lại. |
 | Ma trận header | L3 `INT-01` phải ghim allowlist request/response cho từng API và phiên bản Android/iOS/Web. Tối thiểu bảo toàn `Content-Type` và các header phiên/thiết bị mà SDK/FPT quy định; thay đổi allowlist phải qua kiểm thử contract. |
@@ -694,7 +694,7 @@ quy tắc nhất quán dưới đây.
 Một hành trình eKYC do FPT SDK điều phối và phải giữ thống nhất ngữ cảnh phiên giữa
 các bước khởi tạo, OCR giấy tờ và kiểm tra sống/đối sánh khuôn mặt.
 
-- BFF, Domain Backend Service và `vhm-ocr-ekyc` không đổi tên hoặc dựng lại dữ liệu mà SDK/FPT cần để duy trì
+- Domain BFF, Domain Backend Service và `vhm-ocr-ekyc` không đổi tên hoặc dựng lại dữ liệu mà SDK/FPT cần để duy trì
   phiên và phân tích response, ngoại trừ việc loại các header bị cấm tại mục 6.5.2.
 - Thông tin phiên/kênh/thiết bị do SDK gửi được chuyển tiếp theo contract của phiên
   bản SDK hỗ trợ; credential FPT chỉ được chèn tại `vhm-ocr-ekyc`.
@@ -850,7 +850,7 @@ erDiagram
 ```mermaid
 flowchart LR
     CHANNEL([Mobile / Web])
-    BFF[BFF]
+    BFF[Domain BFF]
     DOMAIN[Domain Backend Service]
     API[vhm-ocr-ekyc]
     FILE[File Management]
@@ -895,7 +895,7 @@ flowchart LR
 ```mermaid
 flowchart LR
     CHANNEL([Mobile / Web])
-    BFF[BFF]
+    BFF[Domain BFF]
     DOMAIN[Domain Backend Service]
     SERVICE[eKYC Proxy]
     FPT[FPT]
@@ -964,7 +964,7 @@ có phiên bản theo mục đích/đồng thuận/legal hold và được kiể
 sequenceDiagram
     autonumber
     participant C as Mobile/Web
-    participant B as BFF
+    participant B as Domain BFF
     participant N as Domain Backend Service
     participant A as vhm-ocr-ekyc
     participant F as File Management
@@ -1073,7 +1073,7 @@ sequenceDiagram
 sequenceDiagram
     autonumber
     participant C as Mobile/Web
-    participant B as BFF
+    participant B as Domain BFF
     participant N as Domain Backend Service
     participant E as vhm-ocr-ekyc
     participant D as PostgreSQL
@@ -1146,12 +1146,12 @@ sequenceDiagram
 
 | **Kiểm soát** | **Yêu cầu** | **Tiêu chí nghiệm thu** |
 | --- | --- | --- |
-| Xác thực bên ngoài | OIDC/JWT tại BFF | BFF vượt kiểm thử token thiếu/sai/hết hạn và kiểm soát kênh; Domain Backend Service vượt kiểm thử phân quyền object. |
+| Xác thực bên ngoài | OIDC/JWT tại Domain BFF | Domain BFF vượt kiểm thử token thiếu/sai/hết hạn và kiểm soát kênh; Domain Backend Service vượt kiểm thử phân quyền object. |
 | Xác thực liên dịch vụ | mTLS hoặc workload JWT với issuer, audience và scope được duyệt | Phương án IAM được phê duyệt và vượt kiểm thử trước production. |
 
 ## 9.2 Authorization & Access Control
 
-- BFF xác thực phiên/token và áp dụng kiểm soát theo kênh trước khi chuyển yêu cầu.
+- Domain BFF xác thực phiên/token và áp dụng kiểm soát theo kênh trước khi chuyển yêu cầu.
 - Domain Backend Service thực thi phân quyền theo vai trò, business object và ngữ cảnh nghiệp vụ trước khi gọi `vhm-ocr-ekyc`.
 - Dịch vụ kiểm tra phạm vi truy cập theo chủ thể, nguồn yêu cầu, hồ sơ và tài nguyên media;
   không chỉ dựa vào việc biết định danh OCR.
@@ -1193,11 +1193,11 @@ thao tác; không log tên file gốc, nội dung multipart hoặc dữ liệu n
 
 | **Nhóm dữ liệu** | **Khi lưu trữ** | **Khi truyền** | **Công bố/hiển thị** | **Ghi log** |
 | --- | --- | --- | --- | --- |
-| Kết quả OCR và trường định danh | Mã hóa trong PostgreSQL schema `ocr_ekyc`, phân quyền theo mục đích | TLS giữa các thành phần | Chỉ trả Domain Backend Service đã được phân quyền; domain áp dụng projection/che dữ liệu trước khi trả qua BFF | Không ghi giá trị trường OCR hoặc PII |
-| Response eKYC FPT | Lưu mã hóa trong `ocr_ekyc.ocr_ekyc_results` | TLS trên toàn tuyến SDK → BFF → Domain Backend Service → service → FPT | Giữ nguyên status/body; header áp dụng allowlist/denylist tại mục 6.5.2; hiển thị nghiệp vụ thuộc domain/BFF/SDK | Không ghi dữ liệu định danh, sinh trắc hoặc định danh phiên FPT |
+| Kết quả OCR và trường định danh | Mã hóa trong PostgreSQL schema `ocr_ekyc`, phân quyền theo mục đích | TLS giữa các thành phần | Chỉ trả Domain Backend Service đã được phân quyền; domain áp dụng projection/che dữ liệu trước khi trả qua Domain BFF | Không ghi giá trị trường OCR hoặc PII |
+| Response eKYC FPT | Lưu mã hóa trong `ocr_ekyc.ocr_ekyc_results` | TLS trên toàn tuyến SDK → Domain BFF → Domain Backend Service → service → FPT | Giữ nguyên status/body; header áp dụng allowlist/denylist tại mục 6.5.2; hiển thị nghiệp vụ thuộc domain/Domain BFF/SDK | Không ghi dữ liệu định danh, sinh trắc hoặc định danh phiên FPT |
 | Media OCR/eKYC | Media OCR ở kho object riêng tư; media eKYC không lưu raw body trong PostgreSQL | Presigned URL hạn ngắn hoặc multipart TLS theo đúng luồng | Không công bố trực tiếp ngoài phiên upload/download đã được cấp quyền | Không ghi media, tên file gốc, đường dẫn hoặc presigned URL |
 | Tham chiếu kỹ thuật | Dùng giá trị opaque; giới hạn truy cập trong PostgreSQL | Chỉ truyền khi cần tương quan nội bộ | Không hiển thị provider job/session ID cho Mobile/Web | Chỉ log định danh nội bộ đã được phê duyệt, không dùng làm nhãn metric cardinality cao |
-| Credential và khóa mã hóa | Chỉ lưu trong secret manager/KMS theo tiêu chuẩn VHM | Chỉ cấp cho workload được phép | Không trả cho Domain Backend Service, BFF, SDK hoặc API consumer | Không ghi dưới mọi hình thức |
+| Credential và khóa mã hóa | Chỉ lưu trong secret manager/KMS theo tiêu chuẩn VHM | Chỉ cấp cho workload được phép | Không trả cho Domain Backend Service, Domain BFF, SDK hoặc API consumer | Không ghi dưới mọi hình thức |
 
 ### Nhật ký kỹ thuật
 
@@ -1336,8 +1336,8 @@ PostgreSQL, Kafka, File Management và FPT là phụ thuộc runtime đã mô t�
 
 | **Nguồn** | **Đích** | **Giao thức/dữ liệu** | **Kiểm soát** |
 | --- | --- | --- | --- |
-| Mobile/Web | BFF | HTTPS nghiệp vụ | Xác thực người dùng, giới hạn tần suất và kiểm soát phiên |
-| BFF | Domain Backend Service | HTTPS JSON/multipart | Xác thực workload, actor context có kiểm soát, giới hạn route/tần suất/kích thước body; streaming có backpressure cho eKYC |
+| Mobile/Web | Domain BFF | HTTPS nghiệp vụ | Xác thực người dùng, giới hạn tần suất và kiểm soát phiên |
+| Domain BFF | Domain Backend Service | HTTPS JSON/multipart | Xác thực workload, actor context có kiểm soát, giới hạn route/tần suất/kích thước body; streaming có backpressure cho eKYC |
 | Domain Backend Service | API | HTTPS JSON/multipart | Xác thực workload, phân quyền business object và phạm vi; streaming có backpressure cho eKYC |
 | API/worker | PostgreSQL schema `ocr_ekyc` | Kết nối mã hóa | Mạng riêng và quyền theo nguyên tắc tối thiểu |
 | API/worker | Kafka | Kết nối mã hóa | Phân quyền theo topic và consumer group |
@@ -1377,7 +1377,7 @@ Các công thức bắt buộc:
 - `peakConcurrency = peakArrivalRate × operationDurationP99 × safetyFactor`.
 - `workerReplicas = ceil(requiredProviderConcurrency / measuredConcurrencyPerPod) + HA headroom`.
 - `maxSaleMemory ≈ concurrency × (sum input bytes + multipart copies + response + safety overhead)`.
-- Dung lượng thăm dò phải tính riêng Mobile/Web → BFF, BFF → Domain Backend Service,
+- Dung lượng thăm dò phải tính riêng Mobile/Web → Domain BFF, Domain BFF → Domain Backend Service,
   Domain Backend Service → OCR/eKYC và worker → FPT Sale.
 
 Không có số replica, kích thước heap, connection pool hay giới hạn TPS nào trong
@@ -1422,7 +1422,7 @@ burst of 20–60 MB OCR files must not exhaust memory/connections serving eKYC.
 | **Thành phần/phụ thuộc** | **Mẫu bảo đảm độ tin cậy** | **Hành vi khi lỗi** | **Phục hồi** |
 | --- | --- | --- | --- |
 | OCR API | Stateless, nhiều replica và tạo yêu cầu idempotent | Không để lại tài nguyên OCR dở dang khi tiếp nhận thất bại | Domain Backend Service gửi lại cùng `Idempotency-Key`; dịch vụ trả tài nguyên đã tạo nếu request tương đương |
-| eKYC Proxy | Đồng bộ, không qua Kafka và không tự thử lại mutation | Trước lời gọi FPT phải lưu request; sau khi nhận response phải tuân theo mục 6.5.2 | SDK nhận response tương thích contract qua Domain Backend Service/BFF; lỗi lưu được cảnh báo và xử lý theo runbook |
+| eKYC Proxy | Đồng bộ, không qua Kafka và không tự thử lại mutation | Trước lời gọi FPT phải lưu request; sau khi nhận response phải tuân theo mục 6.5.2 | SDK nhận response tương thích contract qua Domain Backend Service/Domain BFF; lỗi lưu được cảnh báo và xử lý theo runbook |
 | Outbox/Kafka/OCR Processor | Outbox cùng transaction tạo OCR; chuyển phát ít nhất một lần; worker idempotent | Không mất công việc đã tiếp nhận; thông điệp trùng không tạo lần xử lý thứ hai | Phát lại outbox chưa xác nhận và áp dụng ma trận phục hồi tại mục 2.4.4 |
 | PostgreSQL | HA/PITR và cập nhật trạng thái–kết quả nhất quán | Không công bố hoàn tất OCR nếu kết quả chưa được lưu bền vững | Failover/khôi phục theo RPO/RTO; kiểm tra phiên bản schema và khóa mã hóa trước khi mở lưu lượng |
 | File Management/kho object | Object riêng tư, presigned URL hạn ngắn | Không tạo OCR từ tham chiếu media không hợp lệ; lỗi tải xuống không làm mất khả năng xử lý lại an toàn | Cấp lại quyền tải xuống trong thời hạn xử lý và phục hồi theo chính sách media |
@@ -1616,8 +1616,8 @@ lưu giữ đích danh và bằng chứng xóa. Fixture response FPT phải có 
 
 | **Mã rủi ro** | **Nhóm** | **Mô tả/ảnh hưởng** | **Mức độ** | **Giảm thiểu** | **Chủ sở hữu/trạng thái** |
 | --- | --- | --- | --- | --- | --- |
-| AR-001 | An toàn thông tin | Kênh bỏ qua BFF/Domain Backend Service hoặc caller capability không được xác thực có thể lộ dữ liệu/thao tác | Nghiêm trọng | Bắt buộc topology kênh đã chốt, IAM/JWT/mTLS workload, phân quyền object tại domain và kiểm thử IDOR | ANBM/Backend — kiểm soát trước production |
-| AR-002 | Tích hợp | Sai lệch metadata phiên eKYC qua nhiều hop có thể làm gián đoạn hành trình | Nghiêm trọng | Áp dụng nguyên tắc `INT-01`, streaming có backpressure, ghim phiên bản contract và kiểm thử E2E | Tích hợp/BFF/Domain Backend — kiểm thử contract |
+| AR-001 | An toàn thông tin | Kênh bỏ qua Domain BFF/Domain Backend Service hoặc caller capability không được xác thực có thể lộ dữ liệu/thao tác | Nghiêm trọng | Bắt buộc topology kênh đã chốt, IAM/JWT/mTLS workload, phân quyền object tại domain và kiểm thử IDOR | ANBM/Backend — kiểm soát trước production |
+| AR-002 | Tích hợp | Sai lệch metadata phiên eKYC qua nhiều hop có thể làm gián đoạn hành trình | Nghiêm trọng | Áp dụng nguyên tắc `INT-01`, streaming có backpressure, ghim phiên bản contract và kiểm thử E2E | Tích hợp/Domain BFF/Domain Backend — kiểm thử contract |
 | AR-003 | Quyền riêng tư | Xử lý dữ liệu thiếu mục đích, đồng thuận, lưu giữ hoặc xóa phù hợp | Nghiêm trọng | DPIA/DPA và chính sách lưu giữ/xóa có bằng chứng | Pháp chế/Quyền riêng tư — kiểm soát trước production |
 | AR-004 | Độ tin cậy | Worker dừng đột ngột có thể làm OCR kẹt ở `PROCESSING` | Nghiêm trọng | Bộ đối soát định kỳ theo mục 2.4.4, cập nhật trạng thái có điều kiện và kiểm thử phục hồi | Backend/Vận hành — triển khai và diễn tập |
 | AR-005 | Toàn vẹn | Timeout gửi hồ sơ sau khi FPT đã nhận có thể tạo giao dịch mồ côi hoặc trùng | Cao | Không tự gửi lại; kết thúc bằng lỗi tường minh, đối soát theo mã tương quan và yêu cầu xác nhận trước khi tạo OCR mới | FPT/Tích hợp — kiểm thử nhánh không rõ kết quả |
@@ -1640,7 +1640,7 @@ lưu giữ đích danh và bằng chứng xóa. Fixture response FPT phải có 
 | OI-002 | SLO, lưu lượng đỉnh, quota FPT và mô hình dung lượng | Cao | Sản phẩm, Vận hành và FPT phê duyệt; kết quả kiểm thử tải đáp ứng ngân sách. |
 | OI-003 | Chính sách lưu giữ/xóa, legal hold, DPA/DPIA và vị trí dữ liệu | Nghiêm trọng | Pháp chế/Quyền riêng tư phê duyệt trước khi dùng dữ liệu thật. |
 | OI-004 | Phiên bản Android/iOS/Web SDK được hỗ trợ và ma trận tương thích request/response | Cao | FPT, Mobile/Web và Tích hợp ký xác nhận contract; E2E đạt yêu cầu. |
-| OI-005 | Cơ chế xác thực workload và truyền actor context trên tuyến BFF → Domain Backend Service → `vhm-ocr-ekyc` | Nghiêm trọng | Kiến trúc IAM/ANBM phê duyệt issuer, audience, scope, chống giả mạo/chống phát lại và ma trận trust. |
+| OI-005 | Cơ chế xác thực workload và truyền actor context trên tuyến Domain BFF → Domain Backend Service → `vhm-ocr-ekyc` | Nghiêm trọng | Kiến trúc IAM/ANBM phê duyệt issuer, audience, scope, chống giả mạo/chống phát lại và ma trận trust. |
 | OI-006 | Chính sách retry, hủy, đối soát và hết hạn cho từng loại OCR | Cao | Đặc tả L3 và runbook được phê duyệt, bao phủ kết quả gửi FPT không rõ. |
 | OI-007 | Ngữ nghĩa `valid`, ngưỡng chất lượng và quy tắc rà soát thủ công | Cao | Sản phẩm/Nghiệp vụ phê duyệt schema kết quả và hành động theo outcome. |
 | OI-008 | RTO/RPO, Multi-AZ, PITR và phạm vi phục hồi dữ liệu nhạy cảm | Cao | DBA/Vận hành phê duyệt và diễn tập đạt yêu cầu trước production. |
@@ -1658,7 +1658,7 @@ phạm vi, ngày hết hạn, người phê duyệt và kiểm soát bù trừ.
 | --- | --- |
 | OCR | Nhận dạng ký tự quang học; trích xuất dữ liệu có cấu trúc từ media tài liệu. |
 | eKYC | Định danh điện tử bằng OCR giấy tờ, kiểm tra sống và đối sánh khuôn mặt. |
-| BFF | Backend for Frontend; ingress theo kênh cho Mobile/Web, sở hữu xác thực phiên/token và chuyển đổi contract presentation. |
+| Domain BFF | Backend for Frontend dành cho một miền/kênh; ingress của Mobile/Web, sở hữu xác thực phiên/token và chuyển đổi contract presentation. |
 | Domain Backend Service | Backend sở hữu ngữ cảnh, phân quyền và hành vi của một miền nghiệp vụ; là caller trực tiếp của capability OCR/eKYC. |
 | Tài nguyên OCR | Aggregate bất đồng bộ VHM được định danh bởi `ocrId`. |
 | Kết quả chuẩn | Kết quả OCR ổn định được công bố cho bên gọi VHM. |
@@ -1715,4 +1715,4 @@ phạm vi, ngày hết hạn, người phê duyệt và kiểm soát bù trừ.
 | ADR-009 | Lưu request/kết quả eKYC trong PostgreSQL theo ranh giới tại mục 6.5.2 | Không có transaction chung giữa HTTP FPT và PostgreSQL; response SDK được ưu tiên sau khi FPT trả lời, lỗi lưu phải được cảnh báo. | ĐỀ XUẤT — chờ phê duyệt |
 | ADR-010 | Một đơn vị triển khai với ranh giới logic API/worker | Vận hành ban đầu đơn giản; vai trò production cần mở rộng độc lập. | ĐỀ XUẤT — chờ phê duyệt |
 | ADR-011 | Dùng proxy đồng bộ tương thích FPT SDK với chính sách header tường minh | Giữ nguyên status/body, chỉ chuyển tiếp end-to-end header cần thiết; credential chỉ ở server. | ĐỀ XUẤT — chờ phê duyệt |
-| ADR-012 | Chuẩn hóa luồng kênh `BFF → Domain Backend Service → vhm-ocr-ekyc` | BFF tập trung concern theo kênh; Domain Backend Service giữ business authorization/context và là caller trực tiếp. Backend process không bắt buộc qua BFF nhưng vẫn đi qua domain. | ĐỀ XUẤT — chờ phê duyệt |
+| ADR-012 | Chuẩn hóa luồng kênh `Domain BFF → Domain Backend Service → vhm-ocr-ekyc` | Domain BFF tập trung concern theo kênh; Domain Backend Service giữ business authorization/context và là caller trực tiếp. Backend process không bắt buộc qua Domain BFF nhưng vẫn đi qua domain. | ĐỀ XUẤT — chờ phê duyệt |
