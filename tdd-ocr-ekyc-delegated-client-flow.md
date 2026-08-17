@@ -679,7 +679,7 @@ erDiagram
 | eKYC timeout/unknown after send | Không tự retry mutation; ghi attempt `UNKNOWN`/`RECONCILIATION_REQUIRED` |
 | Lỗi lưu request trước FPT | Không gọi FPT; trả lỗi service-compatible |
 | Lỗi lưu response sau FPT | Vẫn trả status/body FPT cho SDK nhưng không trả `X-VHM-Result-Id`; cảnh báo và đối soát, không false-success |
-| Finalize trước khi đủ evidence | `409 RESULT_NOT_READY`; không gọi FPT lại |
+| Response hiện tại chưa đủ required steps | Giữ nguyên response FPT nhưng chưa trả `X-VHM-Result-Id` |
 | Client gửi result ID không thuộc business context | `vhm-ocr-ekyc` trả `403/404`; Domain không apply |
 | Domain apply trùng | Idempotent return; không ghi business state/result lần hai |
 | Result bị xóa/hết retention | Trả trạng thái tường minh theo policy; không phục hồi trái phép |
