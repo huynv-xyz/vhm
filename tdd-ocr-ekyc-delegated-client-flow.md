@@ -24,11 +24,10 @@ Luồng được yêu cầu:
 1. Client gọi Domain Service để yêu cầu thực hiện một nghiệp vụ OCR hoặc eKYC.
 2. Domain Service xác thực người dùng, kiểm tra quyền trên business object và xác
    định loại thao tác được phép.
-3. Domain Service gọi `vhm-ocr-ekyc` bằng workload identity để tạo một capability
-   operation và phát token ngắn hạn.
-4. `vhm-ocr-ekyc` trả `operationId`, token và cấu hình client cho Domain Service.
-5. Domain Service trả projection của response này cho client.
-6. Trong thời gian operation còn hiệu lực, client gọi trực tiếp public ingress của
+3. Domain Service gọi `vhm-ocr-ekyc` bằng workload identity để sinh token ngắn hạn.
+4. `vhm-ocr-ekyc` tự tạo binding xử lý ở phía server và chỉ trả token cho Domain Service.
+5. Domain Service trả token cho client.
+6. Trong thời gian token còn hiệu lực, client gọi trực tiếp public ingress của
    `vhm-ocr-ekyc`; Domain Service không nằm trên data path OCR/eKYC.
 7. `vhm-ocr-ekyc` xử lý OCR hoặc proxy eKYC tới FPT, lưu authoritative result và
    tạo `resultId` opaque.
@@ -116,8 +115,8 @@ flowchart LR
 
     CLIENT -->|1. Yêu cầu nghiệp vụ| DOMAIN
     DOMAIN -->|2. Authorize + xin grant| OCR_EKYC
-    OCR_EKYC -->|3. operationId + token + client config| DOMAIN
-    DOMAIN -->|4. Projection grant| CLIENT
+    OCR_EKYC -->|3. Token| DOMAIN
+    DOMAIN -->|4. Token| CLIENT
 
     CLIENT ==>|5. Bearer token + OCR/eKYC traffic| EDGE
     EDGE ==>|Public capability route| OCR_EKYC
@@ -160,15 +159,14 @@ sequenceDiagram
 
     C->>D: Yêu cầu OCR/eKYC cho business object
     D->>D: Authenticate + authorize object/state/action
-    D->>D: Xác định capability + captureSpec + purpose/consent refs
-    D->>O: POST capability grant<br/>workload identity + Idempotency-Key
+    D->>D: Xác định loại OCR/eKYC được phép thực hiện
+    D->>O: POST generate token<br/>workload identity + Idempotency-Key
     O->>O: Validate domain, capability, scope và policy
-    O->>DB: Tạo operation + grant binding
-    DB-->>O: Commit operation/grant
+    O->>DB: Tạo binding xử lý nội bộ
+    DB-->>O: Commit
     O->>O: Mint short-lived access token
-    O-->>D: operationId + grantId + token + expiresAt + clientConfig
-    D->>D: Lưu operationId/grantId với business object
-    D-->>C: Projection token/config, không trả internal context
+    O-->>D: token
+    D-->>C: token
 ```
 
 ## 5.2 Quy tắc cấp grant
@@ -179,12 +177,11 @@ sequenceDiagram
   nhúng PII vào các tham chiếu này.
 - `vhm-ocr-ekyc` không thực hiện lại business rule nhưng phải kiểm tra workload domain
   có quyền xin đúng capability/scope/document type.
-- Một grant chỉ bind với một `operationId` và một capability:
-  `DOCUMENT_OCR` hoặc `IDENTITY_EKYC`.
+- Mỗi token chỉ bind server-side với một lần xử lý và một capability:
+  `DOCUMENT_OCR` hoặc `IDENTITY_EKYC`; client không cần biết ID binding nội bộ.
 - Capture spec/required steps được cố định tại thời điểm phát grant; client không được
   mở rộng scope sau đó.
-- Domain Service phải lưu `operationId` trước khi trả token cho client để đối soát,
-  revoke hoặc xử lý client bỏ dở.
+- Domain Service không phải nhận hoặc lưu ID xử lý nội bộ của `vhm-ocr-ekyc`.
 - Token không được truyền qua query string, URL, cookie hoặc log; dùng header đã được
   SDK/client hỗ trợ.
 - Khi token hết hạn trong flow bình thường, client phải quay lại Domain Service để
@@ -220,7 +217,7 @@ sequenceDiagram
     participant K as Outbox/Kafka
     participant F as FPT Backend
 
-    C->>O: prepare-upload(operationId, metadata)<br/>Bearer capability token
+    C->>O: prepare-upload(metadata)<br/>Bearer capability token
     O->>O: Validate token + OCR scopes + media role
     O->>FM: Prepare managed presigned PUT
     FM-->>O: URL + signed headers + opaque mediaRef
@@ -228,7 +225,7 @@ sequenceDiagram
     C->>S: PUT media bằng signed headers
     S-->>C: Upload success
 
-    C->>O: start OCR(operationId, mediaRef)<br/>Idempotency-Key + token
+    C->>O: start OCR(mediaRef)<br/>Idempotency-Key + token
     O->>O: Validate operation binding, media và captureSpec
     O->>DB: Transaction request + media refs + outbox
     DB-->>O: Commit
@@ -241,7 +238,7 @@ sequenceDiagram
     O->>DB: Normalize + encrypted immutable result + COMPLETED
 
     loop Cho tới terminal
-        C->>O: GET public operation status<br/>Bearer token
+        C->>O: GET OCR status<br/>Bearer token
         O->>DB: Read status trong operation scope
         O-->>C: QUEUED/PROCESSING hoặc COMPLETED + resultId
     end
@@ -311,18 +308,17 @@ sequenceDiagram
     participant F as FPT Backend
 
     A->>D: Yêu cầu bắt đầu eKYC cho business object
-    D->>D: Authenticate client + authorize nghiệp vụ/consent
-    D->>O: POST create capability grant<br/>workload identity + idempotency key
-    O->>DB: Tạo grant + operation + token binding
-    O-->>D: grantId + operationId + token + expiry + sdkConfig
-    D->>D: Lưu business object ↔ grantId/operationId
-    D-->>A: operationId + token + expiry + sdkConfig
+    D->>D: Xác thực người dùng + kiểm tra điều kiện được phép thực hiện eKYC
+    D->>O: POST generate token<br/>workload identity + idempotency key
+    O->>DB: Tạo binding xử lý nội bộ
+    O-->>D: token
+    D-->>A: token
     A->>A: Configure FPT SDK với VHM Base URL<br/>+ capability token + client_uuid
 
     loop Client/FPT SDK tự điều phối required steps
         A->>O: HTTP init/OCR/liveness<br/>Bearer capability token
         O->>O: Validate token, operation, scope, method/path/size
-        O->>DB: Ghi request metadata/attempt, không lưu raw media
+        O->>DB: Ghi request metadata/attempt
         O->>F: Stream request + inject FPT credential
         F-->>O: Provider status + headers + body
         O->>DB: Audit encrypted response + cập nhật operation evidence
@@ -330,15 +326,15 @@ sequenceDiagram
     end
 
     A->>A: Nhận FPT SDK completion callback
-    A->>O: POST finalize(operationId)<br/>Bearer capability token
+    A->>O: POST finalize<br/>Bearer capability token
     O->>O: Verify required server-side evidence đã đầy đủ
     O->>DB: Tạo hoặc đọc immutable authoritative result
     O-->>A: resultId + RESULT_READY
 
     A->>D: Submit resultId cho business object
-    D->>D: Authenticate client + đọc expected operation binding
-    D->>O: GET authoritative result(resultId, expectedOperationId)<br/>workload identity
-    O->>DB: Verify domain + operation + business binding
+    D->>D: Authenticate client + authorize business object
+    D->>O: GET authoritative result(resultId)<br/>workload identity
+    O->>DB: Verify domain + result binding
     DB-->>O: Immutable canonical result
     O-->>D: Canonical eKYC evidence/result
     D->>D: Business decision/apply, idempotent
@@ -371,16 +367,15 @@ client là không tin cậy và luôn dereference result server-to-server.
 Khi nhận `resultId`, Domain Service:
 
 1. Xác thực client và authorize business object hiện tại.
-2. Đọc `operationId`/`grantId` đã lưu khi bắt đầu flow.
-3. Gọi internal result endpoint của `vhm-ocr-ekyc` bằng workload identity và gửi
-   `resultId` cùng expected `operationId` hoặc context binding.
-4. `vhm-ocr-ekyc` kiểm tra:
+2. Gọi internal result endpoint của `vhm-ocr-ekyc` bằng workload identity và
+   `resultId`.
+3. `vhm-ocr-ekyc` kiểm tra:
    - result tồn tại và terminal;
-   - result thuộc operation đã được Domain này tạo grant;
+   - result thuộc token/binding do Domain này đã yêu cầu tạo;
    - capability/source/reference binding khớp;
    - result chưa bị revoke/expired/deleted;
-   - result chưa bị apply trái phép vào operation khác.
-5. Domain áp dụng canonical result theo business rule và ghi idempotency/CAS.
+   - result chưa bị apply trái phép vào business object khác.
+4. Domain áp dụng canonical result theo business rule và ghi idempotency/CAS.
 
 Biết hoặc đoán được `resultId` không đủ quyền đọc result.
 
@@ -391,10 +386,10 @@ Biết hoặc đoán được `resultId` không đủ quyền đọc result.
 Đường dẫn chính xác phải được xuất bản trong OpenAPI L3. Các route dưới đây là
 logical contract của thiết kế.
 
-## 9.1 Domain → grant endpoint của vhm-ocr-ekyc
+## 9.1 Domain → token endpoint của vhm-ocr-ekyc
 
 ```http
-POST /internal/v1/capability-grants
+POST /internal/v1/tokens
 Authorization: Bearer <domain-workload-token>
 Idempotency-Key: <opaque-key>
 Content-Type: application/json
@@ -408,7 +403,6 @@ Content-Type: application/json
   "channel": "MOBILE",
   "platform": "ANDROID",
   "purposeCode": "DOSSIER_IDENTITY_VERIFICATION",
-  "consentRef": "opaque-consent-ref",
   "captureSpec": {
     "documentType": "NATIONAL_ID",
     "mediaRoles": ["DOCUMENT_FRONT", "DOCUMENT_BACK"]
@@ -431,20 +425,12 @@ Response:
 
 ```json
 {
-  "grantId": "019...",
-  "operationId": "019...",
-  "accessToken": "<signed-short-lived-token>",
-  "tokenType": "Bearer",
-  "expiresAt": "2026-08-17T03:15:00Z",
-  "publicBaseUrl": "https://ocr-ekyc.example.vn",
-  "clientConfig": {
-    "clientUuid": "opaque-uuid",
-    "sdkProxyBaseUrl": "https://ocr-ekyc.example.vn/v1/ekyc-sdk"
-  }
+  "token": "<signed-short-lived-token>"
 }
 ```
 
-Domain chỉ trả các trường client cần; internal policy/context không được chiếu ra ngoài.
+Domain trả nguyên giá trị `token` cho client. Base URL của `vhm-ocr-ekyc` và cấu hình
+SDK là cấu hình cố định của ứng dụng, không sinh động theo từng lần xin token.
 
 ## 9.2 Client → Public capability API
 
@@ -458,14 +444,14 @@ Logical routes:
 
 | **Capability** | **Route** | **Scope** | **Kết quả** |
 | --- | --- | --- | --- |
-| OCR prepare upload | `POST /v1/client/operations/{operationId}/uploads:prepare` | `ocr:upload` | Presigned PUT metadata |
-| OCR start | `POST /v1/client/operations/{operationId}/ocr:start` | `ocr:start` | `202` + status URI |
-| Operation status | `GET /v1/client/operations/{operationId}` | `operation:read` | Status; terminal có `resultId` |
+| OCR prepare upload | `POST /v1/client/ocr/uploads:prepare` | `ocr:upload` | Presigned PUT metadata |
+| OCR start | `POST /v1/client/ocr:start` | `ocr:start` | `202` + status URI |
+| OCR status | `GET /v1/client/ocr/status` | `operation:read` | Status; terminal có `resultId` |
 | eKYC init | `POST /v1/ekyc-sdk/init_session` | `ekyc:init` | Provider-compatible response |
 | eKYC OCR | `POST /v1/ekyc-sdk/ocr` | `ekyc:ocr` | Provider-compatible response |
 | eKYC liveness | `POST /v1/ekyc-sdk/face/liveness` | `ekyc:liveness` | Provider-compatible response |
 | eKYC NFC | `POST /v1/ekyc-sdk/check_chip` | `ekyc:nfc` | Provider-compatible response |
-| eKYC finalize | `POST /v1/client/operations/{operationId}/ekyc:finalize` | `ekyc:finalize` | VHM `resultId` response |
+| eKYC finalize | `POST /v1/client/ekyc:finalize` | `ekyc:finalize` | VHM `resultId` response |
 
 Client không được truyền `source`, `referenceId`, `subjectRef`, provider hoặc
 document type ngoài giá trị đã bind trong operation/capture spec.
@@ -473,7 +459,7 @@ document type ngoài giá trị đã bind trong operation/capture spec.
 ## 9.3 Domain → internal result endpoint của vhm-ocr-ekyc
 
 ```http
-GET /internal/v1/results/{resultId}?expectedOperationId=<operationId>
+GET /internal/v1/results/{resultId}
 Authorization: Bearer <domain-workload-token>
 ```
 
@@ -482,7 +468,6 @@ Response OCR minh họa:
 ```json
 {
   "resultId": "019...",
-  "operationId": "019...",
   "capability": "DOCUMENT_OCR",
   "status": "COMPLETED",
   "schemaVersion": "ocr-result.v1",
@@ -502,7 +487,6 @@ Response eKYC minh họa:
 ```json
 {
   "resultId": "019...",
-  "operationId": "019...",
   "capability": "IDENTITY_EKYC",
   "status": "COMPLETED",
   "schemaVersion": "ekyc-result.v1",
@@ -555,7 +539,7 @@ Nếu dùng signed JWT, claims logic gồm:
 }
 ```
 
-Không đưa business reference, PII, consent detail, provider ID, media path hoặc
+Không đưa business reference, PII, provider ID, media path hoặc
 credential vào token. Chi tiết binding được lưu server-side theo `grantId/operationId`.
 
 ## 10.2 Kiểm soát bắt buộc
@@ -847,7 +831,7 @@ state/runbook; không tự phát lại FPT mutation.
 | DT-OI-05 | Canonical eKYC result/evidence schema và required-step completion rules | Product/Tích hợp/Pháp chế phê duyệt |
 | DT-OI-06 | Client bỏ dở hoặc không submit result về Domain | Domain timeout/reconciliation policy được duyệt |
 | DT-OI-07 | Có cần callback/event server-to-server cho Domain ngoài baseline client-submit | Architecture/Product quyết định |
-| DT-OI-08 | Consent/purpose/retention/residency/deletion cho public direct processing | DPA/DPIA và Privacy gate hoàn tất |
+| DT-OI-08 | Retention/residency/deletion cho public direct processing | DPA/DPIA và Privacy gate hoàn tất |
 | DT-OI-09 | Domain có được đọc full result hay chỉ projection theo capability | Product/Privacy/API contract được duyệt |
 | DT-OI-10 | Cơ chế bind token với app instance/device key để giảm bearer theft | Mobile/IAM/ANBM quyết định |
 
