@@ -71,7 +71,7 @@ Luồng được yêu cầu:
 | DT-ARCH-07 | Domain Service lấy kết quả bằng internal server-to-server API; không nhận raw result từ client. |
 | DT-ARCH-08 | `resultId` phải opaque, không chứa PII/provider ID và được bind server-side với domain/business context đã cấp quyền. |
 | DT-ARCH-09 | Token, provider ID, credential, PII, signed URL và raw media không xuất hiện trong log/event. |
-| DT-ARCH-10 | Terminal result là bất biến; finalize và business submit phải idempotent. |
+| DT-ARCH-10 | Terminal result là bất biến; tạo result và business submit phải idempotent. |
 | DT-ARCH-11 | Token hết hạn hoặc bị thu hồi phải bị từ chối trước khi đọc multipart body khi có thể. |
 | DT-ARCH-12 | Không có distributed transaction giữa Domain, `vhm-ocr-ekyc`, FPT và client; mọi ranh giới phải có trạng thái/idempotency rõ ràng. |
 
@@ -284,16 +284,25 @@ Không trả provider job ID, raw provider result hoặc PII nếu client không
 - Capability token/custom authorization header chỉ được dùng tại biên VHM và phải
   bị loại trước upstream call; tuyệt đối không chuyển token này tới FPT.
 - Request body/multipart do SDK tạo không được parse rồi rebuild hoặc thay đổi.
-- Response về SDK giữ nguyên HTTP status/body và header end-to-end thuộc allowlist.
+- Response về SDK giữ nguyên HTTP status/body FPT và các FPT header thuộc allowlist;
+  `vhm-ocr-ekyc` chỉ bổ sung header riêng `X-VHM-Result-Id` khi kết quả đã sẵn sàng.
 - Không bọc response FPT bằng VHM envelope và không thêm `resultId` vào body FPT.
 - Mỗi provider response được audit/lưu mã hóa và bind với processing context nội bộ.
 - eKYC mutation không đi qua Kafka và không tự retry khi delivery outcome không rõ.
 
-## 7.2 Vì sao cần finalize API riêng
+## 7.2 Trả resultId bằng response header
 
-FPT SDK phụ thuộc provider-compatible response. Chèn `resultId` vào JSON response hoặc
-đổi status/header có thể làm SDK lỗi. Vì vậy `resultId` được lấy qua một API VHM riêng,
-sau khi SDK callback hoàn tất; API này không nằm trong FPT SDK wire contract.
+`vhm-ocr-ekyc` không sửa HTTP status hoặc body do FPT trả về. Khi response hiện tại
+hoàn tất đủ các bước eKYC, service tạo kết quả idempotent và bổ sung:
+
+```http
+X-VHM-Result-Id: <opaque-result-id>
+```
+
+Header không xuất hiện khi kết quả chưa sẵn sàng. API Gateway/Ingress phải cho phép
+header này; Web phải cấu hình `Access-Control-Expose-Headers`. Mobile và phiên bản FPT
+SDK được duyệt phải được contract test để xác nhận App đọc được response header. Nếu
+SDK không expose header cho App thì phải dùng result lookup API làm fallback.
 
 ## 7.3 Sequence
 
@@ -320,16 +329,12 @@ sequenceDiagram
         O->>DB: Ghi request metadata/attempt
         O->>F: Stream request + inject FPT credential
         F-->>O: Provider status + headers + body
-        O->>DB: Audit encrypted response + cập nhật evidence
-        O-->>A: Provider-compatible response nguyên trạng
+        O->>DB: Audit response; nếu đủ bước thì tạo/đọc resultId
+        DB-->>O: resultId nếu kết quả đã sẵn sàng
+        O-->>A: Giữ nguyên status/body FPT<br/>+ X-VHM-Result-Id khi có kết quả
     end
 
-    A->>A: FPT SDK trả success/failure callback cho App
-    A->>O: POST finalize<br/>Bearer capability token
-    O->>O: Verify required server-side evidence đã đầy đủ
-    O->>DB: Tạo hoặc đọc immutable authoritative result
-    O-->>A: resultId + RESULT_READY
-
+    A->>A: SDK success callback; đọc resultId từ response header
     A->>D: Submit resultId cho business object
     D->>D: Authenticate client + authorize business object
     D->>O: GET authoritative result(resultId)<br/>workload identity
@@ -339,21 +344,16 @@ sequenceDiagram
     D->>D: Business decision/apply, idempotent
 ```
 
-## 7.4 Finalize semantics
+## 7.4 Result header semantics
 
 - Trên Android, tài liệu FPT mô tả `EkycSDK.CompleteListener` với `onSuccess`,
   `onFailed` và `onTracking`; callback chính xác trên iOS/Web và từng SDK version
   phải được chốt bằng contract test.
-- `finalize` là API do VHM đề xuất cho topology này, không phải API/callback của FPT
-  và không phải endpoint do FPT SDK tự gọi.
-- Client chỉ gọi `finalize` sau callback success của SDK; callback failed không được
-  tạo `RESULT_READY`.
-- Service chỉ trả `RESULT_READY` khi các required steps trong capture spec đã có
-  authoritative provider response được lưu và kiểm tra thành công.
-- Nếu evidence chưa đủ, trả `409 RESULT_NOT_READY`; không gọi lại FPT mutation.
-- Gọi finalize lặp lại cho cùng flow đã hoàn tất phải trả cùng `resultId`.
-- Nếu SDK callback báo thành công nhưng response audit chưa lưu được, processing context phải
-  ở trạng thái cần đối soát; không tạo false-success result.
+- Header `X-VHM-Result-Id` là metadata do VHM bổ sung, không phải field/header FPT.
+- Chỉ trả header khi các required steps đã có provider response thành công được lưu.
+- Retry cùng terminal request phải trả cùng `resultId`; không tạo result mới.
+- Nếu chưa lưu được authoritative result thì không trả header result, không tạo
+  false-success và không tự gọi lại FPT mutation.
 - Exact canonical eKYC result schema cần L3 riêng và không được đồng nhất với business
   approval/rejection của Domain.
 
@@ -455,7 +455,6 @@ Logical routes:
 | eKYC OCR | `POST /v1/ekyc-sdk/ocr` | `ekyc:ocr` | Provider-compatible response |
 | eKYC liveness | `POST /v1/ekyc-sdk/face/liveness` | `ekyc:liveness` | Provider-compatible response |
 | eKYC NFC | `POST /v1/ekyc-sdk/check_chip` | `ekyc:nfc` | Provider-compatible response |
-| eKYC finalize | `POST /v1/client/ekyc:finalize` | `ekyc:finalize` | VHM `resultId` response |
 
 Client không được truyền `source`, `referenceId`, `subjectRef`, provider hoặc
 document type ngoài giá trị đã bind server-side khi phát token.
@@ -523,8 +522,8 @@ Content-Type: application/json
 }
 ```
 
-Revoke không hoàn tác provider mutation đã hoàn tất; nó chặn request mới, finalize
-và apply ngoài policy, đồng thời ghi audit nội bộ không chứa PII.
+Revoke không hoàn tác provider mutation đã hoàn tất; nó chặn request mới và apply
+ngoài policy, đồng thời ghi audit nội bộ không chứa PII.
 
 ---
 
@@ -539,7 +538,7 @@ Nếu dùng signed JWT, claims logic gồm:
   "iss": "vhm-ocr-ekyc",
   "aud": "vhm-ocr-ekyc-client-api",
   "cap": "IDENTITY_EKYC",
-  "scp": ["ekyc:init", "ekyc:ocr", "ekyc:liveness", "ekyc:finalize"],
+  "scp": ["ekyc:init", "ekyc:ocr", "ekyc:liveness"],
   "jti": "unique-token-id",
   "iat": 0,
   "nbf": 0,
@@ -574,13 +573,13 @@ Domain không cần biết ID nội bộ này.
 
 # 11. Lifecycle và idempotency
 
-## 11.1 Grant lifecycle
+## 11.1 Token lifecycle
 
 ```mermaid
 stateDiagram-v2
     [*] --> ISSUED
-    ISSUED --> ACTIVE: client gọi operation lần đầu
-    ACTIVE --> CONSUMED: terminal result đã finalize/apply theo policy
+    ISSUED --> ACTIVE: client gọi OCR/eKYC lần đầu
+    ACTIVE --> CONSUMED: terminal result đã sẵn sàng/apply theo policy
     ISSUED --> EXPIRED: hết TTL
     ACTIVE --> EXPIRED: hết TTL trước terminal
     ISSUED --> REVOKED: Domain thu hồi
@@ -590,7 +589,7 @@ stateDiagram-v2
     REVOKED --> [*]
 ```
 
-## 11.2 OCR operation lifecycle
+## 11.2 OCR processing lifecycle
 
 ```text
 AUTHORIZED → UPLOADING → QUEUED → PROCESSING
@@ -598,7 +597,7 @@ AUTHORIZED → UPLOADING → QUEUED → PROCESSING
            → FAILED | EXPIRED | CANCELLED
 ```
 
-## 11.3 eKYC operation lifecycle
+## 11.3 eKYC processing lifecycle
 
 ```text
 AUTHORIZED → STARTED → SESSION_INITIALIZED
@@ -614,14 +613,13 @@ quyết định evidence nào phải có trước `RESULT_READY`.
 
 | **Thao tác** | **Yêu cầu** |
 | --- | --- |
-| Phát grant | `Idempotency-Key` theo domain/business action; retry không tạo operation thứ hai |
-| Prepare upload | Cùng operation/role/file metadata trả hoặc cấp lại quyền upload theo policy mà không đổi object binding |
-| Start OCR | Cùng operation và request fingerprint không tạo OCR/provider job thứ hai |
+| Phát token | `Idempotency-Key` theo domain/business action; retry không tạo processing context thứ hai |
+| Prepare upload | Cùng token/role/file metadata trả hoặc cấp lại quyền upload theo policy mà không đổi object binding |
+| Start OCR | Cùng token và request fingerprint không tạo OCR/provider job thứ hai |
 | OCR worker | Giữ at-least-once/idempotency của TDD cơ sở |
 | eKYC mutation | Không tự retry khi không rõ FPT đã nhận; SDK/provider contract sở hữu retry behavior |
-| eKYC finalize | Gọi lặp trả cùng immutable `resultId` |
 | Domain submit/apply | Cùng business object/result trả cùng outcome; result khác trên cùng step phải theo conflict policy |
-| Revoke | Gọi lặp cho cùng grant trả trạng thái đã revoke |
+| Revoke | Gọi lặp cho cùng token binding trả trạng thái đã revoke |
 
 ---
 
@@ -680,7 +678,7 @@ erDiagram
 | FPT eKYC non-2xx | Giữ nguyên status/body/header allowlist về SDK |
 | eKYC timeout/unknown after send | Không tự retry mutation; ghi attempt `UNKNOWN`/`RECONCILIATION_REQUIRED` |
 | Lỗi lưu request trước FPT | Không gọi FPT; trả lỗi service-compatible |
-| Lỗi lưu response sau FPT | Vẫn trả response FPT cho SDK, cảnh báo; finalize không false-success khi thiếu evidence |
+| Lỗi lưu response sau FPT | Vẫn trả status/body FPT cho SDK nhưng không trả `X-VHM-Result-Id`; cảnh báo và đối soát, không false-success |
 | Finalize trước khi đủ evidence | `409 RESULT_NOT_READY`; không gọi FPT lại |
 | Client gửi result ID không thuộc business context | `vhm-ocr-ekyc` trả `403/404`; Domain không apply |
 | Domain apply trùng | Idempotent return; không ghi business state/result lần hai |
@@ -703,9 +701,9 @@ Server callback/event từ `vhm-ocr-ekyc` về Domain không thuộc baseline n�
 | Capacity | Tính eKYC active streams/bytes trực tiếp tại `vhm-ocr-ekyc`; OCR API/processor dùng bulkhead riêng |
 | Security | Internet-facing attack surface mới phải qua WAF/API Gateway, penetration test, abuse/rate/body/concurrency controls |
 | Privacy | DPIA/data-flow phải cập nhật vì client truyền dữ liệu nhạy cảm trực tiếp tới capability service |
-| Reliability | Token binding/processing/result state phải bền vững; finalize/result query idempotent; không false-success khi audit/evidence thiếu |
-| Compatibility | Contract test theo từng SDK Android/iOS/Web, đặc biệt custom header, Base URL, session header, multipart và non-2xx |
-| Observability | Theo dõi token issue/deny/expire/revoke, public token reject, processing lifecycle, finalize và internal result fetch |
+| Reliability | Token binding/processing/result state phải bền vững; tạo result/result query idempotent; không false-success khi audit/evidence thiếu |
+| Compatibility | Contract test theo từng SDK Android/iOS/Web, đặc biệt Base URL, request auth header, response result header, multipart và non-2xx |
+| Observability | Theo dõi token issue/deny/expire/revoke, public token reject, processing lifecycle, result header và internal result fetch |
 
 Timeout eKYC target:
 
@@ -731,7 +729,7 @@ Metric tối thiểu bổ sung:
 | `capability_token_rejections_total` | capability, reason |
 | `capability_operations_active` | capability, status |
 | `capability_operations_expired_total` | capability, last_step |
-| `capability_finalize_total` | capability, outcome |
+| `ekyc_result_header_total` | sdk_platform, outcome |
 | `capability_result_fetch_total` | domain, capability, outcome |
 | `capability_result_binding_rejections_total` | domain, capability, reason |
 
@@ -744,7 +742,7 @@ Cảnh báo mới:
 - tỷ lệ token invalid/replay/scope mismatch tăng;
 - grant được cấp nhưng operation không bắt đầu hoặc không terminal vượt ngưỡng;
 - operation terminal nhưng Domain không apply trong SLA nghiệp vụ;
-- finalize thất bại do thiếu persisted evidence;
+- terminal FPT response nhưng không tạo/trả được result header do thiếu persisted evidence;
 - result binding rejection/IDOR attempt;
 - public ingress/body/concurrency bão hòa;
 - FPT SDK compatibility error tăng theo client/SDK version.
@@ -767,7 +765,7 @@ Cảnh báo mới:
 - FPT SDK Android/iOS/Web gọi init/OCR/liveness qua public proxy, giữ nguyên
   request body, multipart, status, response body và header bắt buộc.
 - FPT non-2xx, timeout, disconnect và unknown delivery không bị proxy tự retry.
-- eKYC finalize trước/sau đủ evidence và finalize trùng trả cùng result ID.
+- eKYC chỉ trả `X-VHM-Result-Id` khi đủ evidence; retry terminal request trả cùng ID.
 - PostgreSQL lỗi trước/sau FPT response không làm thay đổi provider-compatible SDK response.
 - Domain result fetch bắt buộc workload identity và binding; chỉ biết result ID không đủ quyền.
 - Domain business apply idempotent và không đồng nhất OCR/eKYC technical success với
@@ -797,7 +795,7 @@ So với TDD cơ sở, cần triển khai thêm:
 4. Public client OCR upload/start/status API được bind theo token.
 5. Cấu hình FPT SDK Base URL/custom authorization header cho từng client version.
 6. Operation/journey correlation xuyên init/OCR/liveness/provider attempts.
-7. eKYC finalize API nằm ngoài SDK provider contract.
+7. Tạo result idempotent và trả `X-VHM-Result-Id` trên terminal eKYC response.
 8. Immutable result ID và internal result endpoint trong `vhm-ocr-ekyc` với
    domain/business binding.
 9. Database migration cho grant/operation/result binding và encrypted result.
@@ -837,7 +835,7 @@ state/runbook; không tự phát lại FPT mutation.
 | DT-OI-01 | JWT hay opaque token; issuer/key/JWKS/revocation/cache strategy | IAM + ANBM phê duyệt và security test đạt |
 | DT-OI-02 | Token TTL theo OCR upload và FPT SDK p99/session TTL | Product/Mobile/FPT/Vận hành chốt bằng số đo |
 | DT-OI-03 | Public hostname/API Gateway/WAF/rate/concurrency/body limits | Cloud/ANBM/Vận hành phê duyệt |
-| DT-OI-04 | Exact SDK Android/iOS/Web hỗ trợ Base URL và custom header | FPT/Mobile/Tích hợp sign-off + E2E đạt |
+| DT-OI-04 | Exact SDK Android/iOS/Web hỗ trợ Base URL, request auth header và expose `X-VHM-Result-Id` cho App | FPT/Mobile/Tích hợp sign-off + E2E đạt |
 | DT-OI-05 | Canonical eKYC result/evidence schema và required-step completion rules | Product/Tích hợp/Pháp chế phê duyệt |
 | DT-OI-06 | Client bỏ dở hoặc không submit result về Domain | Domain timeout/reconciliation policy được duyệt |
 | DT-OI-07 | Có cần callback/event server-to-server cho Domain ngoài baseline client-submit | Architecture/Product quyết định |
@@ -859,7 +857,7 @@ state/runbook; không tự phát lại FPT mutation.
 | eKYC processing | Synchronous FPT SDK proxy | Không đổi; bỏ Domain khỏi SDK data path |
 | SDK response | Provider-compatible passthrough | Không đổi |
 | Result handoff | Domain gọi capability và nhận/poll result | Client đưa opaque result ID; Domain dereference server-to-server |
-| Thành phần mới | Không | Token binding, finalize, internal result API, public security edge |
+| Thành phần mới | Không | Token binding, result response header, internal result API, public security edge |
 
 # Appendix B. Quyết định kiến trúc đề xuất
 
@@ -868,6 +866,6 @@ state/runbook; không tự phát lại FPT mutation.
 | DT-ADR-001 | Domain authorize nghiệp vụ; `vhm-ocr-ekyc` mint scoped client capability token theo request workload đã xác thực | ĐỀ XUẤT |
 | DT-ADR-002 | Client gọi public `vhm-ocr-ekyc` sau khi nhận token; Domain không nằm trong media/SDK data path | ĐỀ XUẤT |
 | DT-ADR-003 | OCR document giữ nguyên async outbox/Kafka/processor | BẮT BUỘC |
-| DT-ADR-004 | eKYC giữ synchronous provider-compatible proxy; result ID lấy qua finalize API riêng | BẮT BUỘC |
+| DT-ADR-004 | eKYC giữ nguyên status/body FPT; result ID trả thêm qua `X-VHM-Result-Id` khi terminal | ĐỀ XUẤT — cần SDK contract test |
 | DT-ADR-005 | Client chỉ chuyển opaque result ID; Domain luôn lấy authoritative result server-to-server và kiểm tra binding | BẮT BUỘC |
 | DT-ADR-006 | Grant/operation/result state nằm trong PostgreSQL schema `ocr_ekyc`; terminal result bất biến | ĐỀ XUẤT |
