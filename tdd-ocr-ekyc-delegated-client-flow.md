@@ -277,6 +277,9 @@ Không trả provider job ID, raw provider result hoặc PII nếu client không
 
 ## 7.1 Nguyên tắc tương thích SDK
 
+- FPT SDK là thư viện được nhúng và chạy trong tiến trình Mobile App, không phải
+  endpoint FPT mà App gọi trực tiếp. Mọi HTTP request của SDK phải dùng Base URL
+  `vhm-ocr-ekyc`; Client/SDK không được kết nối thẳng tới FPT backend.
 - Mobile/Web cấu hình FPT SDK với public proxy base URL của `vhm-ocr-ekyc` và
   capability token trong custom header được phiên bản SDK hỗ trợ.
 - SDK tự điều phối `init_session`, OCR, liveness và các bước được capture spec cho phép.
@@ -304,7 +307,7 @@ sequenceDiagram
     participant A as Mobile App
     participant D as Domain Service
     participant O as vhm-ocr-ekyc
-    participant SDK as FPT SDK
+    participant SDK as FPT SDK (nhúng trong App)
     participant DB as PostgreSQL
     participant F as FPT eKYC
 
@@ -315,10 +318,10 @@ sequenceDiagram
     O-->>D: grantId + operationId + token + expiry + sdkConfig
     D->>D: Lưu business object ↔ grantId/operationId
     D-->>A: operationId + token + expiry + sdkConfig
-    A->>SDK: Configure Base URL + custom auth header + client_uuid
+    A->>SDK: Local SDK call: configure Base URL<br/>+ custom auth header + client_uuid
 
     loop SDK tự điều phối required steps
-        SDK->>O: init/OCR/liveness request<br/>Bearer capability token
+        SDK->>O: HTTP init/OCR/liveness qua VHM Base URL<br/>Bearer capability token
         O->>O: Validate token, operation, scope, method/path/size
         O->>DB: Ghi request metadata/attempt, không lưu raw media
         O->>F: Stream request + inject FPT credential
