@@ -319,14 +319,21 @@ sau khi SDK callback hoàn tất; API này không nằm trong FPT SDK wire contr
 sequenceDiagram
     autonumber
     participant A as Mobile App
+    participant D as Domain Service
+    participant G as Internal Grant/Operation API
     participant SDK as FPT SDK
     participant E as Public vhm-ocr-ekyc eKYC Proxy
     participant DB as PostgreSQL
     participant F as FPT eKYC
-    participant D as Domain Service
     participant R as Internal Result API
 
-    A->>A: Nhận operationId + token + sdkConfig từ Domain
+    A->>D: Yêu cầu bắt đầu eKYC cho business object
+    D->>D: Authenticate client + authorize nghiệp vụ/consent
+    D->>G: POST create capability grant<br/>workload identity + idempotency key
+    G->>DB: Tạo grant + operation + token binding
+    G-->>D: grantId + operationId + token + expiry + sdkConfig
+    D->>D: Lưu business object ↔ grantId/operationId
+    D-->>A: operationId + token + expiry + sdkConfig
     A->>SDK: Configure Base URL + custom auth header + client_uuid
 
     loop SDK tự điều phối required steps
@@ -346,8 +353,10 @@ sequenceDiagram
     E-->>A: resultId + RESULT_READY
 
     A->>D: Submit resultId cho business object
-    D->>R: GET authoritative result(resultId)<br/>workload identity
-    R->>R: Verify domain + operation + business binding
+    D->>D: Authenticate client + đọc expected operation binding
+    D->>R: GET authoritative result(resultId, expectedOperationId)<br/>workload identity
+    R->>DB: Verify domain + operation + business binding
+    DB-->>R: Immutable canonical result
     R-->>D: Canonical eKYC evidence/result
     D->>D: Business decision/apply, idempotent
 ```
