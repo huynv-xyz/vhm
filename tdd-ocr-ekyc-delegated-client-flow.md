@@ -329,12 +329,12 @@ sequenceDiagram
         O->>DB: Ghi request metadata/attempt
         O->>F: Stream request + inject FPT credential
         F-->>O: Provider status + headers + body
-        O->>DB: Audit response; nếu đủ bước thì tạo/đọc resultId
+        O->>DB: Audit response và tạo hoặc đọc resultId khi đủ bước
         DB-->>O: resultId nếu kết quả đã sẵn sàng
         O-->>A: Giữ nguyên status/body FPT<br/>+ X-VHM-Result-Id khi có kết quả
     end
 
-    A->>A: SDK success callback; đọc resultId từ response header
+    A->>A: SDK success callback và đọc resultId từ response header
     A->>D: Submit resultId cho business object
     D->>D: Authenticate client + authorize business object
     D->>O: GET authoritative result(resultId)<br/>workload identity
