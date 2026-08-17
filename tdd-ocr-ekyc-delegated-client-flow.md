@@ -218,7 +218,7 @@ sequenceDiagram
     participant S as Amazon S3 private bucket
     participant DB as PostgreSQL
     participant K as Outbox/Kafka
-    participant F as FPT
+    participant F as FPT Backend
 
     C->>O: prepare-upload(operationId, metadata)<br/>Bearer capability token
     O->>O: Validate token + OCR scopes + media role
@@ -307,9 +307,8 @@ sequenceDiagram
     participant A as Mobile App
     participant D as Domain Service
     participant O as vhm-ocr-ekyc
-    participant SDK as FPT SDK (nhúng trong App)
     participant DB as PostgreSQL
-    participant F as FPT eKYC
+    participant F as FPT Backend
 
     A->>D: Yêu cầu bắt đầu eKYC cho business object
     D->>D: Authenticate client + authorize nghiệp vụ/consent
@@ -318,19 +317,19 @@ sequenceDiagram
     O-->>D: grantId + operationId + token + expiry + sdkConfig
     D->>D: Lưu business object ↔ grantId/operationId
     D-->>A: operationId + token + expiry + sdkConfig
-    A->>SDK: Local SDK call: configure Base URL<br/>+ custom auth header + client_uuid
+    A->>A: Configure FPT SDK với VHM Base URL<br/>+ capability token + client_uuid
 
-    loop SDK tự điều phối required steps
-        SDK->>O: HTTP init/OCR/liveness qua VHM Base URL<br/>Bearer capability token
+    loop Client/FPT SDK tự điều phối required steps
+        A->>O: HTTP init/OCR/liveness<br/>Bearer capability token
         O->>O: Validate token, operation, scope, method/path/size
         O->>DB: Ghi request metadata/attempt, không lưu raw media
         O->>F: Stream request + inject FPT credential
         F-->>O: Provider status + headers + body
         O->>DB: Audit encrypted response + cập nhật operation evidence
-        O-->>SDK: Provider-compatible response nguyên trạng
+        O-->>A: Provider-compatible response nguyên trạng
     end
 
-    SDK-->>A: SDK completion callback
+    A->>A: Nhận FPT SDK completion callback
     A->>O: POST finalize(operationId)<br/>Bearer capability token
     O->>O: Verify required server-side evidence đã đầy đủ
     O->>DB: Tạo hoặc đọc immutable authoritative result
