@@ -324,7 +324,7 @@ sequenceDiagram
         O-->>A: Provider-compatible response nguyên trạng
     end
 
-    A->>A: Nhận FPT SDK completion callback
+    A->>A: FPT SDK trả success/failure callback cho App
     A->>O: POST finalize<br/>Bearer capability token
     O->>O: Verify required server-side evidence đã đầy đủ
     O->>DB: Tạo hoặc đọc immutable authoritative result
@@ -341,8 +341,13 @@ sequenceDiagram
 
 ## 7.4 Finalize semantics
 
-- `finalize` là API của VHM App, không phải endpoint do FPT SDK tự gọi.
-- Client chỉ gọi `finalize` sau SDK completion callback.
+- Trên Android, tài liệu FPT mô tả `EkycSDK.CompleteListener` với `onSuccess`,
+  `onFailed` và `onTracking`; callback chính xác trên iOS/Web và từng SDK version
+  phải được chốt bằng contract test.
+- `finalize` là API do VHM đề xuất cho topology này, không phải API/callback của FPT
+  và không phải endpoint do FPT SDK tự gọi.
+- Client chỉ gọi `finalize` sau callback success của SDK; callback failed không được
+  tạo `RESULT_READY`.
 - Service chỉ trả `RESULT_READY` khi các required steps trong capture spec đã có
   authoritative provider response được lưu và kiểm tra thành công.
 - Nếu evidence chưa đủ, trả `409 RESULT_NOT_READY`; không gọi lại FPT mutation.
