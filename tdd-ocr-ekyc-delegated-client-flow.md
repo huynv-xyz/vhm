@@ -109,41 +109,25 @@ flowchart LR
     CLIENT([Mobile / Web])
     DOMAIN[Domain Service]
     EDGE[Public API Gateway / WAF]
-
-    subgraph OCR_EKYC[vhm-ocr-ekyc]
-        GRANT[Grant API]
-        PUBLIC[Public Client API]
-        RESULT[Internal Result API]
-        PROXY[eKYC SDK Proxy]
-        OCRAPI[OCR API]
-        DB[(PostgreSQL ocr_ekyc)]
-        ASYNC[Outbox / Kafka / OCR Processor]
-        INTEGRATION[FPT Integration]
-    end
-
+    OCR_EKYC[vhm-ocr-ekyc]
+    DB[(PostgreSQL ocr_ekyc)]
+    KAFKA[Kafka]
     FPT[FPT]
 
     CLIENT -->|1. Yêu cầu nghiệp vụ| DOMAIN
-    DOMAIN -->|2. Authorize + xin grant| GRANT
-    GRANT -->|3. operationId + token + client config| DOMAIN
+    DOMAIN -->|2. Authorize + xin grant| OCR_EKYC
+    OCR_EKYC -->|3. operationId + token + client config| DOMAIN
     DOMAIN -->|4. Projection grant| CLIENT
 
     CLIENT ==>|5. Bearer token + OCR/eKYC traffic| EDGE
-    EDGE ==>|Public capability route| PUBLIC
-    PUBLIC --> OCRAPI
-    PUBLIC --> PROXY
-    OCRAPI --> ASYNC
-    ASYNC --> INTEGRATION
-    PROXY --> INTEGRATION
-    INTEGRATION <--> FPT
-    GRANT <--> DB
-    PUBLIC <--> DB
-    ASYNC <--> DB
+    EDGE ==>|Public capability route| OCR_EKYC
+    OCR_EKYC <--> DB
+    OCR_EKYC <--> KAFKA
+    OCR_EKYC <--> FPT
 
     CLIENT -->|6. resultId| DOMAIN
-    DOMAIN -->|7. Workload identity + resultId| RESULT
-    RESULT -->|8. Authoritative result| DOMAIN
-    RESULT <--> DB
+    DOMAIN -->|7. Workload identity + resultId| OCR_EKYC
+    OCR_EKYC -->|8. Authoritative result| DOMAIN
 ```
 
 `==>` biểu diễn data plane có thể chứa media hoặc response nhạy cảm. Domain Service
@@ -154,10 +138,10 @@ chỉ tham gia control plane trước operation và result/application plane sau
 | **Ranh giới** | **Mức tin cậy** | **Kiểm soát bắt buộc** |
 | --- | --- | --- |
 | Client → Domain Service | Không tin cậy | OIDC/JWT, session/channel control, object-level authorization |
-| Domain Service → Grant API | Zero Trust nội bộ | mTLS/workload JWT, issuer/audience/scope, allowlist domain, idempotency |
+| Domain Service → internal endpoint của `vhm-ocr-ekyc` | Zero Trust nội bộ | mTLS/workload JWT, issuer/audience/scope, allowlist domain, idempotency |
 | Client → public `vhm-ocr-ekyc` | Không tin cậy, media nhạy cảm | Capability token, TLS, WAF, rate/concurrency/body limit, scope/operation binding |
 | Public ingress → `vhm-ocr-ekyc` | Zero Trust nội bộ | Xác thực ingress/workload, bảo toàn body, trusted forwarding headers |
-| Domain Service → Internal Result API | Zero Trust nội bộ | Workload identity, domain/result binding, audit access, không chỉ dựa vào `resultId` |
+| Domain Service → result endpoint của `vhm-ocr-ekyc` | Zero Trust nội bộ | Workload identity, domain/result binding, audit access, không chỉ dựa vào `resultId` |
 | `vhm-ocr-ekyc` → FPT | Bên ngoài | TLS, fixed allowlist endpoint, secret injection, timeout/quota |
 
 ---
@@ -171,25 +155,26 @@ sequenceDiagram
     autonumber
     participant C as Client
     participant D as Domain Service
-    participant G as vhm-ocr-ekyc Grant API
+    participant O as vhm-ocr-ekyc
     participant DB as PostgreSQL ocr_ekyc
 
     C->>D: Yêu cầu OCR/eKYC cho business object
     D->>D: Authenticate + authorize object/state/action
     D->>D: Xác định capability + captureSpec + purpose/consent refs
-    D->>G: POST capability grant<br/>workload identity + Idempotency-Key
-    G->>G: Validate domain, capability, scope và policy
-    G->>DB: Tạo operation + grant binding
-    DB-->>G: Commit operation/grant
-    G->>G: Mint short-lived access token
-    G-->>D: operationId + grantId + token + expiresAt + clientConfig
+    D->>O: POST capability grant<br/>workload identity + Idempotency-Key
+    O->>O: Validate domain, capability, scope và policy
+    O->>DB: Tạo operation + grant binding
+    DB-->>O: Commit operation/grant
+    O->>O: Mint short-lived access token
+    O-->>D: operationId + grantId + token + expiresAt + clientConfig
     D->>D: Lưu operationId/grantId với business object
     D-->>C: Projection token/config, không trả internal context
 ```
 
 ## 5.2 Quy tắc cấp grant
 
-- Domain Service phải hoàn tất authentication/authorization trước lời gọi Grant API.
+- Domain Service phải hoàn tất authentication/authorization trước khi gọi grant endpoint
+  của `vhm-ocr-ekyc`.
 - Domain Service gửi opaque `source`, `referenceId`, `subjectRef`, `requestBy`; không
   nhúng PII vào các tham chiếu này.
 - `vhm-ocr-ekyc` không thực hiện lại business rule nhưng phải kiểm tra workload domain
@@ -227,46 +212,44 @@ status API và chỉ nhận `resultId` khi terminal result đã được lưu b�
 sequenceDiagram
     autonumber
     participant C as Client
-    participant E as Public vhm-ocr-ekyc API
+    participant D as Domain Service
+    participant O as vhm-ocr-ekyc
     participant FM as File Management
     participant S as Amazon S3 private bucket
     participant DB as PostgreSQL
     participant K as Outbox/Kafka
-    participant W as OCR Processor
     participant F as FPT
-    participant D as Domain Service
-    participant R as Internal Result API
 
-    C->>E: prepare-upload(operationId, metadata)<br/>Bearer capability token
-    E->>E: Validate token + OCR scopes + media role
-    E->>FM: Prepare managed presigned PUT
-    FM-->>E: URL + signed headers + opaque mediaRef
-    E-->>C: URL + headers + mediaRef
+    C->>O: prepare-upload(operationId, metadata)<br/>Bearer capability token
+    O->>O: Validate token + OCR scopes + media role
+    O->>FM: Prepare managed presigned PUT
+    FM-->>O: URL + signed headers + opaque mediaRef
+    O-->>C: URL + headers + mediaRef
     C->>S: PUT media bằng signed headers
     S-->>C: Upload success
 
-    C->>E: start OCR(operationId, mediaRef)<br/>Idempotency-Key + token
-    E->>E: Validate operation binding, media và captureSpec
-    E->>DB: Transaction request + media refs + outbox
-    DB-->>E: Commit
-    E-->>C: 202 + operation status URI
+    C->>O: start OCR(operationId, mediaRef)<br/>Idempotency-Key + token
+    O->>O: Validate operation binding, media và captureSpec
+    O->>DB: Transaction request + media refs + outbox
+    DB-->>O: Commit
+    O-->>C: 202 + operation status URI
 
     DB-->>K: Outbox event đã commit
-    K-->>W: Chỉ internal OCR ID
-    W->>F: Submit/poll OCR theo contract
-    F-->>W: Provider result/status
-    W->>DB: Normalize + encrypted immutable result + COMPLETED
+    K-->>O: Consumer trong vhm-ocr-ekyc nhận internal OCR ID
+    O->>F: Submit/poll OCR theo contract
+    F-->>O: Provider result/status
+    O->>DB: Normalize + encrypted immutable result + COMPLETED
 
     loop Cho tới terminal
-        C->>E: GET public operation status<br/>Bearer token
-        E->>DB: Read status trong operation scope
-        E-->>C: QUEUED/PROCESSING hoặc COMPLETED + resultId
+        C->>O: GET public operation status<br/>Bearer token
+        O->>DB: Read status trong operation scope
+        O-->>C: QUEUED/PROCESSING hoặc COMPLETED + resultId
     end
 
     C->>D: Submit resultId cho business object
-    D->>R: GET authoritative result(resultId)<br/>workload identity
-    R->>R: Verify domain + operation + reference binding
-    R-->>D: Canonical OCR result
+    D->>O: GET authoritative result(resultId)<br/>workload identity
+    O->>O: Verify domain + operation + reference binding
+    O-->>D: Canonical OCR result
     D->>D: Apply theo business rule, idempotent
 ```
 
@@ -320,44 +303,42 @@ sequenceDiagram
     autonumber
     participant A as Mobile App
     participant D as Domain Service
-    participant G as Internal Grant/Operation API
+    participant O as vhm-ocr-ekyc
     participant SDK as FPT SDK
-    participant E as Public vhm-ocr-ekyc eKYC Proxy
     participant DB as PostgreSQL
     participant F as FPT eKYC
-    participant R as Internal Result API
 
     A->>D: Yêu cầu bắt đầu eKYC cho business object
     D->>D: Authenticate client + authorize nghiệp vụ/consent
-    D->>G: POST create capability grant<br/>workload identity + idempotency key
-    G->>DB: Tạo grant + operation + token binding
-    G-->>D: grantId + operationId + token + expiry + sdkConfig
+    D->>O: POST create capability grant<br/>workload identity + idempotency key
+    O->>DB: Tạo grant + operation + token binding
+    O-->>D: grantId + operationId + token + expiry + sdkConfig
     D->>D: Lưu business object ↔ grantId/operationId
     D-->>A: operationId + token + expiry + sdkConfig
     A->>SDK: Configure Base URL + custom auth header + client_uuid
 
     loop SDK tự điều phối required steps
-        SDK->>E: init/OCR/liveness request<br/>Bearer capability token
-        E->>E: Validate token, operation, scope, method/path/size
-        E->>DB: Ghi request metadata/attempt, không lưu raw media
-        E->>F: Stream request + inject FPT credential
-        F-->>E: Provider status + headers + body
-        E->>DB: Audit encrypted response + cập nhật operation evidence
-        E-->>SDK: Provider-compatible response nguyên trạng
+        SDK->>O: init/OCR/liveness request<br/>Bearer capability token
+        O->>O: Validate token, operation, scope, method/path/size
+        O->>DB: Ghi request metadata/attempt, không lưu raw media
+        O->>F: Stream request + inject FPT credential
+        F-->>O: Provider status + headers + body
+        O->>DB: Audit encrypted response + cập nhật operation evidence
+        O-->>SDK: Provider-compatible response nguyên trạng
     end
 
     SDK-->>A: SDK completion callback
-    A->>E: POST finalize(operationId)<br/>Bearer capability token
-    E->>E: Verify required server-side evidence đã đầy đủ
-    E->>DB: Tạo hoặc đọc immutable authoritative result
-    E-->>A: resultId + RESULT_READY
+    A->>O: POST finalize(operationId)<br/>Bearer capability token
+    O->>O: Verify required server-side evidence đã đầy đủ
+    O->>DB: Tạo hoặc đọc immutable authoritative result
+    O-->>A: resultId + RESULT_READY
 
     A->>D: Submit resultId cho business object
     D->>D: Authenticate client + đọc expected operation binding
-    D->>R: GET authoritative result(resultId, expectedOperationId)<br/>workload identity
-    R->>DB: Verify domain + operation + business binding
-    DB-->>R: Immutable canonical result
-    R-->>D: Canonical eKYC evidence/result
+    D->>O: GET authoritative result(resultId, expectedOperationId)<br/>workload identity
+    O->>DB: Verify domain + operation + business binding
+    DB-->>O: Immutable canonical result
+    O-->>D: Canonical eKYC evidence/result
     D->>D: Business decision/apply, idempotent
 ```
 
@@ -389,8 +370,8 @@ Khi nhận `resultId`, Domain Service:
 
 1. Xác thực client và authorize business object hiện tại.
 2. Đọc `operationId`/`grantId` đã lưu khi bắt đầu flow.
-3. Gọi Internal Result API bằng workload identity và gửi `resultId` cùng expected
-   `operationId` hoặc context binding.
+3. Gọi internal result endpoint của `vhm-ocr-ekyc` bằng workload identity và gửi
+   `resultId` cùng expected `operationId` hoặc context binding.
 4. `vhm-ocr-ekyc` kiểm tra:
    - result tồn tại và terminal;
    - result thuộc operation đã được Domain này tạo grant;
@@ -408,7 +389,7 @@ Biết hoặc đoán được `resultId` không đủ quyền đọc result.
 Đường dẫn chính xác phải được xuất bản trong OpenAPI L3. Các route dưới đây là
 logical contract của thiết kế.
 
-## 9.1 Domain → Grant API
+## 9.1 Domain → grant endpoint của vhm-ocr-ekyc
 
 ```http
 POST /internal/v1/capability-grants
@@ -487,7 +468,7 @@ Logical routes:
 Client không được truyền `source`, `referenceId`, `subjectRef`, provider hoặc
 document type ngoài giá trị đã bind trong operation/capture spec.
 
-## 9.3 Domain → Internal Result API
+## 9.3 Domain → internal result endpoint của vhm-ocr-ekyc
 
 ```http
 GET /internal/v1/results/{resultId}?expectedOperationId=<operationId>
@@ -679,8 +660,8 @@ erDiagram
 - Raw OCR media nằm trong private object storage theo File Management; không vào DB/Kafka.
 - Raw eKYC media chỉ stream tới FPT; không persist trong PostgreSQL/local disk/log.
 - Response eKYC cần cho authoritative result/audit được mã hóa khi lưu.
-- Public status trả metadata tối thiểu; full result chỉ trả qua Internal Result API
-  cho Domain workload đã được authorize.
+- Public status trả metadata tối thiểu; full result chỉ trả qua internal result endpoint
+  của `vhm-ocr-ekyc` cho Domain workload đã được authorize.
 - Token, media URL, media path, provider session/job/request ID và PII không vào event/log.
 - `resultId`, `operationId`, `grantId` là opaque nhưng vẫn được coi là metadata nhạy
   cảm; không dùng làm metric label có cardinality cao.
@@ -693,8 +674,8 @@ erDiagram
 
 | **Tình huống** | **Hành vi bắt buộc** |
 | --- | --- |
-| Domain từ chối nghiệp vụ | Không gọi Grant API hoặc không trả token cho client |
-| Grant API lỗi trước commit | Không phát token; Domain có thể retry cùng `Idempotency-Key` |
+| Domain từ chối nghiệp vụ | Không gọi grant endpoint của `vhm-ocr-ekyc` hoặc không trả token cho client |
+| Grant endpoint lỗi trước commit | Không phát token; Domain có thể retry cùng `Idempotency-Key` |
 | Response token mất sau commit | Retry trả cùng operation theo idempotency policy; không tạo operation mới |
 | Token sai/hết hạn/revoke | `401/403`; từ chối trước khi đọc body; không gọi FPT |
 | Token đúng nhưng sai operation/scope | `403`; ghi metric security không chứa PII |
@@ -706,7 +687,7 @@ erDiagram
 | Lỗi lưu request trước FPT | Không gọi FPT; trả lỗi service-compatible |
 | Lỗi lưu response sau FPT | Vẫn trả response FPT cho SDK, cảnh báo; finalize không false-success khi thiếu evidence |
 | Finalize trước khi đủ evidence | `409 RESULT_NOT_READY`; không gọi FPT lại |
-| Client gửi result ID của operation khác | Internal Result API trả `403/404`; Domain không apply |
+| Client gửi result ID của operation khác | `vhm-ocr-ekyc` trả `403/404`; Domain không apply |
 | Domain apply trùng | Idempotent return; không ghi business state/result lần hai |
 | Result bị xóa/hết retention | Trả trạng thái tường minh theo policy; không phục hồi trái phép |
 
@@ -814,14 +795,15 @@ Cảnh báo mới:
 
 So với TDD cơ sở, cần triển khai thêm:
 
-1. Internal Grant API và revoke API.
+1. Internal grant/revoke endpoints trong `vhm-ocr-ekyc`.
 2. Capability token issuer, key management, validation middleware và revocation state.
 3. Public ingress/WAF/rate/body/concurrency policy cho `vhm-ocr-ekyc`.
 4. Public client OCR upload/start/status API được bind theo operation.
 5. Cấu hình FPT SDK Base URL/custom authorization header cho từng client version.
 6. Operation/journey correlation xuyên init/OCR/liveness/provider attempts.
 7. eKYC finalize API nằm ngoài SDK provider contract.
-8. Immutable result ID và Internal Result API với domain/business binding.
+8. Immutable result ID và internal result endpoint trong `vhm-ocr-ekyc` với
+   domain/business binding.
 9. Database migration cho grant/operation/result binding và encrypted result.
 10. Domain persistence của operation/grant binding, result submit và idempotent apply.
 11. Runbook token/key rotation/revoke, abandoned operation, unknown eKYC delivery và
@@ -837,7 +819,8 @@ document bất đồng bộ.
 
 Khuyến nghị rollout theo feature flag/capability/client version:
 
-1. Xây Grant API, operation/result binding và Internal Result API nhưng chưa mở public traffic.
+1. Xây grant/result endpoints cùng operation/result binding trong `vhm-ocr-ekyc`,
+   nhưng chưa mở public traffic.
 2. Mở public OCR flow cho một domain/client test, giữ flow cũ làm rollback path.
 3. Chốt FPT SDK proxy/custom-header contract trên Android; E2E và load test.
 4. Mở eKYC delegated flow Android theo allowlist version/domain.
