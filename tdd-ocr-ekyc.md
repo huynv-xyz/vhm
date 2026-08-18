@@ -1432,16 +1432,22 @@ PostgreSQL, Kafka, File Management và FPT là phụ thuộc runtime đã mô t�
 
 ## 10.3 Deployment Strategy
 
+| **Component** | **Deployment Type (Blue-Green/Canary/Rolling)** | **Expected Downtime** | **Rollback Strategy** | **Deployment Window** | **Approval Required (Y/N)** |
+| --- | --- | --- | --- | --- | --- |
+| API Pods | Canary, sau khi đạt health/error/latency gate thì tiếp tục Rolling | 0 ms downtime có kế hoạch; pod chỉ nhận traffic sau khi readiness đạt | Chuyển traffic khỏi canary, dừng rollout và triển khai lại image digest liền trước; schema phải còn tương thích với phiên bản cũ | Cửa sổ phát hành production đã phê duyệt, ngoài giờ cao điểm nghiệp vụ | Y |
+| OCR Processor Pods và Outbox Publisher | Rolling có drain Kafka consumer | 0 ms downtime có kế hoạch; có thể tạm giảm tốc độ xử lý trong lúc rebalance nhưng không mất job | Dừng rollout, drain consumer của phiên bản mới và triển khai lại image digest liền trước; tiếp tục xử lý từ trạng thái PostgreSQL/Kafka, không phát lại mù lời gọi FPT có kết quả chưa rõ | Cùng cửa sổ phát hành API, ngoài giờ cao điểm OCR và không trùng thời gian bảo trì FPT | Y |
+| Flyway/PostgreSQL schema | Rolling-compatible theo expand/contract; Flyway chạy một lần trước khi pod mới nhận traffic | 0 ms downtime ứng dụng đối với migration tương thích ngược; migration có khóa chặn vượt ngưỡng phải bị từ chối trước production | Rollback application về phiên bản còn tương thích và thực hiện forward-fix migration; không chạy down migration phá hủy hoặc xóa dữ liệu trong cửa sổ rollback | Đầu cửa sổ phát hành production, trước rollout API/OCR Processor | Y |
+
+Giá trị `Y` áp dụng cho production. Mọi đợt triển khai cần Chủ sở hữu ứng dụng và
+Vận hành phê duyệt; migration PostgreSQL cần thêm DBA, thay đổi quyền truy cập hoặc
+cơ chế bảo vệ dữ liệu nhạy cảm cần thêm ANBM.
+
 - Pipeline CI phải chạy `mvn clean test` và chỉ cho phép đóng gói khi toàn bộ kiểm
   thử bắt buộc thành công.
 - Các cổng bắt buộc: biên dịch/unit, kiểm tra thay đổi PostgreSQL schema, quét secret,
   SAST/SCA/license, quét container/IaC, contract FPT, integration, an toàn thông tin,
   kiểm thử tải và quét PII trong log.
 - Build artifact bất biến một lần; quảng bá qua môi trường mà không build lại.
-- API rolling/canary; OCR worker rolling có drain consumer.
-- Thay đổi PostgreSQL schema theo expand/contract, có phiên bản và tương thích ngược;
-  cần runbook migration/rollback ở production.
-- Rollback không được hoàn tác schema theo cách phá hủy hoặc phát lại mù thao tác FPT.
 
 ### Quản lý cấu hình
 
