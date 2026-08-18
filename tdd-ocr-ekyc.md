@@ -1461,6 +1461,22 @@ cơ chế bảo vệ dữ liệu nhạy cảm cần thêm ANBM.
 
 ## 10.4 Infrastructure & Network Security
 
+### Hạng mục bảo mật hạ tầng
+
+| **Hạng mục bảo mật** | **Giải pháp** | **Thông số cấu hình** | **Phạm vi áp dụng** |
+| --- | --- | --- | --- |
+| WAF | WAF tại public edge của Domain BFF; `vhm-ocr-ekyc` không mở public ingress | Production chạy block mode với managed rules cho SQL injection, XSS, LFI/RFI và HTTP protocol anomaly; chỉ cho phép method/path đã công bố; multipart route vẫn phải kiểm tra size, MIME và magic byte tại ứng dụng | Mobile/Web → Domain BFF; không đặt WAF trực tiếp trước API nội bộ `vhm-ocr-ekyc` |
+| DDoS Protection | Bảo vệ DDoS luôn bật tại public edge và lớp mạng của nền tảng VHM | Tự động phát hiện/giảm thiểu L3/L4; tải L7 vượt giới hạn được WAF và rate limiting xử lý; capacity bảo vệ không được thấp hơn target ≥5.000 req/s của API không mang media tại NFR-005 | Public endpoint của Domain BFF và hạ tầng ingress production |
+| Rate Limiting | Token bucket/quota tách theo route và chủ thể gọi | Domain BFF giới hạn theo user/session/IP; Domain Backend Service và `vhm-ocr-ekyc` giới hạn theo workload/route; trả `429` và `Retry-After`; tách quota OCR, eKYC và polling; giá trị quota phải đạt NFR-005 và không vượt quota FPT được chốt tại OI-002 | Domain BFF, Domain Backend Service, API và các outbound call tới FPT |
+| Anti-Bot | Bot management tại Domain BFF kết hợp xác thực phiên/kênh | Chặn bot/scanner đã biết; Web được challenge trước khi bắt đầu upload/eKYC khi có tín hiệu rủi ro; Mobile dùng app/device attestation và session control; không chèn CAPTCHA/challenge vào giữa contract FPT SDK | Public Web/Mobile route tại Domain BFF; không áp dụng cho service-to-service route đã xác thực workload |
+| Network Segmentation | Private subnet/namespace và policy deny-by-default | API/processor không có public IP hoặc public route; inbound API chỉ nhận từ Domain Backend Service được cấp quyền; PostgreSQL, Kafka và kho object chỉ nhận từ workload thuộc allowlist | EKS namespace, API/processor, PostgreSQL, Kafka và File Management/kho object |
+| Egress Control | Firewall/security policy với danh sách đích cho phép | Mặc định từ chối egress; chỉ mở đúng giao thức/đích tới FPT, File Management, PostgreSQL, Kafka, secret manager/KMS và nền tảng quan sát; không nhận URL downstream do caller cung cấp | API Pods và OCR Processor Pods |
+| Workload Identity & IAM | Danh tính workload ngắn hạn và nguyên tắc đặc quyền tối thiểu | Tách quyền API/processor; không dùng cloud access key tĩnh; quyền PostgreSQL schema, Kafka topic/group, object path và secret được cấp riêng theo vai trò runtime | API, OCR Processor/Outbox Publisher và pipeline triển khai |
+| Secrets & Key Protection | Secret manager/KMS cấp secret tại runtime | Không lưu secret/key trong source, image, manifest, ConfigMap, PostgreSQL, Kafka hoặc log; đội dự án/vận hành quản lý phân quyền, xoay và thu hồi khóa theo mục 9.3/9.4 | FPT credential, File Management credential, khóa mã hóa payload và chứng thư workload |
+| Security Monitoring | Thu thập sự kiện WAF/DDoS/IAM/network và cảnh báo tập trung | Gửi metadata sự kiện về nền tảng quan sát/SIEM; không ghi request/response body, PII, media, token, path hoặc provider job/session ID; cảnh báo khi WAF block, rate-limit, auth failure hoặc egress bị từ chối tăng bất thường | Public edge, Domain BFF, EKS, IAM và network control plane |
+
+### Ma trận luồng mạng
+
 | **Nguồn** | **Đích** | **Giao thức/dữ liệu** | **Kiểm soát** |
 | --- | --- | --- | --- |
 | Mobile/Web | Domain BFF | HTTPS nghiệp vụ | Xác thực người dùng, giới hạn tần suất và kiểm soát phiên |
