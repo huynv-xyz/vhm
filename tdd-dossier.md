@@ -1295,65 +1295,64 @@ Trước production, Product cung cấp MAU/DAU, hồ sơ/ngày, peak factor, t�
 
 ## 11.2 Cost
 
-### Giả định estimate sơ bộ
+### Trạng thái estimate
 
-Estimate dưới đây là **budget envelope, không phải báo giá**. Baseline giả định
-10.000 hồ sơ hoàn tất/tháng, workload target mục 4.1, Core chạy 2 pods thường trực
-(mỗi pod khoảng 1 vCPU/2 GiB) và HPA tối đa 6 pods, PostgreSQL HA/PITR, Redis HA,
-Kafka dùng chung, 100–300 GiB log/metric/trace mỗi tháng và một region. Giá chưa
-gồm thuế, enterprise support, private discount/Savings Plan, second-region DR và
-nhân sự vận hành.
+**Chưa đủ dữ liệu để đưa ra estimate định lượng.** Tài liệu hiện chưa có forecast
+nghiệp vụ được phê duyệt, kết quả load test để sizing, topology môi trường, cloud/
+region, mô hình shared/dedicated hoặc rate card/chargeback của VHM. Vì vậy mục này
+không tự giả định số hồ sơ, số pod, cấu hình database, dung lượng telemetry, tỷ lệ
+contingency hoặc số tiền theo tháng. Mọi giá trị tiền tệ/unit cost chỉ được bổ sung
+từ sizing sheet và cost workbook do Product, Platform và FinOps xác nhận.
 
-Để có order-of-magnitude, bảng dùng mô hình public on-demand kiểu AWS tại thời điểm
-soạn thảo; cloud/region thực tế chưa được chốt. AWS tính riêng EKS control plane và
-worker resource; RDS, ElastiCache và MSK thay đổi theo region/instance/storage;
-observability và object storage tính theo usage. Nguồn tham chiếu:
-[EKS](https://aws.amazon.com/eks/pricing/),
-[RDS PostgreSQL](https://aws.amazon.com/rds/postgresql/pricing/),
-[ElastiCache](https://aws.amazon.com/elasticache/pricing/),
-[MSK](https://aws.amazon.com/msk/pricing/),
-[CloudWatch](https://aws.amazon.com/cloudwatch/pricing/),
-[S3](https://aws.amazon.com/s3/pricing/) và
-[AWS Pricing Calculator](https://calculator.aws/). FinOps phải thay bằng
-rate card/contract chính thức của VHM trước khi phê duyệt.
+### Đầu vào bắt buộc cho estimate
 
-| **Cost driver trực tiếp của Dossier Core** | **Giả định sizing** | **Estimate USD/tháng** | **Biến số chính/ghi chú** |
-| --- | --- | ---: | --- |
-| Compute/Kubernetes allocation | 2 × 1 vCPU/2 GiB baseline, HPA tối đa 6; rolling/canary headroom; phần phân bổ control plane/worker | **150–500** | Kiến trúc node/Fargate, utilization, shared cluster allocation, Savings Plan và thời gian scale-out |
-| PostgreSQL HA, storage và PITR | Managed Multi-AZ tương đương 2–4 vCPU/8–16 GiB, 100–300 GiB storage + backup | **350–1.000** | Region, instance family, IOPS, backup retention, cross-AZ/PITR và growth JSONB/history/outbox |
-| Redis HA allocation | Hai node hoặc managed/serverless tương đương, dataset <5 GiB; TLS/backup nếu bật | **80–300** | Dedicated so với shared, engine/node class, cross-AZ traffic và retention snapshot |
-| Kafka allocation | Topic/consumer group dùng chung, metadata event nhỏ, retention 3–7 ngày dự kiến | **80–400** | Shared chargeback so với dedicated broker, partitions, throughput, retention/DLQ và cross-AZ traffic |
-| Observability/SIEM | 100–300 GiB log/metric/trace mỗi tháng, dashboard/alert và DLP scan | **75–350** | Log verbosity/retention, custom metrics cardinality, trace sampling và SIEM ingestion |
-| Network, load balancing, KMS, secret và certificate | Internal ingress/egress, cross-AZ, KMS/secret operations và certificate lifecycle | **75–300** | Region/topology, private endpoint/service mesh, cross-AZ/egress volume và key count |
-| Backup/export/temp artefact allocation | DB backup ngoài free allowance, report/ZIP/XLSX private TTL store và restore drill overhead | **50–250** | Report volume/size, retention, backup growth, request/transfer và lifecycle tiering |
-| **Subtotal trực tiếp** | Không gồm các capability/service bên ngoài bên dưới | **860–3.100** | Khoảng rộng do chưa chốt platform/region và tỷ lệ shared-service allocation |
-| Contingency | 20% subtotal cho peak/headroom và sai số sizing ban đầu | **170–620** | Không thay thế FinOps reserve hay incident/DR budget |
-| **Budget sơ bộ PROD/tháng** | Subtotal + contingency | **1.030–3.720 USD** | Làm tròn khi lập ngân sách: **~1,0k–3,7k USD/tháng** |
+| **Nhóm đầu vào** | **Số liệu cần có** | **Nguồn/owner** | **Trạng thái** |
+| --- | --- | --- | --- |
+| Forecast nghiệp vụ | Hồ sơ tạo/hoàn tất theo ngày và tháng, peak factor, tỷ lệ update/submit/review, tăng trưởng năm | Product/BA | `TBD` |
+| Tài liệu và OCR | Số file/CCCD trên hồ sơ, kích thước trung bình/P95, OCR request và polling rate, retention | Product/OCR/File owner | `TBD` |
+| Sizing ứng dụng | CPU/memory trung bình và peak, resource request/limit, replica tối thiểu/tối đa, utilization từ load/soak test | Backend/QA/Platform | `TBD` |
+| PostgreSQL | Dữ liệu phát sinh/hồ sơ, tốc độ tăng trưởng, connection/IOPS/throughput, HA, PITR và backup retention | DBA/Backend | `TBD` |
+| Redis/Kafka | Dataset, operation/message rate, partition, retention/DLQ, HA và shared-service allocation | Platform/Backend | `TBD` |
+| Observability/SIEM | Log/metric/trace ingestion, retention, sampling, custom metric và tỷ lệ chargeback | Vận hành/SOC/Platform | `TBD` |
+| Network và security platform | Ingress, cross-zone/region, egress, private endpoint, load balancer, KMS/secret/certificate operation | Platform/ANBM | `TBD` |
+| Report/artefact/backup | Số report/ZIP/XLSX, kích thước, TTL, object request/transfer và restore frequency | Product/File owner/DBA | `TBD` |
+| Môi trường | Số môi trường, thời gian hoạt động, topology/HA riêng và mức dùng chung tài nguyên | Platform/Vận hành | `TBD` |
+| Đơn giá thương mại | Currency, cloud/on-prem rate card, license, support, discount/commitment và quy tắc phân bổ shared service | FinOps/Procurement/Platform | `TBD` |
 
-### Chi phí ngoài phạm vi tổng trên
+### Cost model cần điền
 
-| **Capability/chi phí** | **Cách hạch toán yêu cầu** |
+| **Cost driver** | **Đơn vị tính** | **Công thức estimate** | **Phạm vi hạch toán** | **Owner xác nhận** |
+| --- | --- | --- | --- | --- |
+| Compute Dossier Core | vCPU-hour, GiB RAM-hour hoặc platform allocation unit | Tổng replica-hour theo từng môi trường × resource request/limit đã kiểm thử × rate card | API, outbox relay, scheduler và headroom triển khai thuộc Core | Platform/FinOps |
+| PostgreSQL | Instance-hour, GiB-month, IOPS/throughput, backup GiB-month | Compute + storage + I/O + backup/PITR + HA/DR allocation | Schema `dossier_db`; không tính database của dependency | DBA/FinOps |
+| Redis | Node/allocation-hour, GiB và operation | Capacity/operation theo nonce, counter, cache và HA × rate card | Chỉ phần chargeback cho Dossier; không tính toàn cụm dùng chung | Platform/FinOps |
+| Kafka | Partition/broker allocation, byte ingress/egress và storage | Message rate × payload + retention/DLQ + consumer/partition allocation | Topic/consumer của Dossier theo chargeback chính thức | Platform/FinOps |
+| Observability/SIEM | GiB ingest/month, retention, metric series và trace | Telemetry thực đo × retention/sampling × rate card | Dashboard/alert/log/trace/security telemetry của Core | Vận hành/SOC/FinOps |
+| Network/platform security | Request, endpoint-hour, GiB transfer, key/secret operation | Lưu lượng thực đo × topology + allocation LB/endpoint/KMS/secret/certificate | Chỉ flow do Core phát sinh | Platform/ANBM/FinOps |
+| Report và artefact tạm | File, GiB-month, request và transfer | Số artefact × kích thước × TTL + request/transfer | XLSX/ZIP/report do Core sinh; binary hồ sơ thuộc File owner | Product/File owner/FinOps |
+| License/support trực tiếp | License hoặc support allocation | Số license/allocation × đơn giá hợp đồng | Chỉ license được xác nhận dùng riêng hoặc phân bổ cho Core | Procurement/FinOps |
+
+### Ranh giới hạch toán với capability dùng chung
+
+| **Capability/chi phí** | **Nguyên tắc hạch toán** |
 | --- | --- |
-| `vhm-ocr-ekyc` và provider OCR | OCR service owner cung cấp fixed allocation + unit price/request/document CCCD; Dossier không nhân đôi provider cost |
-| File Management/object binary | File owner tính storage/request/egress theo số file, dung lượng trung bình và retention; bảng trên chỉ tính artefact export nhỏ thuộc Core |
-| Message Delivery | Message owner tính theo email/ZNS/SMS/notification accepted/delivered và retry; Core chỉ tính relay compute nhỏ |
-| Agent API/Market API/UI | Hạch toán tại repository/channel owner; không đưa compute/WAF/CDN của hai BFF vào Core |
-| Shared Kafka/Redis/Kubernetes/observability | Platform/FinOps cung cấp chargeback rule; không vừa tính full cluster vừa tính allocation cho Core |
-| Nhân sự, license và support | Syncfusion/license enterprise, on-call/DBA/SOC, support plan, VAT và commercial discount phải được Procurement/FinOps bổ sung |
+| `vhm-ocr-ekyc` và provider OCR | OCR owner cung cấp fixed allocation hoặc unit rate/request/document; không cộng lại vào compute/storage của Dossier |
+| File Management/object binary | File owner tính storage/request/transfer/retention của binary; Dossier chỉ tính report/artefact do chính Core sinh nếu chargeback yêu cầu |
+| Message Delivery | Message owner tính theo accepted/delivered/retry và channel; Core chỉ tính relay compute của mình |
+| Agent API/Market API/UI | Hạch toán tại channel owner; không đưa compute/WAF/CDN của BFF/UI vào Dossier Core |
+| Shared Kubernetes/Kafka/Redis/observability | Chỉ dùng allocation/chargeback do Platform/FinOps ban hành; không vừa tính toàn cụm vừa tính phần phân bổ |
+| Nhân sự, enterprise license, support và thuế | Tách khỏi infrastructure run-rate hoặc bổ sung theo policy tài chính; không tự suy diễn trong TDD kỹ thuật |
 
-Với baseline 10.000 hồ sơ hoàn tất/tháng, unit cost hạ tầng trực tiếp dự kiến là
-**0,10–0,37 USD/hồ sơ** (`budget PROD / completed dossiers`), chưa gồm OCR, file,
-message và channel. Chỉ số này không tuyến tính ở volume thấp do chi phí HA cố định;
-ở volume cao phải cộng storage/egress, DB/Kafka/Redis scale step và capacity
-headroom. Tổng ngân sách gồm STAG production-like dự kiến tăng thêm khoảng
-**30–50% chi phí PROD**, tùy mức chia sẻ data store/dependency.
+FinOps phải lập tối thiểu các scenario `P50`, `P90/peak` và `DR/stress` từ cùng bộ
+đầu vào có version. `Monthly Core Cost` là tổng các driver trực tiếp sau chargeback;
+`Unit Cost/Dossier` chỉ được tính khi có số hồ sơ hoàn tất cùng kỳ và phải ghi rõ
+các capability bị loại trừ. Contingency, budget alert và chi phí non-production áp
+dụng theo policy FinOps, không dùng tỷ lệ mặc định do TDD tự đặt.
 
-Trước khi chuyển TDD sang `APPROVED`, Product cung cấp hồ sơ/tháng, file/hồ sơ,
-dung lượng/retention, report/export và peak factor; Platform cung cấp topology;
-FinOps chạy calculator/rate card chính thức và chốt ba kịch bản `P50`, `P90` và
-stress. Budget alert đề xuất ở 80%/100% forecast và theo dõi riêng cost/hồ sơ,
-PostgreSQL storage growth, log ingestion, Kafka retention và external capability
-unit cost.
+Cost estimate chỉ được xem là hoàn tất khi đính kèm forecast đã duyệt, load/soak
+report, topology/sizing sheet, rate card có ngày hiệu lực, cost workbook có công
+thức và phê duyệt của Product, Platform, DBA, Vận hành và FinOps. Trước thời điểm
+đó, giá trị chính thức của cost estimate là **`TBD — chưa đủ đầu vào`**.
 
 # 12. Scalability & Reliability
 
