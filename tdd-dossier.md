@@ -557,7 +557,7 @@ Cùng idempotency key và cùng request trả tài nguyên hiện hữu; cùng k
 
 Trạng thái OCR gồm `QUEUED`, `PROCESSING`, `COMPLETED`, `FAILED`, `EXPIRED`. Agent API hoặc Market API thăm dò qua API của Dossier Core; Dossier Core gọi `/ocr/result` của `vhm-ocr-ekyc` và trả trạng thái chuẩn về BFF tương ứng. `nextAction` hướng dẫn `POLL`, `RETRY` hoặc `CONFIRM_AND_APPLY`.
 
-Khi `COMPLETED`, Dossier Core có thể proxy projection kết quả chuẩn từ `/ocr/result` để kênh cho người dùng kiểm tra. `CONFIRM_AND_APPLY` là hành động của domain: BFF gửi xác nhận về Dossier Core, Core đọc lại `/ocr/result`, kiểm tra `COMPLETED`, `source`, `referenceId` và `subjectRef`, rồi chỉ áp dụng readiness/metadata không PII theo contract domain. Baseline OCR hiện tại **không có endpoint confirm riêng** và Dossier không giả định OCR lưu lịch sử xác nhận nghiệp vụ.
+Khi `COMPLETED`, Dossier Core có thể proxy projection kết quả chuẩn từ `/ocr/result` để kênh cho người dùng kiểm tra. `CONFIRM_AND_APPLY` là hành động của domain: BFF gửi `ocrId` về Dossier Core, Core đọc lại `/ocr/result`; OCR capability authorize tài nguyên theo `source`, `referenceId`, `requestBy` và `subjectRef` đã lưu, còn Core kiểm tra `COMPLETED` và dossier/subject binding local trước khi chỉ áp dụng readiness/metadata không PII. Baseline OCR hiện tại **không có endpoint confirm riêng** và Dossier không giả định OCR lưu lịch sử xác nhận nghiệp vụ.
 
 Media reference, dữ liệu trích xuất, confidence, outcome, `ocrId` và provider metadata được lưu tại OCR capability; byte media tại File Management. Dossier không PATCH/copy các trường này vào snapshot. `subjectRef` đã được domain bind trước khi tạo OCR, được gửi trong `POST /ocr` và không phải giá trị OCR phát hành sau khi hoàn tất.
 
@@ -569,6 +569,7 @@ Media reference, dữ liệu trích xuất, confidence, outcome, `ocrId` và pro
 - OCR thất bại/timeout không tự động biến hồ sơ thành `REJECTED`; người dùng có thể retry theo policy hoặc nhập/đối chiếu thủ công.
 - Các giới hạn MIME, size, checksum, retention và deadline dùng đúng baseline của tài liệu L2 `vhm-ocr-ekyc`; không định nghĩa lại khác trong dossier.
 - Read/search theo họ tên/CCCD, batch hydrate, export PII, correction và delete API không thuộc contract OCR baseline hiện tại. Mọi nhu cầu tương lai phải mở rộng OpenAPI có version và được ANBM/Privacy phê duyệt; retention/delete hiện phối hợp bằng policy/runbook.
+- OpenAPI L3 phải chốt cách truyền hoặc lưu liên kết `ocrId` để submit/readiness đọc đúng tài nguyên. Nếu Core cần persist, chỉ được lưu `ocrId` opaque tối thiểu; không lưu status/result/media reference và phải có retention/unlink policy.
 
 ## 6.5 Contract pipeline
 
@@ -746,7 +747,7 @@ sequenceDiagram
     C->>D: Update snapshot + synchronize checklist + outbox
     U->>A: POST {id}/submit
     A->>C: command SUBMIT
-    C->>O: Validate OCR readiness by referenceId + subjectRef
+    C->>O: /ocr/result cho ocrId đã bind với dossier
     O-->>C: COMPLETED / not ready
     C->>D: Guard subject/checklist + transition + code + outbox
     A-->>U: Submitted/Under review
@@ -1554,6 +1555,7 @@ Bằng chứng quality gate phải được lưu theo release, tối thiểu g�
 | Agent/Back Office review dossier `source=MARKET` | BUS/Product/Backend | Chốt role/project scope và policy cross-channel; source không được dùng thay authorization. |
 | Contract Dossier Core ↔ `vhm-ocr-ekyc` cho CCCD hai mặt | OCR Team/Backend/ANBM | OpenAPI L3 chốt prepare-upload, `POST /ocr` với `subjectRef` đầu vào, `/ocr/result`, IAM, failure/SLA và E2E; không giả định confirm/search/export/delete API. |
 | Issuer và cơ chế bind `subjectRef` | Product/Identity owner/Agent API/Market API/Backend/ANBM | Nguồn domain có thẩm quyền, signed context, format opaque ổn định/unique/non-reversible và cross-dossier mapping được ký duyệt; client không tự khai. |
+| Liên kết `ocrId` với dossier để poll/apply/submit readiness | OCR Team/Backend/Privacy | L3 chốt truyền lại hay persist opaque `ocrId`; nếu persist tại Core thì không kèm status/result/media reference, có retention/unlink và kiểm thử cross-dossier. |
 | Ý nghĩa/ownership của `picId` so với stage reviewer | Product/BA/Backend | Use case và permission/audit rõ hoặc bỏ field. |
 | SLO, peak workload, RTO/RPO và capacity/cost | Product/Vận hành/DBA/FinOps | Baseline số được duyệt và load/DR đạt. |
 | Retention, deletion, legal hold, encryption và audit access tại OCR source | Privacy/Pháp chế/ANBM/OCR Team | Policy/DPIA/runbook và orchestration với Dossier được phê duyệt. |
