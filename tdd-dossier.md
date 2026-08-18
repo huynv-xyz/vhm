@@ -14,7 +14,7 @@
 | **Người rà soát/phê duyệt** | Sản phẩm/BA: TBD · Kiến trúc: TBD · ANBM: TBD · DBA/Vận hành: TBD · QA: TBD |
 | **Mốc thiết kế** | Kiến trúc mục tiêu phục vụ thẩm định giải pháp và làm đầu vào cho thiết kế L3 |
 | **Phạm vi hệ thống** | Dossier Core và các ranh giới tích hợp thể hiện trong sơ đồ ngữ cảnh |
-| **Tài liệu nguồn** | SRS/BRD NOXH: TBD · L2 OCR/eKYC dùng chung |
+| **Tài liệu nguồn** | SRS/BRD NOXH: TBD · L2 OCR dùng chung của `vhm-ocr-ekyc` |
 | **Lần rà soát gần nhất** | 15/08/2026 |
 
 ## Approval & Review Gates
@@ -45,7 +45,7 @@
 | Pipeline Definition Schema, Social Housing v1 và activation/migration policy | DRAFT | Backend/BA/Kiến trúc/Vận hành | Trước UAT | Liên kết tài liệu chính thức: TBD |
 | Contract Checklist chuẩn | **CHƯA CÓ** | BA/Tích hợp/Backend | Trước production | Chưa chốt nguồn authority và version |
 | Contract File Management cho tài liệu không OCR | **CHƯA ĐỦ** | File Team/ANBM | Trước production | Chưa có owner/upload-grant contract |
-| OpenAPI Dossier Core ↔ `vhm-ocr-ekyc` | DRAFT | OCR Team/Backend/ANBM | Trước production | Cần chốt media CCCD hai mặt, IAM, confirm, `subjectRef`, read/search/export và delete |
+| OpenAPI Dossier Core ↔ `vhm-ocr-ekyc` | DRAFT | OCR Team/Backend/ANBM | Trước production | Chỉ dùng OCR CCCD hai mặt; cần chốt IAM, `subjectRef` đầu vào, prepare-upload, `POST /ocr`, `/ocr/result`, timeout và retention/delete runbook |
 | Runbook migration/rollback/DR | Planned | DBA/Vận hành | Trước OAT | TBD |
 | Runbook dashboard/cảnh báo/sự cố | Planned | Vận hành | Trước go-live | TBD |
 
@@ -80,7 +80,7 @@ Tài liệu này mô tả **kiến trúc mục tiêu L2**. Dossier được thi�
 - Tạo hồ sơ `DRAFT` nhanh với form rỗng hoặc một phần; create không tự động submit.
 - Tiếp nhận hồ sơ từ kênh Agent/Back Office qua Agent API (`source=AGENT`) và từ kênh Market qua Market API (`source=MARKET`).
 - Duy trì một snapshot `formData`/`metadata` có version, lịch sử trạng thái và projection pipeline.
-- Ngăn hồ sơ active trùng theo `(subjectRef, projectId)`; `subjectRef` là định danh opaque, ổn định do `vhm-ocr-ekyc` cấp, Core không lưu CCCD để đối chiếu.
+- Ngăn hồ sơ active trùng theo `(subjectRef, projectId)`; `subjectRef` là định danh opaque, ổn định do nguồn định danh domain có thẩm quyền cấp/bind server-side và được truyền vào `vhm-ocr-ekyc`, Core không lưu CCCD để đối chiếu.
 - Bảo đảm checklist bắt buộc đã được upload trước `SUBMIT`.
 - Thực thi pipeline PKD → PTT → SXD, bao gồm trả bổ sung, phân công, nhận xử lý, cấp/thu hồi căn và hồ sơ giấy.
 - Cung cấp list/detail/statistics/export và progress checklist cho hai BFF nghiệp vụ.
@@ -91,7 +91,7 @@ Tài liệu này mô tả **kiến trúc mục tiêu L2**. Dossier được thi�
 
 | **Capability** | **Phạm vi** | **Yêu cầu thiết kế** |
 | --- | --- | --- |
-| Hồ sơ | Create/read/list/update/delete DRAFT, statistics; lookup applicant được proxy tới nguồn authoritative | `BẮT BUỘC` |
+| Hồ sơ | Create/read/list/update/delete DRAFT, statistics trên aggregate nghiệp vụ; Dossier Core không cung cấp lookup applicant theo PII | `BẮT BUỘC` |
 | Nguồn tạo hồ sơ | Kênh Agent/Back Office qua Agent API; kênh Market qua Market API | `BẮT BUỘC` |
 | Luồng đăng ký công khai | Create DRAFT → prepare upload → PATCH snapshot → submit | `BẮT BUỘC` |
 | Checklist | Snapshot từ nguồn chuẩn, progress, missing/invalid, readiness submit | `BẮT BUỘC` |
@@ -109,6 +109,7 @@ Tài liệu này mô tả **kiến trúc mục tiêu L2**. Dossier được thi�
 - Camunda/Zeebe hoặc BPMN engine bên ngoài; pipeline hiện chạy trong cùng ứng dụng và transaction.
 - Sở hữu master data dự án, người dùng, đội nhóm, ngày nghỉ hoặc file binary.
 - Thuật toán, provider credential, queue/worker và dữ liệu raw OCR; toàn bộ thuộc `vhm-ocr-ekyc`.
+- Mọi capability ngoài OCR CCCD hai mặt của service dùng chung; Dossier không gọi các API ngoài phạm vi này.
 - Quyết định pháp lý về đủ điều kiện NOXH dựa riêng vào OCR.
 - Quản trị checklist chuẩn ở trình duyệt; `isRequired` do client gửi chưa thể là authority production.
 - Thanh toán, ký điện tử và tích hợp tự động trực tiếp với cơ quan SXD.
@@ -150,10 +151,11 @@ Tài liệu này mô tả **kiến trúc mục tiêu L2**. Dossier được thi�
 
 | **Dữ liệu** | **Mục đích** | **Vị trí** | **Kiểm soát hiện hành/yêu cầu** |
 | --- | --- | --- | --- |
-| CCCD, họ tên, ngày sinh, giới tính, ngày/nơi cấp, địa chỉ và thông tin liên hệ applicant/spouse | Định danh, OCR/eKYC và hiển thị có thẩm quyền | `vhm-ocr-ekyc` | Nguồn dữ liệu tập trung; Dossier Core chỉ proxy khi cần và không persist/cache. Xem TDD OCR/eKYC. |
-| Định danh applicant trong Dossier | Duplicate guard và liên kết nghiệp vụ | `dossier.subject_ref` dạng opaque | Không chứa PII; phải ổn định và không đảo ngược được về CCCD. |
+| CCCD, họ tên, ngày sinh, giới tính, ngày/nơi cấp và địa chỉ trích xuất từ CCCD applicant/spouse | OCR CCCD và hiển thị kết quả tạm thời để người dùng kiểm tra | Kết quả mã hóa tại `vhm-ocr-ekyc`; byte media tại kho riêng tư do File Management quản lý | Dossier Core chỉ proxy projection từ `/ocr/result` trong vòng đời request, không persist/cache/log. |
+| Số điện thoại và email applicant/spouse | Liên hệ nghiệp vụ/notification | Nguồn hồ sơ khách hàng có thẩm quyền: `TBD`; **không thuộc OCR contract** | Dossier Core không persist; không forward sang `vhm-ocr-ekyc`; nguồn hiển thị/gửi phải được chốt ở Contract L3. |
+| Định danh applicant trong Dossier | Duplicate guard và liên kết nghiệp vụ | `dossier.subject_ref` dạng opaque | Nguồn định danh domain có thẩm quyền cấp/bind server-side trước `POST /ocr`; không nhận từ form, không chứa hoặc đảo ngược được về CCCD. |
 | Reviewer/recipient | Phân công và notification | Actor/recipient ID dạng opaque | Không lưu tên/email trong Dossier; resolve tại nguồn IAM/TTOL/Message khi hiển thị hoặc gửi. |
-| Đường dẫn file | Gắn tài liệu | Tài liệu không OCR: JSONB/checklist + File Management; media OCR: chỉ `vhm-ocr-ekyc` | Core chỉ lưu `s3PathFile` của tài liệu không OCR; không persist media path/presigned URL OCR. |
+| Đường dẫn file | Gắn tài liệu | Tài liệu không OCR: JSONB/checklist + File Management; media OCR: reference tại `vhm-ocr-ekyc`, byte tại File Management | Core chỉ lưu `s3PathFile` của tài liệu không OCR; không persist media path/presigned URL OCR. |
 | Kết quả/phê duyệt tài liệu | Readiness và quyết định | JSONB/checklist/history | Chỉ actor có quyền được mutation; lịch sử append trong snapshot. |
 | Actor/reviewer | Audit và routing | audit columns, status history, stage reviewer | Actor context có chữ ký; không tin actor do client truyền. |
 
@@ -181,7 +183,7 @@ Tài liệu này mô tả **kiến trúc mục tiêu L2**. Dossier được thi�
 | ARCH-12 | Core gọi File Management cho tài liệu không OCR; media OCR chỉ đi qua `vhm-ocr-ekyc`, không gọi provider hoặc File Management trực tiếp trong nhánh OCR. |
 | ARCH-13 | Cấp duyệt là cấu hình có phiên bản; không gắn cứng số lượng hoặc thứ tự cấp duyệt vào API, database hay kênh. |
 | ARCH-14 | Pipeline đã công bố là bất biến theo `(pipelineCode, pipelineVersion)`; thay đổi luồng phải tạo phiên bản mới. |
-| ARCH-15 | `vhm-ocr-ekyc` là source of truth duy nhất cho media, lifecycle, kết quả OCR và PII applicant/spouse; Dossier Core chỉ lưu opaque reference, không tạo bản sao. |
+| ARCH-15 | `vhm-ocr-ekyc` là source of truth cho lifecycle, media reference và kết quả OCR; File Management/kho riêng tư giữ byte media. Dossier Core chỉ lưu `subjectRef` opaque và không tạo bản sao PII/kết quả. |
 
 ## 2.2 Sơ đồ kiến trúc ứng dụng
 
@@ -244,8 +246,8 @@ Pipeline Social Housing là cấu hình có phiên bản được nạp cùng �
 | Market API | BFF Market; xác thực customer, data-subject/object authorization và ký subject context | Không sở hữu dossier aggregate hoặc role catalogue | State/invariant, signed subject binding và persistence cuối. |
 | Dossier domain | Vòng đời hồ sơ, validation, duplicate, checklist, pipeline, phân công và điều phối OCR | Aggregate dossier và projection liên quan | Identity kênh, file binary, OCR raw. |
 | Outbox/Scheduler | Phát sự kiện, gửi notification và nhắc SLA sau commit | Trạng thái delivery/dedup | Thay đổi quyết định nghiệp vụ đã commit. |
-| `vhm-ocr-ekyc` | Quản lý media phục vụ OCR, tài nguyên OCR bất đồng bộ và chuẩn hóa kết quả | OCR lifecycle, media OCR và kết quả chuẩn | Sở hữu dossier, xử lý tài liệu không OCR hoặc tự áp kết quả vào form. |
-| File Management | Upload, kiểm tra, lưu trữ và download tài liệu không OCR | File binary và metadata thuộc contract File | Sở hữu dossier hoặc xử lý OCR. |
+| `vhm-ocr-ekyc` | Điều phối prepare-upload với File Management, quản lý tài nguyên OCR bất đồng bộ và chuẩn hóa kết quả | OCR lifecycle, media reference, request/kết quả OCR đã mã hóa | Sở hữu dossier, giữ byte media, xử lý tài liệu không OCR hoặc tự áp kết quả vào form. |
+| File Management | Upload, kiểm tra, lưu trữ và download file; nhánh không OCR do Core gọi trực tiếp, nhánh OCR do `vhm-ocr-ekyc` điều phối | File binary/object và metadata thuộc contract File | Sở hữu dossier, OCR lifecycle hoặc kết quả OCR. |
 | Enterprise services | TTOL, Message Delivery | Dữ liệu thuộc từng miền | Sở hữu aggregate dossier. |
 
 ### 2.2.5 Ranh giới tin cậy
@@ -319,7 +321,7 @@ Create/update/transition/delete ghi business row và `outbox_event` trong cùng 
 | Create/update | Dossier, pipeline projection, status history, checklist, outbox | Kafka publish, downstream processing |
 | Command pipeline | Dossier/status, reviewer, history, unit, outbox, notification intent | Gửi message và consumer ngoài hệ thống |
 | Reminder | Claim/dedup reminder và notification intent | Message Delivery |
-| OCR bất đồng bộ | Không thay đổi dossier khi tạo/poll OCR | `vhm-ocr-ekyc` quản lý media, lifecycle và kết quả chuẩn |
+| OCR bất đồng bộ | Tạo/poll không ghi PII vào dossier; chỉ domain apply metadata không PII sau khi kiểm tra kết quả | `vhm-ocr-ekyc` quản lý media reference, lifecycle và kết quả chuẩn; File Management giữ byte media |
 
 ### 2.4.4 Concurrency guards
 
@@ -337,7 +339,7 @@ Create/update/transition/delete ghi business row và `outbox_event` trong cùng 
 | --- | --- | --- | --- |
 | FR-01 | Tạo hồ sơ nháp | Agent API hoặc Market API gọi Core create `SOCIAL_HOUSING`; luôn trả `DRAFT` | `BẮT BUỘC` |
 | FR-02 | Upload tài liệu | Core kiểm tra quyền; tài liệu không OCR gọi File Management, media OCR gọi `vhm-ocr-ekyc`; kênh PUT theo presigned contract | `BẮT BUỘC` |
-| FR-03 | Cập nhật snapshot | Chỉ business snapshot không chứa OCR/PII; cập nhật applicant/contact được forward tới `vhm-ocr-ekyc` | `BẮT BUỘC` |
+| FR-03 | Cập nhật snapshot | Chỉ business snapshot allowlist không chứa OCR/PII; applicant/contact không thuộc persistence API và không được forward sang `vhm-ocr-ekyc` | `BẮT BUỘC` |
 | FR-04 | Nộp hồ sơ | Command `SUBMIT`, duplicate guard, checklist readiness, sinh mã | `BẮT BUỘC` |
 | FR-05 | Chống trùng | Application precheck + database race guard | `BẮT BUỘC` |
 | FR-06 | Checklist/progress | Snapshot theo template+group; counts/missing/invalid | `BẮT BUỘC` |
@@ -345,9 +347,9 @@ Create/update/transition/delete ghi business row và `outbox_event` trong cùng 
 | FR-08 | Phân công reviewer | Manual/reassign/claim + auto round-robin | `BẮT BUỘC` |
 | FR-09 | Cấp/thu hồi căn | Atomic allocation/approve; unique active unit | `BẮT BUỘC` |
 | FR-10 | Hồ sơ giấy | Submit/confirm hardcopy và timeline | `BẮT BUỘC` |
-| FR-11 | OCR CCCD | `vhm-ocr-ekyc`: tạo `202`, poll và xác nhận tại nguồn tập trung; Dossier không persist media/kết quả OCR | `BẮT BUỘC` |
+| FR-11 | OCR CCCD | Dossier bind `subjectRef` authoritative, gọi `vhm-ocr-ekyc` tạo `202`, poll `/ocr/result` và xử lý `CONFIRM_AND_APPLY` tại domain; không gọi OCR-confirm riêng và không persist media/kết quả OCR | `BẮT BUỘC` |
 | FR-12 | Notification/reminder | Outbox, kênh được phê duyệt, T+6/T+18 và manual trigger | `BẮT BUỘC` |
-| FR-13 | Tra cứu/báo cáo | List/detail/statistics tại Core; by-contact/hydrate applicant/export dùng API authoritative, không persist projection PII | `BẮT BUỘC` |
+| FR-13 | Tra cứu/báo cáo | List/detail/statistics/export tại Core chỉ dùng business metadata allowlist; tra cứu theo contact và hydrate applicant PII không thuộc baseline Dossier–OCR hiện tại | `BẮT BUỘC` |
 | FR-14 | Xóa bản nháp | Chỉ DRAFT; xóa checklist và dữ liệu phụ thuộc | `BẮT BUỘC` |
 | FR-15 | PIC hồ sơ | Use case, permission và audit semantics | `TBD` |
 | FR-16 | Thêm/bớt cấp duyệt | Công bố pipeline version mới; không đổi schema DB/public API và không làm đổi luồng hồ sơ đang chạy | `BẮT BUỘC` |
@@ -359,7 +361,7 @@ Create/update/transition/delete ghi business row và `outbox_event` trong cùng 
 | --- | --- |
 | BR-01 | Public create không được submit; trạng thái sau create luôn là `DRAFT`. |
 | BR-02 | Agent API gán `source=AGENT`, Market API gán `source=MARKET` từ channel context tin cậy; MARKET create phải có `Idempotency-Key`, AGENT không bắt buộc key. |
-| BR-03 | Một cặp `subjectRef` authoritative + dự án chỉ có một hồ sơ chưa terminal; Core không dùng CCCD rõ làm khóa. |
+| BR-03 | Một cặp `subjectRef` authoritative + dự án chỉ có một hồ sơ chưa terminal; DRAFT `{}` được phép chưa có `subjectRef`, nhưng bind reference và submit phải kiểm tra duplicate. Core không dùng CCCD rõ làm khóa. |
 | BR-04 | Create `{}` không tạo checklist; create có `documents[]` và mọi full update DRAFT/ADD_INFO phải synchronize checklist. |
 | BR-05 | Identity checklist là `(dossierId, documentTemplateId, groupCode)`. |
 | BR-06 | Submit cần tồn tại ít nhất một required item và mọi required item ở `COMPLETE`. |
@@ -406,9 +408,9 @@ tế.
 | **ID/phạm vi** | **SLI/cách đo** | **Target dự kiến** | **Điều kiện/loại trừ** | **Cổng xác nhận baseline** |
 | --- | --- | --- | --- | --- |
 | NFR-T01 — Availability Core | Tỷ lệ valid HTTP request không trả `5xx` tại internal ingress theo tháng | **≥99,9%/tháng** | Không tính `4xx` hợp lệ và maintenance window được duyệt; availability end-to-end với File/OCR/TTOL/Message phải có SLI riêng | 30 ngày STAG/PROD telemetry, dependency SLA và error-budget policy được System Owner/Vận hành duyệt |
-| NFR-T02 — Local read API | P95/P99 của list/detail/progress/timeline chỉ dùng Core DB/cache | **P95 ≤800 ms; P99 ≤1.500 ms** | Page mặc định 20, tối đa dự kiến 100; không gồm hydrate PII, download hoặc report generation | Load test theo filter/visibility/role, data volume dự báo và query plan không N+1/seq-scan ngoài budget |
+| NFR-T02 — Local read API | P95/P99 của list/detail/progress/timeline chỉ dùng Core DB/cache | **P95 ≤800 ms; P99 ≤1.500 ms** | Page mặc định 20, tối đa dự kiến 100; không gồm đọc kết quả OCR transient, download hoặc report generation | Load test theo filter/visibility/role, data volume dự báo và query plan không N+1/seq-scan ngoài budget |
 | NFR-T03 — Mutation API | P95/P99 create/update/submit/pipeline action, gồm transaction và validation bắt buộc | **P95 ≤2.000 ms; P99 ≤4.000 ms** | Không gồm upload bytes/OCR processing; dependency call bắt buộc vẫn tính trong latency endpoint | Mixed-workload test với contention, file/OCR/project stub có latency/error distribution theo contract |
-| NFR-T04 — External orchestration API | P95/P99 prepare-upload, OCR create/poll/confirm và authorized hydrate proxy nếu còn áp dụng | **P95 ≤3.000 ms; P99 ≤8.000 ms** | Không gồm PUT/download binary và OCR background SLA; timeout/retry không được làm vượt end-to-end deadline | Contract/load test với real sandbox, connect/read timeout và `Retry-After`/degradation policy được chốt |
+| NFR-T04 — External orchestration API | P95/P99 prepare-upload, OCR create và poll `/ocr/result` | **P95 ≤3.000 ms; P99 ≤8.000 ms** | Không gồm PUT/download binary và OCR background SLA; timeout/retry không được làm vượt end-to-end deadline | Contract/load test với real sandbox, connect/read timeout và `Retry-After`/degradation policy được chốt |
 | NFR-T05 — Throughput | Mixed non-binary request rate tại Core, error/CPU/pool dưới ngưỡng | **≥200 req/s trong 30 phút; burst ≥400 req/s trong 5 phút** | Workload mix dự kiến: 70% read, 25% mutation, 5% integration/report initiation; `5xx <1%`, CPU trung bình <70%, DB pool <80% | Product xác nhận peak factor; load/soak test production-like và capacity/headroom review |
 | NFR-T06 — Concurrency/integrity | Kết quả concurrent create/update/action và số invariant bị vi phạm | **100%** cùng actor/key/payload trả cùng dossier khi chạy **≥100 request đồng thời**; **0** duplicate active subject/project hoặc active unit; **0** lost update | Khác actor/cùng key hoặc cùng key/khác payload phải bị từ chối; optimistic conflict là business outcome, không tính platform error | Concurrency test trên PostgreSQL thật, unique/advisory/optimistic guard và reconciliation query |
 | NFR-T07 — Event outbox | Thời gian từ business commit đến Kafka publish khi broker healthy | **P95 ≤10 giây; P99 ≤60 giây; 0 event mất** | At-least-once nên duplicate được phép nhưng consumer phải idempotent; maintenance/outage đo recovery riêng | Load/failure/replay test với relay interval 2 giây, batch 500, Kafka ACL/quota production-like |
@@ -460,7 +462,7 @@ stack ngầm trong implementation.
 | TECH-02 | Replay/nonce, counter, lock hỗ trợ và cache phân tán | **Redis cho state ngắn hạn/atomic TTL; PostgreSQL vẫn là authority** — Ưu: nonce/replay TTL, counter và coordination nhanh; giảm tải DB. Nhược: thêm HA/degradation/runbook và có thể fail security nếu dùng sai fallback. | **Chỉ dùng PostgreSQL** — Ưu: giảm dependency và một nguồn vận hành. Nhược: tăng contention/cleanup cho nonce-counter, latency cao hơn và trộn state ngắn hạn với business data. | Phương án A có điều kiện | Redis phù hợp dữ liệu có thể rebuild hoặc security state có fail-closed policy; không được quyết định dossier ownership/status hay thay race guard DB. |
 | ADR-007 | Nhất quán giữa mutation và phát event/notification | **Transactional outbox + Kafka/relay** — Ưu: business row và intent commit cùng transaction, replay được và scale consumer. Nhược: eventual consistency, at-least-once, backlog/cleanup/duplicate phải được vận hành. | **Publish Kafka trực tiếp hoặc gọi downstream đồng bộ sau DB write** — Ưu: ít bảng/relay và latency thấp hơn khi thành công. Nhược: dual-write gap, request bị phụ thuộc downstream và khó phục hồi khi DB commit nhưng publish/call lỗi. | Phương án A | Không chấp nhận mất intent sau commit. Consumer/relay phải idempotent, có retry/DLQ, lag alert, retention và reconciliation runbook. |
 | TECH-03 | Cache dữ liệu tham chiếu trong process | **Caffeine TTL-bounded cho dữ liệu read-mostly** — Ưu: latency thấp, không thêm network hop. Nhược: cache khác nhau giữa pod, invalidation chậm và mất khi restart. | **Redis-only hoặc không cache** — Ưu: shared view giữa pod hoặc luôn đọc authoritative. Nhược: network/dependency/latency cao hơn; Redis cache vẫn có bài toán invalidation. | Phương án A có điều kiện | Chỉ cache reference không phải authority, không chứa OCR/PII và chấp nhận stale có giới hạn. Role/scope/ownership, pipeline version đã pin và security decision không được dựa vào local cache thiếu freshness contract. |
-| ADR-009/ADR-010/ADR-012 | Sở hữu file và OCR/eKYC | **Dùng File Management và `vhm-ocr-ekyc`, Core chỉ giữ reference/metadata tối thiểu** — Ưu: tập trung media/PII/provider/credential, giảm binary và dữ liệu nhạy cảm tại Core. Nhược: thêm network hop, phụ thuộc SLA/contract/authorization/delete orchestration và khó chứng minh ownership nếu dependency thiếu claim. | **Core lưu file/OCR result hoặc tích hợp provider trực tiếp** — Ưu: ít hop và Core tự chủ luồng. Nhược: nhân bản PII/media, tăng storage/key/provider scope, coupling và chi phí compliance/vận hành. | Phương án A | Capability dùng chung là ranh giới authoritative. Trước production cần OpenAPI L3, owner/upload-grant, timeout/degradation, retention/delete và E2E cross-owner; không fallback sang bản sao local. |
+| ADR-009/ADR-010/ADR-012 | Sở hữu file và OCR CCCD | **Dùng File Management và `vhm-ocr-ekyc`, Core chỉ giữ reference/metadata tối thiểu** — Ưu: tập trung media/PII/provider/credential, giảm binary và dữ liệu nhạy cảm tại Core. Nhược: thêm network hop, phụ thuộc SLA/contract/authorization/delete orchestration và khó chứng minh ownership nếu dependency thiếu claim. | **Core lưu file/OCR result hoặc tích hợp provider trực tiếp** — Ưu: ít hop và Core tự chủ luồng. Nhược: nhân bản PII/media, tăng storage/key/provider scope, coupling và chi phí compliance/vận hành. | Phương án A | Capability dùng chung là ranh giới authoritative cho OCR; File Management giữ byte media. Trước production cần OpenAPI L3, owner/upload-grant, timeout/degradation, retention/delete và E2E cross-owner; không fallback sang bản sao local. |
 | TECH-04 | Sinh báo cáo/tài liệu | **Syncfusion/Apache POI trong Core** — Ưu: đáp ứng template Excel/DOCX hiện hữu và giữ business projection gần domain. Nhược: license, memory/CPU, xử lý template/file không tin cậy và coupling release template với service. | **Document/report service chuyên biệt** — Ưu: cô lập tài nguyên, template và security sandbox; tái sử dụng đa domain. Nhược: thêm service/contract, network hop và consistency của dữ liệu export. | Phương án A cho phạm vi hiện tại | Chưa có capability tài liệu authoritative được chốt. Phải pin version/license, giới hạn row/file/time/memory, sanitize template value và chuyển sang async/service riêng nếu capacity test vượt budget Core. |
 
 # 6. Integration Architecture
@@ -472,7 +474,7 @@ stack ngầm trong implementation.
 | INT-01 | Agent API → Dossier Core | Inbound | HTTP sync | Agent/Back Office registration/list/detail/action với signed BUS role/scope, `source=AGENT` | Signature/role/scope fail closed |
 | INT-02 | Market API → Dossier Core | Inbound | HTTP sync | Market registration/list/detail/action với signed data-subject context, `source=MARKET`; không business role | Signature/subject binding fail closed |
 | INT-03 | Dossier Core → File Management | Outbound | Client sync | Tài liệu không OCR: prepare upload, existence/ownership, download và lưu artefact xuất | Fail hard cho validation bắt buộc |
-| INT-04 | Dossier Core → `vhm-ocr-ekyc` | Outbound | HTTP async resource | Tạo/poll/confirm OCR và proxy dữ liệu chuẩn; không persist bản sao | Idempotent create, polling hữu hạn, không retry mù |
+| INT-04 | Dossier Core → `vhm-ocr-ekyc` | Outbound | HTTP async resource | Prepare media, tạo OCR với `subjectRef` đầu vào và poll `/ocr/result`; không có OCR-confirm riêng, không persist bản sao | Idempotent create, polling hữu hạn, không retry mù |
 | INT-05 | TTOL | Outbound | HTTP sync | Lấy danh sách nhân sự PTT/SXD theo dự án và vai trò để auto-assign reviewer | Best effort; manual assignment fallback |
 | INT-06 | Message Delivery | Outbound | Outbox relay | Email notification | Retry/backoff → FAILED |
 | INT-07 | Kafka | Outbound | Async | Domain event đã commit | Outbox retry; publish có feature flag |
@@ -525,13 +527,13 @@ Quy tắc phân tuyến do use case phía server quyết định. Client không 
 
 Media OCR đi theo luồng `Kênh → Agent API/Market API → Dossier Core → vhm-ocr-ekyc → File Management`. Dossier Core xác thực quyền hồ sơ và gửi context nghiệp vụ tới `vhm-ocr-ekyc`; service này sở hữu bước chuẩn bị/lấy media với File Management và vòng đời OCR. Core không gọi File Management trực tiếp cho media thuộc request OCR.
 
-Role và MIME baseline lấy từ L2 OCR/eKYC dùng chung (`OCR_DOCUMENT`, `DOCUMENT_FRONT`, `DOCUMENT_BACK`, `LABOR_CONTRACT`; JPEG/PNG/PDF). Dossier không được mở rộng role/MIME hoặc tự dựng object path nếu chưa cập nhật contract OCR L3.
+Phạm vi Dossier chỉ dùng hai role CCCD `DOCUMENT_FRONT`, `DOCUMENT_BACK` và MIME được OCR Contract L3 allowlist trong tập JPEG/PNG/PDF. Các role khác của capability dùng chung không thuộc luồng Dossier. Dossier không được mở rộng role/MIME hoặc tự dựng object path nếu chưa cập nhật contract OCR L3.
 
 ## 6.4 Contract OCR dùng chung
 
 ### 6.4.1 Ranh giới tích hợp
 
-Dossier Core là consumer duy nhất của `vhm-ocr-ekyc` trong luồng hồ sơ NOXH và gọi service này bằng workload identity. Capability OCR tự quản lý media OCR với File Management, lifecycle, processor, provider credential, polling provider, dữ liệu OCR thô và chính sách bảo vệ dữ liệu trong capability. Các yêu cầu đó thuộc [L2 - VHMKDO2O - Dịch vụ OCR/eKYC](https://vin3s.atlassian.net/wiki/spaces/VARW/pages/3014268156/L2+-+VHMKDO2O+-+D+ch+v+OCR+eKYC), không được định nghĩa lại trong TDD Dossier. Agent API và Market API không gọi trực tiếp OCR service; Dossier Core chỉ biết contract OCR VHM và các opaque reference, không biết contract provider.
+Dossier Core là consumer duy nhất của `vhm-ocr-ekyc` trong luồng hồ sơ NOXH và gọi service này bằng workload identity. Capability OCR điều phối media OCR với File Management, lưu media reference, quản lý lifecycle, processor, provider credential, polling provider, dữ liệu OCR thô và chính sách bảo vệ kết quả OCR; byte media nằm tại kho riêng tư do File Management quản lý. Các yêu cầu đó thuộc [L2 - VHMKDO2O - Capability OCR dùng chung](https://vin3s.atlassian.net/wiki/spaces/VARW/pages/3014268156/L2+-+VHMKDO2O+-+D+ch+v+OCR+eKYC), không được định nghĩa lại trong TDD Dossier. Agent API và Market API không gọi trực tiếp OCR service; Dossier Core chỉ biết contract OCR VHM và các opaque reference, không biết contract provider. Phạm vi tích hợp chỉ gồm OCR CCCD hai mặt.
 
 Tích hợp OCR trực tiếp từ dossier tới provider không được phép trong kiến trúc mục tiêu. Mọi đường OCR legacy phải được loại bỏ hoặc vô hiệu hóa trước go-live sau khi E2E với `vhm-ocr-ekyc` đạt quality gate.
 
@@ -544,7 +546,7 @@ Contract mục tiêu dùng `POST /ocr` với `Idempotency-Key` bắt buộc và 
 | `source` | `DOSSIER`; dùng cho authorization, quota và idempotency scope. |
 | `referenceId` | Dossier ID dạng opaque business reference. |
 | `requestBy` | Opaque actor reference, không nhúng PII. |
-| `subjectRef` | Opaque applicant/customer reference. |
+| `subjectRef` | Opaque applicant/customer reference do nguồn định danh domain có thẩm quyền cấp/bind server-side trước lời gọi; Dossier truyền vào OCR và OCR lưu để tương quan/phân quyền. Client không được khai trong form. |
 | `channel`, `platform` | Context kênh đã allowlist. |
 | `documentType`/loại OCR | `NATIONAL_ID` hoặc contract CCCD hai mặt được đóng băng ở OpenAPI L3. |
 | `s3PathFile`/media roles | Chỉ reference do service chấp nhận; không gửi presigned URL vào DB/event. |
@@ -555,7 +557,9 @@ Cùng idempotency key và cùng request trả tài nguyên hiện hữu; cùng k
 
 Trạng thái OCR gồm `QUEUED`, `PROCESSING`, `COMPLETED`, `FAILED`, `EXPIRED`. Agent API hoặc Market API thăm dò qua API của Dossier Core; Dossier Core gọi `/ocr/result` của `vhm-ocr-ekyc` và trả trạng thái chuẩn về BFF tương ứng. `nextAction` hướng dẫn `POLL`, `RETRY` hoặc `CONFIRM_AND_APPLY`.
 
-Khi `COMPLETED`, kênh cho người dùng kiểm tra và xác nhận kết quả tại `vhm-ocr-ekyc` thông qua Dossier Core. Media, dữ liệu trích xuất, confidence, outcome, lịch sử xác nhận, `ocrId` và provider metadata tiếp tục được lưu tập trung tại OCR capability; không PATCH/copy các trường này vào snapshot dossier. Core chỉ nhận `subjectRef` opaque đã được OCR capability xác lập để liên kết hồ sơ và thực thi duplicate guard. Contract phải bảo đảm client không thể tự khai hoặc sửa `subjectRef`.
+Khi `COMPLETED`, Dossier Core có thể proxy projection kết quả chuẩn từ `/ocr/result` để kênh cho người dùng kiểm tra. `CONFIRM_AND_APPLY` là hành động của domain: BFF gửi xác nhận về Dossier Core, Core đọc lại `/ocr/result`, kiểm tra `COMPLETED`, `source`, `referenceId` và `subjectRef`, rồi chỉ áp dụng readiness/metadata không PII theo contract domain. Baseline OCR hiện tại **không có endpoint confirm riêng** và Dossier không giả định OCR lưu lịch sử xác nhận nghiệp vụ.
+
+Media reference, dữ liệu trích xuất, confidence, outcome, `ocrId` và provider metadata được lưu tại OCR capability; byte media tại File Management. Dossier không PATCH/copy các trường này vào snapshot. `subjectRef` đã được domain bind trước khi tạo OCR, được gửi trong `POST /ocr` và không phải giá trị OCR phát hành sau khi hoàn tất.
 
 ### 6.4.4 Tính nhất quán và failure semantics
 
@@ -564,6 +568,7 @@ Khi `COMPLETED`, kênh cho người dùng kiểm tra và xác nhận kết quả
 - Dossier Core không retry mù khi kết quả submit không rõ; caller gửi lại cùng idempotency key/`ocrId` và Core đối soát trực tiếp với nguồn authoritative, không lưu bản sao trạng thái.
 - OCR thất bại/timeout không tự động biến hồ sơ thành `REJECTED`; người dùng có thể retry theo policy hoặc nhập/đối chiếu thủ công.
 - Các giới hạn MIME, size, checksum, retention và deadline dùng đúng baseline của tài liệu L2 `vhm-ocr-ekyc`; không định nghĩa lại khác trong dossier.
+- Read/search theo họ tên/CCCD, batch hydrate, export PII, correction và delete API không thuộc contract OCR baseline hiện tại. Mọi nhu cầu tương lai phải mở rộng OpenAPI có version và được ANBM/Privacy phê duyệt; retention/delete hiện phối hợp bằng policy/runbook.
 
 ## 6.5 Contract pipeline
 
@@ -663,7 +668,7 @@ Khi file không OCR không đổi, synchronization giữ review state; khi path 
 
 | **Bảng/aggregate** | **Mục đích** | **Invariant chính** |
 | --- | --- | --- |
-| `dossier` | Aggregate hồ sơ, JSONB business form/metadata, opaque `subjectRef`, Market `ownerSubject`, source, PIC, pipeline projection, version | Không chứa media/kết quả/PII OCR; `ownerSubject` server-owned cho MARKET; active subject/project và unit uniqueness. |
+| `dossier` | Aggregate hồ sơ, JSONB business form/metadata, opaque `subjectRef`, Market `ownerSubject`, source, PIC, pipeline projection, version | Không chứa media/kết quả/PII OCR; `subjectRef` có thể rỗng ở DRAFT `{}` nhưng bắt buộc trước OCR/submit; `ownerSubject` server-owned cho MARKET; active subject/project và unit uniqueness. |
 | `dossier_status_history` | Lịch sử trạng thái/action | Tạo trong cùng transaction với transition. |
 | `dossier_checklist` | Projection readiness/progress tài liệu nghiệp vụ | PK logic template+group; FK cascade; không chứa OCR status/result/evidence. |
 | `dossier_stage_reviewer` | Người xử lý theo stage | Chỉ lưu reviewer ID/role và decision metadata cần thiết; tên/email resolve từ nguồn authoritative. |
@@ -690,7 +695,7 @@ erDiagram
 
 ### 7.1.3 Database invariants
 
-- Partial unique index trên `subject_ref + project_id` cho dossier chưa terminal; `subject_ref` do `vhm-ocr-ekyc` cấp và không chứa/khôi phục được PII.
+- Partial unique index trên `subject_ref + project_id` cho dossier chưa terminal và `subject_ref IS NOT NULL`; reference do nguồn định danh domain có thẩm quyền cấp/bind server-side, được gửi sang `vhm-ocr-ekyc` và không chứa/khôi phục được PII.
 - Partial unique index trên unit được cấp cho dossier active.
 - Check constraint cho `source`; MARKET yêu cầu idempotency key.
 - Dossier `source=MARKET` yêu cầu `owner_subject` không rỗng; giá trị chỉ được bind từ signed Market context và không cho update.
@@ -741,8 +746,8 @@ sequenceDiagram
     C->>D: Update snapshot + synchronize checklist + outbox
     U->>A: POST {id}/submit
     A->>C: command SUBMIT
-    C->>O: Validate confirmed subjectRef/readiness by dossierId
-    O-->>C: Authoritative validation
+    C->>O: Validate OCR readiness by referenceId + subjectRef
+    O-->>C: COMPLETED / not ready
     C->>D: Guard subject/checklist + transition + code + outbox
     A-->>U: Submitted/Under review
 ```
@@ -777,6 +782,7 @@ sequenceDiagram
     participant C as Dossier Core
     participant O as vhm-ocr-ekyc
     participant F as File Management
+    participant D as PostgreSQL
 
     U->>B: Yêu cầu chuẩn bị media OCR
     B->>C: Prepare upload + signed actor context
@@ -788,7 +794,9 @@ sequenceDiagram
     C-->>B: Upload contract
     U->>F: PUT media trực tiếp
     B->>C: Tạo OCR + Idempotency-Key
-    C->>O: POST /ocr + opaque context
+    C->>C: Lấy subjectRef từ signed domain identity context
+    C->>D: Bind subjectRef và kiểm tra duplicate nếu chưa có
+    C->>O: POST /ocr + source + referenceId + requestBy + subjectRef + media refs
     O-->>C: 202 + ocrId + Retry-After
     C-->>B: 202 + ocrId + Retry-After
     loop Cho tới terminal/deadline
@@ -799,20 +807,21 @@ sequenceDiagram
     end
     B-->>U: Hiển thị kết quả chuẩn để xác nhận
     U->>B: Xác nhận kết quả OCR
-    B->>C: Xác nhận OCR + ocrId
-    C->>O: Xác nhận trên nguồn authoritative
-    O-->>C: CONFIRMED + opaque subjectRef
-    C-->>B: Thành công, không trả hoặc lưu raw result
+    B->>C: CONFIRM_AND_APPLY + ocrId
+    C->>O: Đọc lại /ocr/result
+    O-->>C: COMPLETED + result chuẩn
+    C->>C: Kiểm tra reference và chỉ áp dụng metadata không PII
+    C-->>B: Xác nhận domain thành công
 ```
 
-Không có đường ghi dữ liệu OCR/PII vào PostgreSQL của dossier. `vhm-ocr-ekyc` liên kết OCR resource với `referenceId=dossierId` và giữ toàn bộ media, lifecycle, kết quả, xác nhận và audit OCR. Core chỉ persist `subjectRef` opaque do service trả trực tiếp; các business field không thuộc OCR tiếp tục đi qua PATCH dossier bình thường.
+Không có đường ghi dữ liệu OCR/PII vào PostgreSQL của dossier. Nguồn định danh domain có thẩm quyền cấp/bind `subjectRef` server-side; Core persist reference opaque này và truyền nó trong `POST /ocr`. `vhm-ocr-ekyc` liên kết OCR resource bằng `referenceId=dossierId`, lưu media reference, lifecycle và kết quả OCR đã mã hóa; File Management giữ byte media. Baseline không có OCR-confirm endpoint hoặc lịch sử xác nhận nghiệp vụ tại OCR. Các business field không thuộc OCR tiếp tục đi qua PATCH dossier theo allowlist bình thường.
 
 ## 7.3 Data Privacy & PII
 
 ### 7.3.1 Checklist dữ liệu cá nhân
 
-Nghiệp vụ hồ sơ NOXH có liên quan dữ liệu cá nhân, nhưng **Dossier Core không thực
-hiện OCR/eKYC, không là source of truth và không lưu nội dung PII của
+Nghiệp vụ hồ sơ NOXH có liên quan dữ liệu cá nhân, nhưng **Dossier Core không tự
+thực hiện OCR, không là source of truth và không lưu nội dung PII của
 applicant/spouse**. Tương tự checklist trong TDD mẫu của `vhm-ocr-ekyc`, cột
 **Phát sinh trong use case** cho biết loại dữ liệu có xuất hiện trong toàn bộ luồng
 nghiệp vụ hay không; cột **Lưu tại Dossier Core** xác định ranh giới persistence
@@ -828,7 +837,7 @@ duyệt.
 | Nơi sinh, quê quán, nơi cư trú, địa chỉ liên hệ | Cơ bản | **Có** | **Không** | `vhm-ocr-ekyc`; File Management với tài liệu không OCR |
 | Quốc tịch | Cơ bản | **Có** | **Không** | `vhm-ocr-ekyc` |
 | Số và thông tin giấy tờ định danh; ngày/nơi cấp; ngày hết hạn | Cơ bản | **Có** | **Không** | `vhm-ocr-ekyc` |
-| Số điện thoại, thư điện tử của applicant/spouse | Cơ bản | **Có** | **Không** | Nguồn authoritative cho applicant/spouse theo OCR Contract L3 |
+| Số điện thoại, thư điện tử của applicant/spouse | Cơ bản | **Có** | **Không** | Nguồn Applicant/Customer Profile có thẩm quyền: `TBD`; **OCR contract không thu thập contact** |
 | Tình trạng hôn nhân, quan hệ vợ/chồng/đồng đăng ký và thông tin hộ gia đình/người phụ thuộc | Cơ bản | **Có** | **Không** | Nguồn authoritative cho applicant/spouse; File Management với tài liệu chứng minh |
 | Tình trạng nhà ở, sở hữu bất động sản và nhóm đối tượng được hưởng chính sách NOXH | Cơ bản | **Có** | **Không** | Nguồn authoritative được Product/Privacy chốt; File Management giữ tài liệu chứng minh |
 | Nghề nghiệp, đơn vị công tác, quan hệ lao động, mã số thuế/BHXH trong hồ sơ chứng minh điều kiện | Cơ bản | **Có** | **Không** | File Management/nguồn dữ liệu nghiệp vụ authoritative |
@@ -836,9 +845,8 @@ duyệt.
 | Thông tin trẻ em/người chưa thành niên trong giấy tờ hộ gia đình hoặc tài liệu chứng minh | Cơ bản | **Có** | **Không** | File Management/nguồn dữ liệu nghiệp vụ authoritative |
 | `subjectRef`, `ownerSubject`, actor/reviewer/recipient ID và định danh kỹ thuật có thể liên kết tới cá nhân | Cơ bản/giả danh | **Có** | **Có** | Core chỉ lưu opaque reference tối thiểu; nguồn phát hành reference nằm ngoài Core |
 | Họ tên, email/số điện thoại công việc của agent/reviewer/recipient phục vụ phân công và thông báo | Cơ bản | **Có** | **Không** | IAM/TTOL/Message Delivery; Core chỉ lưu opaque recipient/actor ID |
-| Ảnh giấy tờ định danh, ảnh chân dung và chữ ký có trong tài liệu hồ sơ | Nhạy cảm | **Có** | **Không** | `vhm-ocr-ekyc` với media OCR; File Management với tài liệu không OCR |
-| Selfie/video, liveness, face matching hoặc NFC eKYC | Nhạy cảm | **Không** | **Không** | Ngoài phạm vi Dossier |
-| Dữ liệu vị trí thời gian thực hoặc lịch sử di chuyển | Nhạy cảm | **Không** | **Không** | Ngoài phạm vi Dossier |
+| Ảnh giấy tờ định danh và chữ ký có trong tài liệu hồ sơ | Nhạy cảm | **Có** | **Không** | Byte media tại File Management/kho riêng tư; `vhm-ocr-ekyc` giữ media reference và kết quả OCR; File Management cũng giữ tài liệu không OCR |
+| Dữ liệu vị trí thời gian thực hoặc lịch sử di chuyển | Cơ bản | **Không** | **Không** | Ngoài phạm vi Dossier |
 | Nguồn gốc chủng tộc, dân tộc | Nhạy cảm | **Không** | **Không** | Ngoài phạm vi Dossier |
 | Quan điểm chính trị, tôn giáo, tín ngưỡng | Nhạy cảm | **Không** | **Không** | Ngoài phạm vi Dossier |
 | Đời sống riêng tư, bí mật cá nhân/bí mật gia đình ngoài thông tin quan hệ và điều kiện NOXH đã nêu | Nhạy cảm | **Không** | **Không** | Ngoài phạm vi Dossier |
@@ -860,28 +868,29 @@ ngoài mục đích.
 
 ### 7.3.2 Phân loại và tối thiểu hóa
 
-- `vhm-ocr-ekyc` sở hữu tập trung media CCCD, dữ liệu applicant/spouse, kết quả trích xuất, confidence, lịch sử xác nhận và audit OCR.
+- `vhm-ocr-ekyc` sở hữu lifecycle, media reference, dữ liệu trích xuất, confidence và kết quả OCR đã mã hóa; File Management/kho riêng tư sở hữu byte media CCCD.
 - Dossier Core chỉ persist `subjectRef` opaque và dữ liệu nghiệp vụ không thuộc OCR; request form chứa CCCD, họ tên, ngày sinh, phone/email, media path hoặc OCR result phải bị từ chối tại persistence boundary.
 - Dữ liệu OCR được proxy chỉ tồn tại trong memory trong thời gian request, không cache, không đưa vào Kafka/outbox/event/log/trace/audit snapshot và không ghi vào report tạm.
+- Phone/email không nằm trong input/result OCR theo TDD `vhm-ocr-ekyc`; Dossier không được forward contact sang OCR. Nguồn contact có thẩm quyền phải được chốt riêng trước khi có chức năng hiển thị hoặc notification theo địa chỉ.
 - Reviewer/recipient dùng opaque ID; tên/email được resolve từ IAM/TTOL/Message tại thời điểm sử dụng và không persist trong Dossier Core.
-- Detail, search, export hoặc notification cần dữ liệu applicant phải gọi API được phân quyền của nguồn authoritative; không tạo local projection/cache chứa PII.
+- Baseline Dossier–OCR chỉ dùng prepare-upload, `POST /ocr` và `/ocr/result`; không giả định có read/search/export/hydrate/delete API theo PII. List/detail/export của Core chỉ trả business metadata allowlist và không tạo local projection/cache chứa PII.
 
 ### 7.3.3 Ranh giới bảo vệ dữ liệu với `vhm-ocr-ekyc`
 
-Media CCCD, PII applicant/spouse, provider payload, storage, retention, encryption và key rotation được xử lý tập trung tại `vhm-ocr-ekyc`; xem [L2 - VHMKDO2O - Dịch vụ OCR/eKYC](https://vin3s.atlassian.net/wiki/spaces/VARW/pages/3014268156/L2+-+VHMKDO2O+-+D+ch+v+OCR+eKYC). TDD Dossier không định nghĩa lại cơ chế mã hóa hoặc vòng đời khóa của OCR capability.
+Kết quả OCR CCCD, provider payload, retention và payload encryption được xử lý tại `vhm-ocr-ekyc`; byte media, at-rest encryption của object và vòng đời object thuộc File Management/kho riêng tư. Xem [L2 - VHMKDO2O - Capability OCR dùng chung](https://vin3s.atlassian.net/wiki/spaces/VARW/pages/3014268156/L2+-+VHMKDO2O+-+D+ch+v+OCR+eKYC). TDD Dossier không định nghĩa lại thuật toán mã hóa hoặc vòng đời khóa của các capability này.
 
 Trách nhiệm của Dossier Core giới hạn ở:
 
-1. Xác thực/ủy quyền request trước khi gọi OCR; truyền `dossierId`, actor và purpose dạng signed/opaque context.
+1. Xác thực/ủy quyền request trước khi gọi OCR; lấy `subjectRef` từ nguồn định danh domain có thẩm quyền, bind server-side rồi truyền `source`, `referenceId=dossierId`, `requestBy`, `subjectRef` và purpose dạng signed/opaque context.
 2. Chỉ stream/proxy đúng field mà persona được phép xem; response PII không đi qua cache, persistence, log, event hoặc APM body capture.
-3. Persist duy nhất `subjectRef` opaque do OCR capability trả trực tiếp. Client không được gửi hoặc sửa reference này trong form body.
-4. Duplicate guard dùng `subjectRef + projectId`; tính ổn định, uniqueness và non-reversibility của `subjectRef` phải được đóng băng trong OCR Contract L3.
-5. Search theo họ tên/CCCD, export và hydrate detail dùng API batch/read có phân quyền của OCR capability. Khi OCR unavailable, fail/degrade theo contract; không fallback sang bản sao local.
-6. Dossier Core không sở hữu encryption key/salt cho OCR data. Rotation, emergency revocation và cryptographic erasure thuộc runbook của `vhm-ocr-ekyc`.
+3. Persist `subjectRef` opaque đã được domain bind và truyền giá trị đó vào `POST /ocr`; OCR lưu reference để tương quan/phân quyền. Client không được gửi hoặc sửa reference này trong form body.
+4. Duplicate guard dùng `subjectRef + projectId`; issuer, tính ổn định, uniqueness và non-reversibility của `subjectRef` phải được đóng băng trong Domain Identity/OCR Contract L3.
+5. Chỉ dùng prepare-upload, `POST /ocr` và `/ocr/result` trong baseline. `CONFIRM_AND_APPLY` xử lý tại domain bằng cách đọc lại kết quả `COMPLETED`; không gọi endpoint confirm chưa tồn tại. Search/export/hydrate/delete theo PII là ngoài baseline và không được fallback sang bản sao local.
+6. Dossier Core không sở hữu encryption key/salt cho kết quả OCR hoặc media. Rotation/revocation của payload OCR thuộc `vhm-ocr-ekyc`; khóa object và cryptographic erasure của byte media thuộc File Management/KMS owner.
 
 ### 7.3.4 Danh mục dữ liệu và yêu cầu quản lý
 
-Retention/legal hold/purge/quyền data subject đối với OCR/PII tuân theo TDD và policy của `vhm-ocr-ekyc`. Dossier Core chỉ quản retention của aggregate nghiệp vụ và opaque reference; purge dossier không được hiểu là đã purge dữ liệu tại OCR capability, vì vậy cần orchestration/delete contract hoặc runbook đối soát giữa hai nguồn.
+Retention/legal hold/purge/quyền data subject đối với kết quả OCR tuân TDD/policy của `vhm-ocr-ekyc`, còn byte media tuân File Management policy. Thời hạn 30 ngày của FPT Sale không phải retention mặc định cho VHM. Dossier Core chỉ quản retention của aggregate nghiệp vụ và opaque reference; purge dossier không đồng nghĩa đã purge OCR result/media. Baseline chưa công bố delete API, vì vậy trước production cần policy/runbook đối soát idempotent giữa Dossier, OCR, File, FPT và backup hoặc một OpenAPI mở rộng đã được phê duyệt.
 
 ## 7.4 Data Privacy
 
@@ -893,7 +902,7 @@ authorization/orchestration tới các nguồn authoritative.
 | **Chủ thể DL** | **Hệ thống lưu trữ** | **Số lượng bản ghi** | **Tổng dung lượng** | **Truyền sang bên ngoài** | **Khu vực DL đi qua** | **Kiểu DL thu thập** | **Mục đích** | **Mã hóa lưu trữ** | **Vị trí khóa** | **Xoay khóa** | **Mã hóa đường truyền** | **Masking** | **Vòng đời DL** | **Tự động xóa** | **Xóa theo yêu cầu KH** | **Ẩn danh** |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | Applicant/spouse gắn với hồ sơ NOXH | PostgreSQL `dossier_db` chỉ lưu aggregate nghiệp vụ, `subjectRef`, `ownerSubject`, project/unit, trạng thái, checklist/quyết định và audit metadata; không lưu raw PII/media/kết quả OCR | `TBD` — theo forecast Product; tối đa một hồ sơ active cho một `subjectRef + projectId` | `TBD` — theo số hồ sơ, checklist/history/outbox và retention; không tính binary/OCR payload | **Không trực tiếp từ Core** — chỉ trao đổi nội bộ với OCR/File/Message; mọi onward transfer của dependency phải được đánh giá trong DPA/DPIA của service owner | Agent/Market API → Dossier Core → PostgreSQL/Redis/Kafka; tuyến tới OCR/File/Message và region triển khai: `TBD` theo topology được duyệt | Opaque/pseudonymous subject/owner reference; dossier/project/unit/status; checklist, reviewer/decision và business metadata allowlist | Quản lý vòng đời hồ sơ, phân quyền object, chống trùng, readiness, phê duyệt và audit nghiệp vụ | **Có — yêu cầu thiết kế**; PostgreSQL, volume và backup phải mã hóa theo chuẩn nền tảng, cấu hình/evidence `TBD` | KMS/key service do nền tảng quản lý; account/key/owner cụ thể `TBD`, không lưu key trong source/config | `TBD` — theo policy KMS/ANBM; phải có rotation/revocation runbook | TLS 1.2 trở lên; ưu tiên TLS 1.3; signed actor/workload context trên tuyến nội bộ | Không hiển thị opaque ID nếu không cần; field projection theo persona; không ghi body/reference nhạy cảm vào log/APM/event | Tạo DRAFT → xử lý/phê duyệt → terminal → giữ theo retention/legal hold → purge/unlink; thời hạn từng trạng thái `TBD` | **Có — yêu cầu thiết kế**; lịch/SLA purge idempotent cho primary, outbox hết hạn và backup `TBD` | **Có — yêu cầu thiết kế**; orchestration với OCR/File/Message, trừ legal hold; SLA và bằng chứng đối soát `TBD` | Không ẩn danh hồ sơ active; sau retention phải purge hoặc unlink không thể tái liên kết theo policy được duyệt |
-| Applicant/spouse có PII được đọc/search/export/hydrate qua nguồn authoritative | Không persist/cache tại Dossier Core; chỉ tồn tại trong memory/stream trong thời gian request nếu proxy contract được giữ. Source of truth và nơi lưu là `vhm-ocr-ekyc` | **0 bản ghi persistent tại Core**; concurrency/request volume `TBD` | **0 dung lượng at rest tại Core**; giới hạn field/payload transient `TBD` trong OpenAPI | **Không trực tiếp từ Core tới bên thứ ba**; `vhm-ocr-ekyc` chịu trách nhiệm provider/sub-processor và data residency theo TDD/DPA riêng | Agent/Market API → Dossier Core → `vhm-ocr-ekyc` nếu proxy; phương án ưu tiên chỉ cho Core nhận readiness/status/opaque reference. Region/VPC/egress: `TBD` | Projection tối thiểu của họ tên, CCCD, ngày sinh, contact hoặc trường OCR đúng purpose/persona; cấm provider payload/raw media | Authorize và phục vụ read/search/export/hydrate đã được duyệt; Core không OCR, không xác nhận semantic và không tạo local projection | **Không áp dụng at rest tại Core**; mọi spill/heap dump/body capture/cache phải tắt. At-rest tại OCR theo TDD `vhm-ocr-ekyc` | Core không sở hữu key/salt OCR; key thuộc KMS/key service của OCR owner | Do OCR owner quản lý; Core cần evidence contract, không thực hiện rotation key OCR | TLS 1.2 trở lên; ưu tiên TLS 1.3; workload identity và signed actor/purpose context | Field-level projection/masking theo persona; `Cache-Control: no-store`; cấm body log, trace/APM capture, export không kiểm soát | Chỉ trong vòng đời request rồi giải phóng; dữ liệu persistent tuân retention của OCR source | Không áp dụng cho Core vì không persist; cần test không có cache/spill. Purge authoritative do OCR thực hiện | Core authorize/orchestrate yêu cầu; OCR source thực thi access/correction/export/delete và trả bằng chứng, trừ legal hold | Không ẩn danh khi phục vụ use case định danh; chỉ cho phép dữ liệu tổng hợp đã được Privacy phê duyệt |
+| Applicant/spouse có PII trong kết quả OCR CCCD | Không persist/cache tại Dossier Core; projection `/ocr/result` chỉ tồn tại transient trong memory/stream. `vhm-ocr-ekyc` lưu request/kết quả đã mã hóa; File Management/kho riêng tư lưu byte media; FPT xử lý theo contract | **0 bản ghi PII persistent tại Core**; số OCR record tại capability theo forecast `TBD` | **0 dung lượng PII at rest tại Core**; payload transient và giới hạn response theo OCR OpenAPI L3 | **Có trong toàn luồng** — `vhm-ocr-ekyc` truyền media/dữ liệu cần thiết tới FPT; Core không gọi FPT trực tiếp. DPA/DPIA, sub-processor và data residency thuộc OCR owner | Agent/Market API → Dossier Core → `vhm-ocr-ekyc` → File Management/FPT; region VHM và vùng xử lý/lưu của FPT: `TBD` | Họ tên, CCCD, ngày sinh, giới tính, địa chỉ, quê quán, quốc tịch, ngày/nơi cấp/hết hạn và confidence/cảnh báo theo allowlist; **không gồm phone/email hoặc dữ liệu ngoài OCR CCCD** | OCR CCCD hai mặt và cho người dùng kiểm tra projection kết quả; Core không OCR, không xác nhận semantic và không tạo local projection | **Không áp dụng at rest tại Core**; kết quả tại OCR dùng payload encryption theo TDD OCR, media tại File dùng server-side encryption/KMS; cấm spill/heap dump/body capture/cache ở Core | Core không sở hữu key/salt OCR/media; CMK payload thuộc OCR owner/KMS, CMK object thuộc File/platform owner | `TBD` theo policy KMS/ANBM của OCR và File; Core chỉ yêu cầu evidence, không xoay khóa của dependency | TLS 1.2 trở lên, ưu tiên TLS 1.3; workload identity và signed actor/purpose context; TLS bắt buộc tới FPT | Domain Backend authorize/project đúng field; Agent/Market API/UI áp dụng `FULL/MASKED/NONE`; `Cache-Control: no-store`; cấm body/media/path trong log/APM/event | Tại Core chỉ trong vòng đời request; kết quả OCR, media, provider metadata và backup theo retention tách biệt đã được duyệt | Không áp dụng tại Core vì không persist PII; OCR/File/FPT phải có purge idempotent và bằng chứng theo policy, lịch/SLA `TBD` | Baseline chưa có delete/correction API; xử lý bằng policy/runbook phối hợp OCR–File–FPT–backup hoặc OpenAPI mở rộng được phê duyệt, trừ legal hold | Không ẩn danh dữ liệu OCR đang phục vụ định danh; chỉ cho phép dữ liệu tổng hợp đã được Privacy phê duyệt |
 | Applicant/spouse/người phụ thuộc trong tài liệu không OCR | Binary lưu tại kho riêng tư do File Management quản lý; Core chỉ lưu `s3PathFile`/folder/reference opaque và checklist metadata | `TBD` — theo forecast số hồ sơ × catalogue tài liệu/version | `TBD` — Core chỉ tính reference/metadata; dung lượng binary do File owner capacity, quota file theo File Contract | **Không trực tiếp từ Core**; upload/download qua File Management. File owner phải công bố mọi antivirus/DLP/sub-processor hoặc transfer khác | Client → presigned File endpoint; Dossier Core ↔ File Management để prepare/verify; region/object residency `TBD` | Giấy tờ hôn nhân/hộ gia đình, cư trú, nhà ở, việc làm, thu nhập/tài chính và PII phát sinh trong binary; Core không đọc/index nội dung | Chứng minh điều kiện NOXH, kiểm tra checklist và review tài liệu có thẩm quyền | **Có — yêu cầu thiết kế** cho object, metadata Core và backup; cấu hình/evidence File `TBD` | Key object storage/KMS thuộc File owner; key DB Core thuộc platform owner; không trả key/presigned credential cho Core lâu dài | `TBD` theo File/KMS policy; presigned URL TTL ngắn và không persist | TLS 1.2 trở lên; presigned URL scope đúng object, TTL ngắn, không cho list | Không log path/presigned URL/tên file chứa PII; download chỉ sau object authorization; UI masking theo loại tài liệu/persona | Prepare/upload → attach/verify → review → terminal → giữ/xóa theo purpose/legal hold; orphan upload TTL `TBD` | **Có — yêu cầu thiết kế**; dọn orphan và purge object/reference idempotent, schedule/SLA `TBD` | **Có — yêu cầu thiết kế**; Core–File delete orchestration và đối soát object/reference, trừ legal hold | Không ẩn danh binary đang phục vụ hồ sơ; hết retention phải purge object và unlink reference |
 | Agent/reviewer/recipient nội bộ | Core chỉ lưu actor/reviewer/recipient ID opaque, role/stage/decision và audit metadata; tên/email/số điện thoại công việc thuộc IAM/TTOL/Message Delivery | `TBD` — theo số dossier, stage, lần phân công/quyết định/notification | `TBD` — metadata nhỏ theo dossier/history/outbox retention | **Không** — chỉ trao đổi với dịch vụ nội bộ được duyệt; Message Delivery chịu trách nhiệm kênh/provider nếu có | Agent API/Dossier Core ↔ BUS/IAM/TTOL/Message Delivery; region và egress `TBD` | Opaque staff ID, role/scope, stage, assignment, decision, recipient ID và notification intent; không lưu contact address tại Core | Phân quyền, phân công, phê duyệt, audit và gửi notification | **Có — yêu cầu thiết kế** cho DB/backup; contact authoritative được bảo vệ tại IAM/TTOL/Message | KMS/key service của platform và từng source authoritative; chi tiết `TBD` | `TBD` theo policy ANBM của từng owner | TLS 1.2 trở lên; signed actor context; service identity tới IAM/TTOL/Message | UI chỉ hiển thị thông tin cần thiết sau resolve; log dùng opaque ID; không đưa email/phone vào event/outbox Core | Theo vòng đời assignment/audit và retention hồ sơ; thay đổi hồ sơ nhân sự được cập nhật tại source authoritative | **Có — yêu cầu thiết kế** cho outbox/assignment hết hạn; audit giữ theo policy/legal hold | Rectify contact tại source; delete/unlink ID tại Core theo policy và nghĩa vụ audit, không xóa trái legal hold | Pseudonymize bằng opaque ID; dữ liệu audit active không ẩn danh nếu còn mục đích hợp lệ |
 
@@ -921,7 +930,7 @@ residency, masking, key lifecycle, legal hold, quyền data subject và residual
 1. Xác thực actor và chuẩn hóa `source`/key.
 2. Với key, lấy advisory lock và kiểm tra replay theo actor.
 3. Chỉ khi không replay mới chạy structural guard, optional JSON Schema, XSS sanitizer và file validation.
-4. Kiểm tra trùng friendly trước insert.
+4. Nếu signed context đã có `subjectRef`, kiểm tra trùng friendly trước insert; create `{}` chưa có reference được phép bỏ qua và phải kiểm tra lại khi bind.
 5. Persist DRAFT, pipeline projection, history, checklist nếu documents không rỗng và outbox.
 6. Flush để lấy đúng version; unique conflict cuối được map thành lỗi nghiệp vụ.
 
@@ -930,7 +939,7 @@ residency, masking, key lifecycle, legal hold, quyền data subject và residual
 1. Kiểm tra dossier visibility và editable state.
 2. Nếu có `If-Match`, so với version hiện hành.
 3. DRAFT/ADD_INFO: validate business snapshot không chứa OCR/PII, file không OCR và duplicate theo `subjectRef`; giữ server-owned unit; synchronize checklist kể cả danh sách rỗng.
-4. Thay đổi dữ liệu applicant/spouse được forward tới contract của `vhm-ocr-ekyc`; không PATCH vào `formData` của Dossier ở bất kỳ trạng thái nào.
+4. Trường CCCD applicant/spouse chỉ đi qua luồng OCR và không PATCH vào `formData`; phone/email không thuộc OCR và phải đi qua nguồn Applicant/Customer Profile được phê duyệt nếu có use case tương lai.
 5. Ghi status/form update history/outbox trong cùng transaction.
 
 ### 8.1.3 Submit và sinh mã
@@ -962,7 +971,7 @@ Khi reviewer request revision, hồ sơ đi về stage intake tương ứng ho�
 
 ## 8.3 Chuẩn hóa dữ liệu
 
-- Chuẩn hóa `subjectRef`/project ID trước duplicate lookup; không chấp nhận reference rỗng, do client tự khai hoặc không xác minh được với OCR capability.
+- Chuẩn hóa `subjectRef`/project ID trước duplicate lookup; không chấp nhận reference rỗng hoặc do client tự khai. Core phải xác minh reference với signed domain identity context/issuer có thẩm quyền và truyền cùng giá trị vào OCR capability.
 - XSS sanitizer áp dụng cho form/metadata và dữ liệu đưa vào tài liệu/thông báo.
 - Server giữ quyền sở hữu `source`, `assignedUnitCode`, `assignedUnitId`, pipeline projection và audit fields.
 - `documents[].documentTemplateId` phải là UUID hợp lệ; `groupCode` được chuẩn hóa rỗng cho legacy.
@@ -1013,7 +1022,7 @@ không có trong `availableActions` của dossier.
 | Xem detail/progress/timeline và download được phép | **✓** đúng owner subject | **✓** `OWNER` + scope | **✓** stage/scope/visibility hợp lệ | **✓** scope PKD hợp lệ | **✓** stage/scope/visibility hợp lệ | **✓** scope PTT/SXD hợp lệ | **△** purpose, field projection và audit access phải được chốt |
 | Tạo DRAFT | **✓** Market API bind `ownerSubject`; không business role | **✓** project/scope hợp lệ | **—** | **—** | **—** | **—** | **—** trừ khi đồng thời mang role tạo hồ sơ được BUS cấp |
 | Update business snapshot, upload/attach và xóa DRAFT | **✓** `DATA_SUBJECT` + state/action Market | **✓** `OWNER` + DRAFT/ADD_INFO; delete chỉ DRAFT | **—** | **—** | **—** | **—** | **—** |
-| Tạo/poll/xác nhận OCR applicant/spouse | **✓** đúng subject/dossier và purpose | **✓** `OWNER` + scope | **—** không xác nhận thay applicant | **—** | **—** | **—** | **—**; support access cần contract riêng |
+| Tạo/poll/xác nhận áp dụng OCR CCCD | **✓** đúng subject/dossier và purpose | **✓** `OWNER` + scope | **—** không xác nhận thay applicant | **—** | **—** | **—** | **—**; support access cần contract riêng |
 | `SUBMIT`/`RESUBMIT` hồ sơ | **✓** `DATA_SUBJECT` + action Market được công bố | **✓** `OWNER` + readiness/state guard | **—** | **—** | **—** | **—** | **—** |
 | `SUBMIT_HARDCOPY` | **△** chỉ khi Market channel policy công bố action | **✓** `OWNER` tại stage hỗ trợ | **—** | **—** | **—** | **—** | **—** |
 | `ASSIGN`/`REASSIGN`/`CLAIM` reviewer | **—** | **—** | **—**; nhận auto-assignment không cấp quyền reassign | **✓** tại stage PKD; theo slot và assignee guard | **△** `ASSIGN` tại stage PTT/SXD khi definition cho phép; không `REASSIGN/CLAIM` | **✓** tại stage PTT/SXD; theo slot và assignee guard | **—** trừ khi đồng thời có Lead role phù hợp |
@@ -1022,7 +1031,7 @@ không có trong `availableActions` của dossier.
 | `RETURN_TO_SALES` | **—** | **—** | **—** | **—** | **✓** stage thủ tục + `CLAIMER` | **✓** stage thủ tục + `CLAIMER` | **—** |
 | `ALLOCATE_UNIT`/`REVOKE_UNIT` | **—** | **—** | **✓** allocate tại PKD khi `CLAIMER`; revoke ở state được định nghĩa | **✓** như PKD | **△** chỉ `REVOKE_UNIT` ở state PTT/SXD được định nghĩa | **△** chỉ `REVOKE_UNIT` ở state PTT/SXD được định nghĩa | **—** trừ khi đồng thời có functional role phù hợp |
 | `CONFIRM_HARDCOPY_RECEIVED` | **—** | **—** | **✓** tại stage được định nghĩa | **✓** tại stage được định nghĩa | **✓** tại stage được định nghĩa | **✓** tại stage được định nghĩa | **—** trừ khi đồng thời có reviewer role phù hợp |
-| Statistics/report/export/hydrate PII | **△** chỉ dữ liệu của chính subject và contract data-subject export | **△** owner/project scope và field projection được duyệt | **△** scope PKD; contact/PII masking theo persona | **△** scope PKD; contact/PII masking theo persona | **△** scope PTT/SXD và purpose được duyệt | **△** scope PTT/SXD và purpose được duyệt | **△** cần BUS admin role, purpose, export limit và audit contract |
+| Statistics/report/export business metadata | **△** chỉ dữ liệu của chính subject và column allowlist | **△** owner/project scope và column allowlist | **△** scope PKD, không hydrate PII | **△** scope PKD, không hydrate PII | **△** scope PTT/SXD, không hydrate PII | **△** scope PTT/SXD, không hydrate PII | **△** cần BUS admin role, purpose, export limit và audit contract |
 | Quản lý `agent_project_permission` | **—** | **—** | **—** | **—** | **—** | **—** | **△** BO/Admin role code và scope quản trị còn phải đóng băng trong BUS Contract L3 |
 | Trigger reminder thủ công | **—** | **—** | **✓** theo rule/endpoint được phép | **✓** theo rule/endpoint được phép | **—** | **—** | **△** chỉ với operations role được phê duyệt, không mặc định theo nhãn Admin |
 
@@ -1036,7 +1045,7 @@ L3 và được contract-test để tránh drift với bảng này.
 
 ## 9.3 Secrets & Credential Management
 
-- HMAC secret, Basic credential và File/OCR/Message/TTOL credential không được nằm trong source, image, application config rõ hoặc tài liệu này. Agent API và Market API dùng credential nội bộ riêng khi gọi Core. Credential File của Core chỉ có scope cho tài liệu không OCR; encryption key và credential File/provider của nhánh OCR thuộc `vhm-ocr-ekyc`.
+- HMAC secret, Basic credential và File/OCR/Message/TTOL credential không được nằm trong source, image, application config rõ hoặc tài liệu này. Agent API và Market API dùng credential nội bộ riêng khi gọi Core. Credential File của Core chỉ có scope cho tài liệu không OCR; OCR workload dùng credential riêng để gọi File/provider, còn CMK object do File/platform owner quản lý.
 - Secret phải được cấp qua secret manager/runtime, có owner, rotation period và emergency revocation runbook.
 - Core và `vhm-ocr-ekyc` dùng danh tính workload riêng, audience/scope tối thiểu; dossier không nhận provider credential OCR.
 - Không copy cookie STG vào code/config/log; credential từng được chia sẻ ngoài luồng phải được rotate/revoke.
@@ -1047,7 +1056,7 @@ L3 và được contract-test để tránh drift với bảng này.
 ### Kiểm soát request và file
 
 - Body bị từ chối nếu chứa các trường giả mạo security context như `actorId`, `actorDisplayName`, `roles`, `scope`, `visibility`, `dataSubjectId` hoặc `ownerSubject` ở bất kỳ cấp lồng nhau.
-- Dossier persistence API từ chối CCCD, họ tên, ngày sinh, phone/email, media OCR, OCR result/confidence/provider metadata và `subjectRef` do client tự khai; dữ liệu applicant đi qua OCR contract chuyên biệt.
+- Dossier persistence API từ chối CCCD, họ tên, ngày sinh, phone/email, media OCR, OCR result/confidence/provider metadata và `subjectRef` do client tự khai. Trường CCCD chỉ đi qua OCR contract chuyên biệt; contact không thuộc OCR và phải đi qua nguồn Applicant/Customer Profile được phê duyệt nếu use case tương lai cần.
 - Structural guard giới hạn shape/kích thước; JSON Schema bảo vệ semantic khi feature được bật; XSS sanitizer chạy trước persistence/render.
 - File type/size/magic/checksum phải được kiểm soát tại File Contract cho tài liệu không OCR và OCR Contract cho media OCR; Core chỉ lưu path opaque của tài liệu không OCR.
 - Presigned URL có TTL ngắn, phạm vi object chính xác, không cho list và không được persist/log.
@@ -1066,12 +1075,13 @@ L3 và được contract-test để tránh drift với bảng này.
 ### Data Masking
 
 Ba mức hiển thị được áp dụng sau authorization tại mục 9.2: `FULL` chỉ cho
-persona có purpose và quyền trên đúng dossier; `MASKED` cho list/search/report
-hoặc persona chỉ cần đối chiếu; `NONE` là không trả field. Masking phải thực hiện
-tại nguồn authoritative hoặc server-side projection trước khi response rời
-Agent/Market API/Core; không gửi giá trị đầy đủ rồi trông chờ UI che. Export được
-xem là một lần công bố `FULL` hàng loạt nên cần scope, giới hạn, audit và approval
-riêng.
+persona có purpose và quyền trên đúng dossier; `MASKED` cho list/report hoặc
+persona chỉ cần đối chiếu; `NONE` là không trả field. Dossier Core kiểm tra quyền
+business object và chỉ proxy field allowlist từ `/ocr/result`; Agent API/Market API
+ánh xạ persona sang `FULL/MASKED/NONE` và masking server-side trước khi trả UI,
+đúng ranh giới Domain Backend/BFF của TDD OCR. Không gửi giá trị đầy đủ rồi trông
+chờ UI che. Export PII không thuộc baseline hiện tại; nếu bổ sung phải có scope,
+giới hạn, audit, approval và contract nguồn authoritative riêng.
 
 | **Trường/nhóm dữ liệu** | **Authority/persistence** | **Hiển thị theo role/purpose** | **Log/event/APM** | **Format masking/yêu cầu** |
 | --- | --- | --- | --- | --- |
@@ -1082,7 +1092,7 @@ riêng.
 | Số điện thoại applicant/spouse | Nguồn applicant authoritative; không persist tại Core | Market/Applicant owner và PTT đúng purpose: `FULL`; `PKD`/`PKD_LEAD`: `MASKED`; BO/Admin: `NONE` nếu không có support purpose | Không ghi | Giữ 2 ký tự đầu + 2 cuối: `09******89` |
 | Email applicant/spouse | Nguồn applicant authoritative; không persist tại Core | Market/Applicant owner và PTT đúng purpose: `FULL`; `PKD`/`PKD_LEAD`: `MASKED`; BO/Admin: `NONE` nếu không có support purpose | Không ghi | Giữ ký tự đầu local-part và domain: `a***@example.com` |
 | Thu nhập/tài chính/việc làm/hộ gia đình trong tài liệu | Binary tại File Management/nguồn authoritative; Core chỉ giữ reference/checklist metadata | Không trả thành field list; chỉ download/view tài liệu cho role đúng stage/purpose. Preview/report nếu có mặc định `MASKED` | Không ghi nội dung, filename gốc hoặc extracted text | `MASKED` che toàn bộ giá trị: `******`; media phải dùng viewer/download grant có thời hạn |
-| Media CCCD và tài liệu không OCR | OCR media tại `vhm-ocr-ekyc`; tài liệu khác tại File Management | Core không render hoặc trả raw media. BFF/UI chỉ nhận download/view grant sau object authorization; thumbnail cũng áp dụng cùng quyền | Không ghi bytes, checksum nhạy cảm, path, filename PII hoặc presigned URL | Không masking binary tại Core; dùng access control, watermark/redaction nếu File/OCR contract yêu cầu |
+| Media CCCD và tài liệu không OCR | Byte media/file tại File Management/kho riêng tư; `vhm-ocr-ekyc` chỉ lưu media reference và kết quả OCR | Core không render hoặc trả raw media. BFF/UI chỉ nhận download/view grant sau object authorization; thumbnail cũng áp dụng cùng quyền | Không ghi bytes, checksum nhạy cảm, path, filename PII hoặc presigned URL | Không masking binary tại Core; dùng access control, watermark/redaction nếu File/OCR contract yêu cầu |
 | `subjectRef`, `ownerSubject`, actor/reviewer/recipient ID | Core lưu opaque reference tối thiểu | `NONE` trên UI nghiệp vụ trừ support view được duyệt; UI dùng display projection từ nguồn authoritative | Chỉ dossier/correlation ID trong allowlist; không log subject/owner/recipient reference nếu không cần | Không partial-mask; phải opaque, không nhúng PII và không đảo ngược được. Loại khỏi response thay vì che hình thức |
 | Tên reviewer/agent và contact công việc | IAM/TTOL/Message Delivery; Core chỉ lưu opaque ID theo target design | Tên có thể `FULL` trong assignment/timeline cho người xem dossier; email/phone `NONE` trừ notification/support purpose | Log opaque actor ID; không log tên/email/phone | Email nếu buộc hiển thị dùng `a***@domain`; phone dùng `09******89` |
 | Dossier code, project/unit, status, progress và decision metadata | Core authoritative | `FULL` sau scope/object authorization; report chỉ trả column allowlist | Có thể ghi dossier ID/action/status/error code theo allowlist; không ghi full response | Không masking mặc định nhưng vẫn là metadata có thể liên kết cá nhân; cấm dùng làm metric label cardinality cao |
@@ -1103,7 +1113,7 @@ dùng việc ghép role để nâng từ `MASKED/NONE` lên `FULL` ngoài purpos
 | Redis | Nonce/replay, counter, cache/coordination; không OCR/PII | TLS in transit; encryption at rest nếu persistence/snapshot bật; ACL và network isolation | Theo baseline Redis managed service được ANBM duyệt; cipher/config `TBD` | Platform owner quản lý certificate/key và rotation; security nonce lỗi phải fail closed | Redis ACL/TLS/persistence config, failover và replay test |
 | Kafka/outbox | Event metadata opaque, không PII/media/path/presigned URL | TLS cho producer/broker; broker/storage encryption theo nền tảng; topic ACL | TLS 1.2 trở lên, ưu tiên TLS 1.3; at-rest baseline `TBD` | Platform Kafka owner quản lý certificate/CMK và rotation; Core không nhúng key vào config rõ | Topic/schema/ACL review, payload scan, certificate rotation và DLQ evidence |
 | Tài liệu không OCR | Binary tại File Management/object storage; Core chỉ giữ reference | Server-side encryption bằng KMS, bucket/object private; presigned URL TTL ngắn và scope chính xác | SSE-KMS/AES-256 hoặc baseline File được ANBM duyệt | CMK thuộc File owner; Core không nhận key. Rotation, revocation và cryptographic erasure theo File Contract | File encryption attestation, owner/upload-grant E2E, access log và delete/restore drill |
-| OCR media/kết quả/PII | Lưu tại `vhm-ocr-ekyc`; transient trong Core chỉ khi proxy contract được giữ | Không persist/cache/spill tại Core; TLS khi truyền. At-rest/payload encryption và key lifecycle thuộc OCR capability | Theo TDD `vhm-ocr-ekyc`; Core không định nghĩa lại thuật toán | OCR owner/KMS quản lý; Core chỉ yêu cầu evidence và không có decrypt/key permission | OCR OpenAPI/IAM, no-cache/no-body-log/heap-dump evidence và ANBM/Privacy approval |
+| OCR media/kết quả/PII | Kết quả/media reference lưu tại `vhm-ocr-ekyc`, byte media tại File Management/kho riêng tư; transient trong Core chỉ khi proxy `/ocr/result` | Không persist/cache/spill tại Core; TLS khi truyền. Payload encryption thuộc OCR, server-side object encryption thuộc File | Theo TDD `vhm-ocr-ekyc` và File/KMS baseline; Core không định nghĩa lại thuật toán | OCR owner quản lý CMK payload, File/platform owner quản lý CMK object; Core chỉ yêu cầu evidence và không có decrypt/key permission | OCR OpenAPI/IAM, File encryption attestation, no-cache/no-body-log/heap-dump evidence và ANBM/Privacy approval |
 | Kết nối service-to-service | Agent/Market API ↔ Core ↔ PostgreSQL/Redis/Kafka/OCR/File/Message/TTOL | HTTPS/TLS; mTLS hoặc signed workload identity tại trust boundary theo chuẩn VHM; không clear text sau TLS termination | TLS 1.2 trở lên, ưu tiên TLS 1.3; cấm protocol/cipher yếu | Certificate/private key từ certificate/secret manager, tự động renew/revoke; không nằm trong source/image | TLS scan, trust-store/certificate rotation test và network-flow approval |
 | Secret và credential | HMAC, Basic credential, DB/File/Message/TTOL credential | Chỉ cấp runtime qua secret manager/KMS; không lưu trong PostgreSQL, Kafka, log, image hoặc source | Cơ chế encryption của secret manager/KMS được VHM phê duyệt | Owner, version, rotation period và emergency revocation bắt buộc; credential tách theo client/environment | Secret scan/SBOM, runtime injection evidence và rotation/revocation drill |
 | Backup, snapshot và artefact export | PostgreSQL backup/PITR, Redis snapshot nếu bật, report/ZIP/XLSX tạm | Backup mã hóa bằng key tách quyền; artefact export private, TTL/retention và download authorization | Baseline backup/object encryption `TBD`; không dùng key hard-code | DBA/Vận hành/File owner quản lý key và restore permission; rotation không làm mất khả năng restore trong retention window | Restore drill, expired artefact purge, key recovery và restore-and-repurge evidence |
@@ -1240,7 +1250,7 @@ window và retention/legal-hold gate.
 | Dossier Core | Redis | TLS; nonce/replay/counter/cache metadata | Private endpoint, ACL/keyspace, TTL, no PII và fail-closed cho replay control |
 | Dossier Core | Kafka | TLS; opaque domain event metadata | Producer topic ACL, schema allowlist, idempotent/outbox relay, quota/retention và no PII/path/URL |
 | Dossier Core | File Management | HTTPS metadata/prepare/verify/download/store artefact | Workload identity, exact object/grant, MIME/size/checksum, timeout và no arbitrary URL |
-| Dossier Core | `vhm-ocr-ekyc` | HTTPS OCR resource/status/confirm và authorized projection nếu contract cho phép | Workload IAM + signed actor/purpose, timeout/idempotency, no-cache/no-body-log; không gọi provider trực tiếp |
+| Dossier Core | `vhm-ocr-ekyc` | HTTPS prepare-upload, `POST /ocr` với `subjectRef` đầu vào và `/ocr/result`; không có OCR-confirm riêng | Workload IAM + signed actor/purpose, timeout/idempotency, no-cache/no-body-log; không gọi provider trực tiếp |
 | Dossier Core | TTOL/Market/Message Delivery | HTTPS/Thrift business metadata hoặc notification intent | Workload identity, endpoint allowlist, field minimization, timeout/retry policy và no credential/PII log |
 | Dossier Core và platform | Observability/SIEM | TLS, technical telemetry allowlist | Chỉ metadata; không body/PII/token/file URL; retention, RBAC và DLP scan |
 
@@ -1263,7 +1273,7 @@ Phát hành pipeline: version mới được validate và deploy ở trạng th�
 
 Migration OCR: Dossier Core thay direct OCR provider bằng client `vhm-ocr-ekyc` sau khi OCR contract, IAM và E2E được duyệt; các client File Management tiếp tục phục vụ tài liệu không OCR. Agent API và Market API tiếp tục chỉ gọi Dossier Core. Có thể chạy so sánh OCR ở chế độ quan sát nếu được phê duyệt nhưng không dual-write kết quả vào hai nguồn; sau khi ổn định phải loại bỏ provider credential, endpoint và client OCR legacy khỏi Dossier Core.
 
-Migration tập trung OCR/PII dùng expand/migrate/contract: đóng băng OCR Contract L3 và `subjectRef`, chuyển read/search/export/notification sang API authoritative, backfill `subject_ref`, sau đó chặn new-write PII và purge các trường OCR/PII legacy khỏi `form_data`, checklist, outbox, audit/report staging. Job purge phải idempotent, có checkpoint/đối soát và tuyệt đối không ghi giá trị bị xóa vào log/dead-letter. Unique guard chỉ chuyển từ CCCD sang `subjectRef+projectId` sau khi mapping đầy đủ và constraint mới đã validate. Backup cũ chứa PII phải được cô lập và hết hạn theo policy phối hợp với OCR/Privacy; rollback không được tái tạo luồng dual-write.
+Migration tập trung OCR/PII dùng expand/migrate/contract: đóng băng issuer/format `subjectRef`, bind/backfill reference từ nguồn định danh domain có thẩm quyền và truyền cùng giá trị vào `POST /ocr`; chuyển đọc kết quả CCCD sang `/ocr/result`, sau đó chặn new-write PII và purge các trường OCR/PII legacy khỏi `form_data`, checklist, outbox, audit/report staging. Phone/email legacy phải chuyển sang nguồn Applicant/Customer Profile được phê duyệt hoặc purge, không chuyển sang OCR. Job purge phải idempotent, có checkpoint/đối soát và tuyệt đối không ghi giá trị bị xóa vào log/dead-letter. Unique guard chỉ chuyển từ CCCD sang `subjectRef+projectId` sau khi mapping đầy đủ và constraint mới đã validate. Backup cũ chứa PII phải được cô lập và hết hạn theo policy phối hợp với OCR/File/Privacy; rollback không được tái tạo luồng dual-write.
 
 # 11. Cost & Capacity/Performance
 
@@ -1323,7 +1333,7 @@ rate card/contract chính thức của VHM trước khi phê duyệt.
 
 | **Capability/chi phí** | **Cách hạch toán yêu cầu** |
 | --- | --- |
-| `vhm-ocr-ekyc` và provider OCR/eKYC | OCR service owner cung cấp fixed allocation + unit price/request/document; Dossier không nhân đôi provider cost |
+| `vhm-ocr-ekyc` và provider OCR | OCR service owner cung cấp fixed allocation + unit price/request/document CCCD; Dossier không nhân đôi provider cost |
 | File Management/object binary | File owner tính storage/request/egress theo số file, dung lượng trung bình và retention; bảng trên chỉ tính artefact export nhỏ thuộc Core |
 | Message Delivery | Message owner tính theo email/ZNS/SMS/notification accepted/delivered và retry; Core chỉ tính relay compute nhỏ |
 | Agent API/Market API/UI | Hạch toán tại repository/channel owner; không đưa compute/WAF/CDN của hai BFF vào Core |
@@ -1365,7 +1375,7 @@ unit cost.
 | Message Delivery lỗi | Notification retry/FAILED | Manual replay/runbook; không rollback transition. |
 | Redis lỗi | Security replay fail closed; assignment/cache suy giảm | HA/failover; manual assignment. |
 | TTOL lỗi | Không lấy được danh sách nhân sự để auto-assign PTT/SXD | Giữ hồ sơ ở trạng thái chưa phân công; lead phân công thủ công và có cảnh báo. |
-| `vhm-ocr-ekyc` lỗi | Không tạo/poll/confirm hoặc không hydrate được dữ liệu OCR | Retry/manual verification tại OCR/eKYC UX; không nhập/lưu PII thay thế tại Dossier và không tự reject. |
+| `vhm-ocr-ekyc` lỗi | Không prepare/tạo/poll/đọc được kết quả OCR | Retry theo `Retry-After` hoặc xác minh thủ công theo runbook OCR; không nhập/lưu PII thay thế tại Dossier và không tự reject. |
 | File Management lỗi | Không prepare/verify/download tài liệu không OCR; nhánh OCR cũng có thể suy giảm | Retry hữu hạn; không attach path chưa xác minh; không bypass qua đường tích hợp khác. |
 
 ## 12.3 Sao lưu và phục hồi
@@ -1484,10 +1494,10 @@ Bộ kiểm thử phải bao phủ invariant domain, database concurrency, API/s
 - Market request mang `APPLICANT_AGENT`, `ALL/TEAM/ASSIGNED`, owner hoặc data subject tự khai phải bị từ chối; Core không yêu cầu role Agent hợp lệ cho Market owner action.
 - Agent action phải khớp BUS role, project/team scope và ownership; role hợp lệ nhưng sai scope, role hết hiệu lực hoặc role lạ đều bị deny-by-default.
 - Agent reviewer xử lý dossier `source=MARKET` chỉ khi policy BUS/project scope cho phép; `source` không tự cấp quyền.
-- Hai hồ sơ active cùng `subjectRef` authoritative+dự án bị chặn ở create, full update, submit và DB race guard.
-- Client tự khai/sửa `subjectRef` hoặc gửi CCCD, họ tên, ngày sinh, contact, OCR result/media metadata vào persistence API phải bị từ chối.
+- Hai hồ sơ active cùng `subjectRef` authoritative+dự án bị chặn ở create khi đã có reference, bước bind trước OCR, full update, submit và DB race guard.
+- Client tự khai/sửa `subjectRef` hoặc gửi CCCD, họ tên, ngày sinh, contact, OCR result/media metadata vào persistence API phải bị từ chối; Core bind reference từ signed domain identity context và truyền đúng cùng giá trị trong `POST /ocr`.
 - Database dump, outbox, audit, cache, log và report staging không chứa media/kết quả/PII applicant; chỉ có opaque reference và business metadata allowlist.
-- Search/detail/export/notification hydrate từ OCR/IAM/Message đúng quyền, không persist response; OCR unavailable không được fallback sang bản sao local.
+- List/detail/statistics/export chỉ có business metadata allowlist; contact không được gửi sang OCR và không có search/hydrate PII nếu chưa có contract nguồn Applicant/Customer Profile riêng.
 - Full update file không tồn tại rollback cả dossier/checklist/outbox; xóa documents reset/delete projection đúng.
 - Submit không checklist/thiếu required trả `11017/11018`; required complete mới chuyển trạng thái.
 - If-Match cũ, concurrent command, allocate cùng căn và double claim không làm lost update.
@@ -1498,7 +1508,7 @@ Bộ kiểm thử phải bao phủ invariant domain, database concurrency, API/s
 - Signature/body hash/timestamp/nonce/actor JTI/visibility negative matrix và không có body actor spoofing.
 - Outbox crash trước/sau broker acknowledgement có thể phát lặp nhưng không mất event.
 - Notification retry/dedupe/FAILED và reminder T+6/T+18 qua ngày nghỉ/cycle mới.
-- OCR: media reference sai quyền/không tồn tại, idempotent create, `202`/`Retry-After`, polling `QUEUED/PROCESSING/terminal`, confirm tại OCR source, stable/non-reversible `subjectRef`, timeout và service unavailable.
+- OCR: media reference sai quyền/không tồn tại, idempotent create, `202`/`Retry-After`, polling `QUEUED/PROCESSING/terminal`, domain `CONFIRM_AND_APPLY` đọc lại `COMPLETED`, không gọi OCR-confirm; `subjectRef` đầu vào ổn định/non-reversible, timeout và service unavailable.
 - File Management: cross-owner/cross-reference, path traversal, MIME/magic/checksum, expired presign và upload grant cho tài liệu không OCR.
 - Migration trên dữ liệu trùng, rollback application và restore/PITR reconciliation.
 
@@ -1542,11 +1552,12 @@ Bằng chứng quality gate phải được lưu theo release, tối thiểu g�
 | Claim định danh data subject của Market và cách bind `ownerSubject` | Market API/ANBM/Backend | Claim authoritative, ổn định, signed; create/list/detail/mutation và cross-customer E2E được duyệt. |
 | Catalogue role BUS, runtime source, version và mapping role → scope/action | BUS/Agent API/Backend/ANBM | Role codes/semantics/expiry, signed context, pipeline mapping và deny-by-default contract được duyệt. |
 | Agent/Back Office review dossier `source=MARKET` | BUS/Product/Backend | Chốt role/project scope và policy cross-channel; source không được dùng thay authorization. |
-| Contract Dossier Core ↔ `vhm-ocr-ekyc` cho CCCD hai mặt, confirm, `subjectRef`, batch read/search/export và delete | OCR Team/Backend/ANBM | OpenAPI L3, IAM, stable/non-reversible reference, failure/SLA và E2E ký duyệt. |
+| Contract Dossier Core ↔ `vhm-ocr-ekyc` cho CCCD hai mặt | OCR Team/Backend/ANBM | OpenAPI L3 chốt prepare-upload, `POST /ocr` với `subjectRef` đầu vào, `/ocr/result`, IAM, failure/SLA và E2E; không giả định confirm/search/export/delete API. |
+| Issuer và cơ chế bind `subjectRef` | Product/Identity owner/Agent API/Market API/Backend/ANBM | Nguồn domain có thẩm quyền, signed context, format opaque ổn định/unique/non-reversible và cross-dossier mapping được ký duyệt; client không tự khai. |
 | Ý nghĩa/ownership của `picId` so với stage reviewer | Product/BA/Backend | Use case và permission/audit rõ hoặc bỏ field. |
 | SLO, peak workload, RTO/RPO và capacity/cost | Product/Vận hành/DBA/FinOps | Baseline số được duyệt và load/DR đạt. |
 | Retention, deletion, legal hold, encryption và audit access tại OCR source | Privacy/Pháp chế/ANBM/OCR Team | Policy/DPIA/runbook và orchestration với Dossier được phê duyệt. |
-| Search/detail/export/notification không tạo projection PII tại Dossier | OCR Team/Message Team/Backend/Product | Batch/read contract, authorization, performance/degradation và data scan được duyệt. |
+| Nguồn contact và presentation applicant ngoài OCR | Product/Applicant Profile owner/Message Team/BFF/Backend/Privacy | Chốt source of truth cho phone/email, authorization/masking/notification contract; Dossier không persist và OCR không thu thập contact. |
 | Notification channels và recipient authority | Product/Message Team | Contract channel/dedupe/template/address và test đạt. |
 | Form schema enforcement và backward compatibility | BA/Backend/QA | Bật trên STAG, clean data report và regression đạt. |
 
@@ -1572,17 +1583,17 @@ Vấn đề mở không mặc nhiên được chấp nhận. Risk acceptance ph�
 | Visibility | Phạm vi hồ sơ Agent/Back Office được phép đọc/xử lý; không dùng cho Market Customer. |
 | Idempotency key | Khóa opaque để replay an toàn create/OCR. |
 | Transactional outbox | Ghi business state và ý định phát/gửi trong cùng transaction DB. |
-| `vhm-ocr-ekyc` | Capability OCR/eKYC dùng chung, sở hữu media OCR, lifecycle và kết quả OCR chuẩn. |
+| `vhm-ocr-ekyc` | Capability OCR dùng chung trong phạm vi Dossier, sở hữu media reference, lifecycle và kết quả OCR chuẩn; File Management giữ byte media. |
 | Kênh Market | Kênh nghiệp vụ đi qua Market API; Market API là BFF ngang hàng với Agent API và gắn `source=MARKET`. |
 | Opaque reference | Identifier tương quan không nhúng PII hoặc secret. |
 | PII | Dữ liệu có thể nhận diện trực tiếp hoặc gián tiếp một cá nhân. |
-| `subjectRef` | Định danh applicant opaque, ổn định, không đảo ngược về PII và do `vhm-ocr-ekyc` cấp trực tiếp cho Core. |
+| `subjectRef` | Định danh applicant opaque, ổn định, không đảo ngược về PII; nguồn định danh domain có thẩm quyền cấp/bind server-side và Core truyền vào `vhm-ocr-ekyc` để tương quan/phân quyền. |
 
 ## B. References
 
 | **Tài liệu/artefact** | **Tham chiếu** |
 | --- | --- |
-| L2 - Dịch vụ OCR/eKYC dùng chung | [L2 - VHMKDO2O - Dịch vụ OCR/eKYC](https://vin3s.atlassian.net/wiki/spaces/VARW/pages/3014268156/L2+-+VHMKDO2O+-+D+ch+v+OCR+eKYC) |
+| L2 - Capability OCR dùng chung | [L2 - VHMKDO2O - Capability OCR dùng chung](https://vin3s.atlassian.net/wiki/spaces/VARW/pages/3014268156/L2+-+VHMKDO2O+-+D+ch+v+OCR+eKYC) |
 | Pipeline Definition Social Housing v1 | Tài liệu L3 chính thức: TBD |
 | Form Data Contract Social Housing v1 | Tài liệu L3 chính thức: TBD |
 | Database model và migration plan | Tài liệu L3/DBA chính thức: TBD |
@@ -1594,7 +1605,8 @@ Vấn đề mở không mặc nhiên được chấp nhận. Risk acceptance ph�
 | Checklist authority/version/snapshot | BA/Checklist Team | Submit/UAT |
 | File Management contract và ownership/upload-grant | File Team/ANBM | Attachment security và export/download không OCR |
 | Pipeline schema, ID/version selection, activation và retention | BA/Kiến trúc/Vận hành | Cấu hình và thay đổi số cấp duyệt |
-| OCR OpenAPI, IAM, CCCD hai mặt, confirm, `subjectRef`, batch read/search/export và delete | OCR Team/Backend/ANBM | E2E media/OCR và data ownership |
+| OCR OpenAPI, IAM, CCCD hai mặt, `subjectRef` đầu vào, prepare-upload, `POST /ocr`, `/ocr/result` và retention/delete runbook | OCR Team/Backend/ANBM | E2E media/OCR và data ownership |
+| Domain Identity contract phát hành/bind `subjectRef` | Product/Identity owner/Agent API/Market API/Backend/ANBM | Duplicate guard và OCR correlation |
 | Channel-to-source mapping cho AGENT/MARKET | Agent API/Market API/Backend | Security/API approval |
 | Market subject claim và `ownerSubject` binding contract | Market API/ANBM/Backend | Market authorization/IDOR gate |
 | BUS role catalogue, scope và signed Agent context | BUS/Agent API/ANBM/Backend | Agent authorization/pipeline gate |
@@ -1613,13 +1625,13 @@ Vấn đề mở không mặc nhiên được chấp nhận. Risk acceptance ph�
 | ADR-003 | Create luôn DRAFT, submit là command riêng | Hỗ trợ upload và hoàn thiện snapshot trước nộp | CHẤP NHẬN |
 | ADR-004 | JSONB snapshot + schema version | Linh hoạt form; đổi lại cần schema/guard/index JSON rõ ràng | CHẤP NHẬN |
 | ADR-005 | Advisory lock + actor-scoped replay + DB unique | Chống concurrent forwarding race và key reuse sai actor | CHẤP NHẬN |
-| ADR-006 | Partial unique index là race guard cuối cho `subjectRef`+dự án | Không persist CCCD; OCR capability bảo đảm reference ổn định/non-reversible, DB bảo đảm invariant local | ĐỀ XUẤT — chờ OCR Contract L3 |
+| ADR-006 | Partial unique index là race guard cuối cho `subjectRef`+dự án | Không persist CCCD; nguồn định danh domain bảo đảm reference ổn định/non-reversible, OCR lưu cùng reference để tương quan, DB bảo đảm invariant local | ĐỀ XUẤT — chờ Domain Identity/OCR Contract L3 |
 | ADR-007 | Transactional outbox cho event/notification | Không mất intent sau commit; chấp nhận at-least-once | CHẤP NHẬN |
 | ADR-008 | Signed context theo channel và deny-by-default | Market ký data subject không role; Agent ký BUS role/scope; Core không tin security claim từ body | ĐỀ XUẤT — chờ contract ANBM/BUS/Market |
 | ADR-009 | File path opaque, không kiểm tra dossier-prefix | Upload namespace độc lập; ownership phải dựa File Contract | CHẤP NHẬN có điều kiện |
 | ADR-010 | OCR qua capability dùng chung `vhm-ocr-ekyc` | Dossier không sở hữu provider/worker/raw result; cần migration legacy | ĐỀ XUẤT — chờ phê duyệt |
-| ADR-011 | Kết quả OCR được xác nhận và lưu tại `vhm-ocr-ekyc`, không PATCH vào snapshot dossier | Một nguồn authoritative; Core chỉ proxy và giữ opaque `subjectRef` | ĐỀ XUẤT — chờ phê duyệt |
+| ADR-011 | Kết quả OCR lưu tại `vhm-ocr-ekyc`, còn `CONFIRM_AND_APPLY` thuộc domain và không PATCH PII vào snapshot dossier | Core chỉ proxy projection `/ocr/result`, đọc lại `COMPLETED` khi apply và giữ `subjectRef` đã bind; không có OCR-confirm riêng | ĐỀ XUẤT — chờ phê duyệt |
 | ADR-012 | Phân tuyến file theo mục đích nghiệp vụ | Tài liệu không OCR đi File Management; media OCR đi `vhm-ocr-ekyc`, không để client tự chọn đường | ĐỀ XUẤT — chờ phê duyệt |
 | ADR-013 | Cấp duyệt cấu hình và pipeline version bất biến | Add/remove bằng version mới; hồ sơ pin đúng version, consumer dùng policy/metadata thay vì tên stage | ĐỀ XUẤT — chờ phê duyệt |
-| ADR-014 | Không nhân bản OCR/PII tại Dossier Core | Media/result/PII, encryption và key lifecycle tập trung ở `vhm-ocr-ekyc`; Core lưu opaque reference và dùng API authoritative cho read/search/export/delete | ĐỀ XUẤT — chờ OCR/ANBM/Privacy phê duyệt |
+| ADR-014 | Không nhân bản OCR/PII tại Dossier Core | Kết quả/payload encryption thuộc OCR, byte media/object key thuộc File; Core lưu opaque reference và baseline chỉ dùng prepare-upload, `POST /ocr`, `/ocr/result` | ĐỀ XUẤT — chờ OCR/File/ANBM/Privacy phê duyệt |
 | ADR-015 | Tách ma trận authorization Market và Agent | Market authorization tại Market API theo authenticated data subject và Core recheck owner binding; Agent dùng BUS role/scope/pipeline ownership | ĐỀ XUẤT — chờ BUS/Market/ANBM phê duyệt |
