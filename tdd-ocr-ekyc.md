@@ -472,21 +472,22 @@ tài nguyên xử lý hoặc transaction PostgreSQL trong thời gian chờ FPT.
 
 # 4. Non-Functional Requirements
 
-Các giá trị dưới đây là **production baseline đề xuất** và là release gate tối thiểu.
-Kết quả đo phải được xác nhận bằng kiểm thử tải/OAT trên cấu hình production-like.
-Dự báo tải hoặc SLA FPT được phê duyệt có thể làm tăng target; việc hạ target phải
-được Chủ sở hữu hệ thống, Kiến trúc và Vận hành chấp thuận bằng văn bản.
+Mục này xác lập bộ tiêu chí NFR dùng để thẩm định thiết kế và nghiệm thu production.
+Kết quả được đo trên môi trường production-like sau 10 phút warm-up, trong 30 phút
+tải ổn định và phải đạt ở cả ba lần chạy liên tiếp. Khi dự báo tải hoặc SLA FPT làm
+thay đổi một target, TDD phải cập nhật giá trị mới và được thẩm định lại trước khi
+triển khai; không diễn giải lại target trong biên bản kiểm thử.
 
 | **Hạng mục** | **Chỉ số đo lường** | **Giá trị mục tiêu (Target)** | **Ghi chú** |
 | --- | --- | --- | --- |
 | NFR-001 — Tính sẵn sàng | Tỷ lệ request hợp lệ được `vhm-ocr-ekyc` phục vụ thành công theo tháng | ≥99,9% | Đo tại service ingress, không tính request 4xx do caller; lỗi/phụ thuộc FPT được đo riêng và không được che khỏi dashboard. Triển khai tối thiểu hai replica trên Multi-AZ. |
 | NFR-002 — Độ trễ tiếp nhận OCR | Thời gian từ khi nhận request tạo OCR đến khi commit request/media/outbox và trả `202` | p95 <2 giây; p99 <5 giây | Không bao gồm thời gian upload media hoặc xử lý FPT; phải giữ target tại tải thiết kế NFR-008. |
 | NFR-003 — Điều phối và hoàn tất OCR | Tuổi outbox/Kafka trước khi worker nhận; thời gian từ `202` đến terminal | Dispatch p95 ≤5 giây, p99 ≤15 giây; OCR thường p95 ≤60 giây, p99 ≤120 giây; Sale p95 ≤4 phút 30 giây và 100% terminal ≤5 phút | Terminal gồm thành công hoặc lỗi/timeout tường minh. Thời gian FPT được tách thành SLI phụ thuộc; không tự retry khi delivery outcome không rõ. |
-| NFR-004 — Độ trễ eKYC đồng bộ | Overhead do các hop VHM bổ sung, không gồm thời gian xử lý FPT; tỷ lệ lỗi do proxy | Overhead p95 ≤100 ms, p99 ≤250 ms; lỗi do proxy <0,1% | Ngân sách timeout bắt buộc: FPT < `vhm-ocr-ekyc` < Domain Backend Service < Domain BFF < Mobile/Web. Đo riêng theo init/OCR/liveness và phiên bản SDK. |
+| NFR-004 — Độ trễ eKYC đồng bộ | Overhead do các hop VHM bổ sung, không gồm thời gian xử lý FPT; tỷ lệ lỗi do proxy | Overhead p95 ≤100 ms, p99 ≤250 ms; lỗi do proxy <0,1% | Đo riêng theo init/OCR/liveness và phiên bản SDK tại 200 active streams/deployment, request tối đa 20 MB. |
 | NFR-005 — Tính toàn vẹn và idempotency | OCR đã trả `202` bị mất; duplicate provider mutation/result khi replay/crash; terminal result bị ghi đè | 0 request đã nhận bị mất; 0 duplicate provider mutation/result trong bộ fault test; 0 terminal result bị ghi đè | Bắt buộc vượt kiểm thử rollback, crash window trước/sau Kafka acknowledgement, concurrent idempotency và duplicate delivery. |
-| NFR-006 — An toàn thông tin | Bao phủ TLS/xác thực; lỗ hổng chưa xử lý; phát hiện secret/PII trong log, event và APM | 100% external/internal traffic dùng TLS ≥1.2; 100% protected route xác thực đúng audience/scope; 0 Critical/High chưa được risk-accept; 0 secret/PII leak | Workload identity, secret manager/KMS, endpoint allowlist, SAST/DAST/SCA và kiểm thử IDOR bắt buộc trước production. |
-| NFR-007 — Quyền riêng tư và bảo vệ dữ liệu | Kết quả nhạy cảm được mã hóa; dữ liệu đủ điều kiện xóa còn tồn tại; vi phạm raw media | 100% OCR/eKYC result mã hóa AES-256 at rest; purge hoàn tất ≤24 giờ sau thời điểm retention hết hạn; 0 raw eKYC media lưu DB/disk/log | Thời lượng retention cụ thể do DPA/DPIA quy định; legal hold phải chặn purge có kiểm soát và để lại bằng chứng. |
-| NFR-008 — Khả năng mở rộng và throughput | Throughput API metadata/control-plane; request eKYC đồng thời; tỷ lệ lỗi khi tải thiết kế | ≥5.000 req/s aggregate trong 30 phút cho API không mang media, với error rate <1% và vẫn đạt NFR-002; ≥200 eKYC active streams/deployment ở payload được duyệt | Không áp dụng 5.000 req/s cho upload media hoặc provider throughput. FPT concurrency không vượt quota; hệ thống phải load-shed/rate-limit thay vì làm cạn pool/bộ nhớ. |
+| NFR-006 — An toàn thông tin | Bao phủ TLS/xác thực; lỗ hổng chưa xử lý; phát hiện secret/PII trong log, event và APM | 100% external/internal traffic dùng TLS ≥1.2; 100% protected route xác thực đúng audience/scope; 0 Critical/High còn mở; 0 secret/PII leak | Workload identity, secret manager/KMS, endpoint allowlist, SAST/DAST/SCA và kiểm thử IDOR là bằng chứng nghiệm thu an toàn thông tin. |
+| NFR-007 — Quyền riêng tư và bảo vệ dữ liệu | Kết quả nhạy cảm được mã hóa; dữ liệu đủ điều kiện xóa còn tồn tại; vi phạm raw media | 100% OCR/eKYC result mã hóa AES-256 at rest; purge hoàn tất ≤24 giờ sau thời điểm retention hết hạn; 0 raw eKYC media lưu DB/disk/log | Thời hạn lưu được lấy từ chính sách dữ liệu tại mục 7.3; legal hold là ngoại lệ duy nhất được phép chặn purge và phải có audit trail. |
+| NFR-008 — Khả năng mở rộng và throughput | Throughput API metadata/control-plane; request eKYC đồng thời; tỷ lệ lỗi khi tải thiết kế | ≥5.000 req/s aggregate trong 30 phút cho API không mang media, với error rate <1% và vẫn đạt NFR-002; ≥200 eKYC active streams/deployment với request tối đa 20 MB | Profile API metadata gồm 10% tạo, 80% đọc trạng thái và 10% đọc kết quả. Không áp dụng 5.000 req/s cho upload media hoặc throughput FPT; khi chạm quota FPT, hệ thống rate-limit/load-shed mà không làm cạn pool hoặc bộ nhớ. |
 | NFR-009 — Khả năng quan sát | Bao phủ telemetry; thời gian phát hiện sự cố; độ mới dashboard | 100% API/outbox/Kafka/worker/FPT operation có metric và correlation; cảnh báo Critical phát trong ≤5 phút; dashboard lag ≤1 phút | Log có cấu trúc và không chứa token, PII, media/path, signed URL hoặc provider job/session ID. |
 | NFR-010 — Phục hồi | RTO, RPO; thời gian phát hiện/phục hồi OCR bị treo | RTO ≤4 giờ; RPO ≤15 phút; phát hiện job treo ≤1 phút và nhận hành động phục hồi/kết thúc ≤3 phút | Phải diễn tập PITR, pod termination, Kafka/DB/FPT outage; phục hồi Sale không được vượt deadline 5 phút hoặc gửi lại mutation không rõ kết quả. |
 | NFR-011 — Khả năng bảo trì | Vi phạm dependency boundary; thời gian rollback release | 0 vi phạm rule API/processor/shared trong architecture test; rollback ứng dụng ≤15 phút | Provider adapter có thể thay đổi mà không sửa public API/domain contract; migration phải tương thích ngược trong cửa sổ rollback. |
@@ -1366,10 +1367,10 @@ hết cửa sổ rollback/lưu giữ được phê duyệt.
 | **Chỉ số/đầu vào** | **Giá trị thiết kế** | **Cổng/bằng chứng** |
 | --- | --- | --- |
 | OCR hằng ngày theo use case/FPT/kênh | `CHƯA XÁC ĐỊNH` | Dự báo sản phẩm |
-| TPS đỉnh của tạo/trạng thái/kết quả | Baseline ≥5.000 req/s aggregate cho API không mang media; request mix chính thức cần chốt | Kiểm thử tải phải giữ latency/error target tại NFR-002/NFR-008 |
+| TPS đỉnh của tạo/trạng thái/kết quả | ≥5.000 req/s aggregate cho API không mang media; request mix 10%/80%/10% | Kiểm thử tải phải giữ latency/error target tại NFR-002/NFR-008 |
 | Bùng tải/độ trễ/tuổi lớn nhất Kafka | Dispatch p95 ≤5 giây, p99 ≤15 giây tại tải thiết kế | Kiểm thử hiệu năng + SLO vận hành |
 | Lời gọi FPT đồng thời | `UNRESOLVED` | Quota/SLA của FPT |
-| Request eKYC đồng thời | Baseline ≥200 active streams/deployment; concurrency production không vượt quota FPT | Dự báo SDK/client + kiểm thử tải |
+| Request eKYC đồng thời | ≥200 active streams/deployment với request tối đa 20 MB; concurrency production không vượt quota FPT | Kiểm thử tải theo NFR-004/NFR-008 |
 | Kích thước media p50/p95/p99 | `CHƯA XÁC ĐỊNH`; trần cứng 20 MB/object | Đo tại staging |
 | Bộ nhớ làm việc Sale | Tối thiểu ba file cộng bản sao multipart/HTTP cho mỗi job đồng thời | Kiểm thử heap/native memory; phải đo mức đệm của giải pháp triển khai |
 | Hoàn tất Sale | Contract FPT tối đa 5 phút | E2E với chờ/kết thúc/timeout |
@@ -1385,9 +1386,9 @@ Các công thức bắt buộc:
 - Dung lượng thăm dò phải tính riêng Mobile/Web → Domain BFF, Domain BFF → Domain Backend Service,
   Domain Backend Service → OCR/eKYC và worker → FPT Sale.
 
-Các target tại mục 4 là baseline release gate đề xuất. Số replica, kích thước heap,
-connection pool và request mix production được xác định bằng kiểm thử tải để đạt
-baseline đó và chỉ trở thành cấu hình production sau khi được phê duyệt.
+Các target tại mục 4 là tiêu chí thẩm định và nghiệm thu production. Số replica,
+kích thước heap và connection pool được chốt trong Capacity Test Report; báo cáo
+phải chứng minh cấu hình triển khai đạt toàn bộ target với request mix đã xác lập.
 
 ## 11.2 Cost
 
@@ -1516,9 +1517,9 @@ path, correlation ID hoặc PII làm metric label.
 SLI phải tách: API tiếp nhận OCR, hoàn tất OCR đầu-cuối, thao tác FPT, độ trễ
 Kafka, thời gian chờ FPT Sale, response eKYC đồng bộ và đọc
 trạng thái/kết quả. Thời gian FPT phải quan sát được, không bị ẩn trong tính sẵn
-sàng nền tảng. Mục tiêu production baseline nằm tại mục 4; request mix, lưu lượng
-theo use case và quota FPT còn chưa xác định phải được phê duyệt trong mô hình dung
-lượng trước production và có thể làm tăng, nhưng không mặc nhiên làm giảm, baseline.
+sàng nền tảng. Bộ SLO production được định nghĩa tại mục 4. Capacity Test Report
+ghi nhận request mix, lưu lượng theo use case và quota FPT đã dùng khi kiểm thử; nếu
+các đầu vào này thay đổi, target và mô hình dung lượng phải được cập nhật trong TDD.
 
 <a id="muc-14"></a>
 
@@ -1526,7 +1527,7 @@ lượng trước production và có thể làm tăng, nhưng không mặc nhiê
 
 ## 14.1 RTO & RPO
 
-| **Hạng mục** | **Mốc cơ sở đề xuất** | **Trạng thái** |
+| **Hạng mục** | **Mục tiêu** | **Bằng chứng nghiệm thu** |
 | --- | --- | --- |
 | RTO | ≤4 giờ | Cần Chủ sở hữu hệ thống/Vận hành phê duyệt + diễn tập |
 | RPO | ≤15 phút | Cần DBA/Vận hành phê duyệt + bằng chứng PITR |
@@ -1644,7 +1645,7 @@ lưu giữ đích danh và bằng chứng xóa. Fixture response FPT phải có 
 | **ID** | **Vấn đề cần quyết định** | **Ảnh hưởng/ưu tiên** | **Điều kiện đóng** |
 | --- | --- | --- | --- |
 | OI-001 | Chủ sở hữu và liên kết chính thức của L1, L3 và tiêu chuẩn VHM | Cao | Hoàn thiện metadata và xác nhận quyền truy cập trong quá trình thẩm định. |
-| OI-002 | Phê duyệt production baseline tại mục 4, request mix/lưu lượng đỉnh, quota FPT và mô hình dung lượng | Cao | Sản phẩm, Vận hành và FPT phê duyệt; kết quả kiểm thử tải đạt hoặc vượt target NFR. |
+| OI-002 | Xác nhận lưu lượng đỉnh theo use case, quota FPT và mô hình dung lượng đáp ứng các target tại mục 4 | Cao | Capacity Test Report đạt target NFR với request mix đã xác lập; Sản phẩm, Vận hành và FPT xác nhận các đầu vào thuộc phạm vi sở hữu. |
 | OI-003 | Chính sách lưu giữ/xóa, legal hold, DPA/DPIA và vị trí dữ liệu | Nghiêm trọng | Pháp chế/Quyền riêng tư phê duyệt trước khi dùng dữ liệu thật. |
 | OI-004 | Phiên bản Android/iOS/Web SDK được hỗ trợ và ma trận tương thích request/response | Cao | FPT, Mobile/Web và Tích hợp ký xác nhận contract; E2E đạt yêu cầu. |
 | OI-005 | Cơ chế xác thực workload và truyền actor context trên tuyến Domain BFF → Domain Backend Service → `vhm-ocr-ekyc` | Nghiêm trọng | Kiến trúc IAM/ANBM phê duyệt issuer, audience, scope, chống giả mạo/chống phát lại và ma trận trust. |
