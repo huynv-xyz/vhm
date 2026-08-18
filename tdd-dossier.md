@@ -1280,7 +1280,7 @@ Migration tập trung OCR/PII dùng expand/migrate/contract: đóng băng issuer
 
 ## 11.1 Capacity/Performance
 
-Không dùng mục tiêu `200 req/s` hoặc P95 làm cam kết khi chưa có workload model được phê duyệt. Capacity plan phải tách ít nhất:
+Capacity plan được tách theo các nhóm workload sau:
 
 | **Workload** | **Đơn vị đo bắt buộc** | **Điểm nghẽn cần kiểm thử** |
 | --- | --- | --- |
@@ -1297,12 +1297,13 @@ Trước production, Product cung cấp MAU/DAU, hồ sơ/ngày, peak factor, t�
 
 ### Trạng thái estimate
 
-**Chưa đủ dữ liệu để đưa ra estimate định lượng.** Tài liệu hiện chưa có forecast
-nghiệp vụ được phê duyệt, kết quả load test để sizing, topology môi trường, cloud/
-region, mô hình shared/dedicated hoặc rate card/chargeback của VHM. Vì vậy mục này
-không tự giả định số hồ sơ, số pod, cấu hình database, dung lượng telemetry, tỷ lệ
-contingency hoặc số tiền theo tháng. Mọi giá trị tiền tệ/unit cost chỉ được bổ sung
-từ sizing sheet và cost workbook do Product, Platform và FinOps xác nhận.
+| **Thuộc tính** | **Giá trị** |
+| --- | --- |
+| Trạng thái | `TBD` |
+| Baseline định lượng | Chưa thiết lập |
+| Artefact đầu ra | Sizing sheet và cost workbook theo scenario `P50`, `P90/peak`, `DR/stress` |
+| Điều kiện thiết lập baseline | Forecast nghiệp vụ, kết quả load/soak, topology môi trường và rate card/chargeback được phê duyệt |
+| Owner | Product, Platform và FinOps |
 
 ### Đầu vào bắt buộc cho estimate
 
@@ -1343,16 +1344,16 @@ từ sizing sheet và cost workbook do Product, Platform và FinOps xác nhận.
 | Shared Kubernetes/Kafka/Redis/observability | Chỉ dùng allocation/chargeback do Platform/FinOps ban hành; không vừa tính toàn cụm vừa tính phần phân bổ |
 | Nhân sự, enterprise license, support và thuế | Tách khỏi infrastructure run-rate hoặc bổ sung theo policy tài chính; không tự suy diễn trong TDD kỹ thuật |
 
-FinOps phải lập tối thiểu các scenario `P50`, `P90/peak` và `DR/stress` từ cùng bộ
-đầu vào có version. `Monthly Core Cost` là tổng các driver trực tiếp sau chargeback;
-`Unit Cost/Dossier` chỉ được tính khi có số hồ sơ hoàn tất cùng kỳ và phải ghi rõ
-các capability bị loại trừ. Contingency, budget alert và chi phí non-production áp
-dụng theo policy FinOps, không dùng tỷ lệ mặc định do TDD tự đặt.
+### Cost baseline gate
 
-Cost estimate chỉ được xem là hoàn tất khi đính kèm forecast đã duyệt, load/soak
-report, topology/sizing sheet, rate card có ngày hiệu lực, cost workbook có công
-thức và phê duyệt của Product, Platform, DBA, Vận hành và FinOps. Trước thời điểm
-đó, giá trị chính thức của cost estimate là **`TBD — chưa đủ đầu vào`**.
+| **Đầu ra bắt buộc** | **Tiêu chí nghiệm thu** |
+| --- | --- |
+| Scenario model | Có `P50`, `P90/peak` và `DR/stress`, dùng cùng bộ input có version |
+| Monthly Core Cost | Tổng các cost driver trực tiếp sau chargeback, không tính trùng capability dùng chung |
+| Unit Cost/Dossier | Dùng số hồ sơ hoàn tất cùng kỳ và công bố rõ các capability bị loại trừ |
+| Commercial baseline | Rate card có currency, region/platform, ngày hiệu lực, discount/commitment và support scope |
+| Evidence | Forecast, load/soak report, topology/sizing sheet và cost workbook có công thức |
+| Approval | Product, Platform, DBA, Vận hành và FinOps ký duyệt |
 
 # 12. Scalability & Reliability
 
