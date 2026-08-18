@@ -1224,14 +1224,40 @@ sequenceDiagram
 
 ## 9.2 Authorization & Access Control
 
-- Domain BFF xác thực phiên/token và áp dụng kiểm soát theo kênh trước khi chuyển yêu cầu.
-- Domain Backend Service thực thi phân quyền theo vai trò, business object và ngữ cảnh nghiệp vụ trước khi gọi `vhm-ocr-ekyc`.
-- Dịch vụ kiểm tra phạm vi truy cập theo chủ thể, nguồn yêu cầu, hồ sơ và tài nguyên media;
-  không chỉ dựa vào việc biết định danh OCR.
-- Quyền ứng dụng và quyền truy cập PostgreSQL schema `ocr_ekyc`
-  được tách biệt theo nguyên tắc đặc quyền tối thiểu.
-- Dịch vụ chỉ cho phép truy cập request/kết quả trong đúng phạm vi do Domain Backend
-  Service và danh tính workload cung cấp; không triển khai chức năng lưu vết nghiệp vụ riêng.
+Ma trận dưới đây áp dụng tại ranh giới capability. Vai trò nghiệp vụ của người dùng
+được Domain Backend Service kiểm tra trước khi gọi `vhm-ocr-ekyc`; Mobile/Web không
+có quyền gọi trực tiếp capability.
+
+### 9.2.1 Cơ chế phân quyền theo module
+
+| **Module** | **Cơ chế phân quyền** | **Mô tả** |
+| --- | --- | --- |
+| OCR Command/Query API | Danh tính workload của Domain Backend Service và phạm vi business object | Chỉ tạo hoặc đọc OCR thuộc đúng `source`, `referenceId`, `subjectRef` và hồ sơ đã được domain cho phép. |
+| Media API | Danh tính workload, managed path và quyền theo object | Domain chuẩn bị upload cho đúng hồ sơ/loại media; URL ký chỉ cấp quyền trên một object; processor chỉ được đọc media của OCR đang xử lý. |
+| eKYC Proxy API | Danh tính workload và ngữ cảnh hành trình eKYC | Chỉ Domain Backend Service được phép thực hiện các thao tác SDK; Mobile/Web không gọi trực tiếp. |
+| Outbox Publisher | Danh tính workload, quyền PostgreSQL trên outbox và quyền producer Kafka | Chỉ đọc/cập nhật outbox và phát sự kiện OCR tối thiểu; không được đọc media hoặc kết quả nhạy cảm. |
+| OCR Processor | Danh tính workload, quyền consumer Kafka và quyền dữ liệu xử lý OCR | Đọc công việc/media, gọi FPT và cập nhật provider call, trạng thái, kết quả của OCR đã nhận quyền xử lý. |
+| Observability | Quyền vận hành chỉ đọc | Chỉ đọc metric, health và log kỹ thuật; không được đọc request body, media hoặc kết quả OCR/eKYC. |
+
+### 9.2.2 Ma trận phân quyền
+
+`R`: đọc; `W`: thực hiện/ghi; `RW`: đọc và ghi; `None`: không có quyền trực tiếp.
+
+| **Chức năng** | **Domain Backend Service — OCR** | **Domain Backend Service — eKYC** | **Outbox Publisher** | **OCR Processor** | **Vận hành** |
+| --- | --- | --- | --- | --- | --- |
+| Chuẩn bị upload media OCR | W | None | None | None | None |
+| Tạo yêu cầu OCR | W | None | None | None | None |
+| Đọc trạng thái/kết quả OCR trong phạm vi nghiệp vụ | R | None | None | None | None |
+| Thực hiện hành trình eKYC SDK | None | RW | None | None | None |
+| Phát và cập nhật trạng thái outbox | None | None | RW | None | None |
+| Đọc media, xử lý OCR và cập nhật trạng thái/kết quả | None | None | None | RW | None |
+| Đọc health, metric và log kỹ thuật | None | None | None | None | R |
+
+Domain BFF xác thực phiên/token và kiểm soát theo kênh. Domain Backend Service phân
+quyền theo vai trò, business object và ngữ cảnh nghiệp vụ. `vhm-ocr-ekyc` tiếp tục
+kiểm tra phạm vi theo chủ thể, nguồn yêu cầu, hồ sơ và media; việc biết OCR ID không
+đủ để được truy cập. Quyền PostgreSQL, Kafka và kho object phải tách theo từng
+workload và tuân thủ nguyên tắc đặc quyền tối thiểu.
 
 ## 9.3 Secrets & Credential Management
 
