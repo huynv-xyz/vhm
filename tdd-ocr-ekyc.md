@@ -473,17 +473,23 @@ tài nguyên xử lý hoặc transaction PostgreSQL trong thời gian chờ FPT.
 # 4. Non-Functional Requirements
 
 Mục này xác lập bộ tiêu chí NFR dùng để thẩm định thiết kế và làm đầu vào nghiệm thu
-production. Mỗi tiêu chí gồm chỉ số, target và phương pháp kiểm chứng. Bằng chứng đáp
-ứng được lập trong giai đoạn kiểm thử hiệu năng/OAT trước go-live: môi trường
-production-like, warm-up 10 phút, tải ổn định 30 phút và ba lần chạy liên tiếp. Khi
-dự báo tải hoặc SLA FPT làm thay đổi một target, TDD được cập nhật và thẩm định lại
-trước khi triển khai; biên bản kiểm thử không thay thế quyết định thiết kế này.
+production. Mỗi tiêu chí gồm chỉ số, target và phương pháp kiểm chứng. Bằng chứng
+nghiệm thu được lập theo phương pháp tương ứng trước go-live. Riêng các chỉ tiêu độ
+trễ, processing SLA và throughput tại NFR-002/003/004/008 được kiểm thử trên môi
+trường production-like, warm-up 10 phút, tải ổn định 30 phút và ba lần chạy liên
+tiếp. Khi dự báo tải hoặc SLA FPT làm thay đổi một target, TDD được cập nhật và thẩm
+định lại trước khi triển khai; biên bản kiểm thử không thay thế quyết định thiết kế này.
+
+Độ trễ được tách theo ảnh hưởng đến người dùng: API đồng bộ nằm trên user flow được
+đo bằng mili giây; tác vụ đã trả `202` và tiếp tục chạy nền được đo bằng processing
+SLA/deadline. Thời gian chạy nền không cộng vào HTTP response time và không giữ kết
+nối của caller.
 
 | **Hạng mục** | **Chỉ số đo lường** | **Giá trị mục tiêu (Target)** | **Ghi chú** |
 | --- | --- | --- | --- |
 | NFR-001 — Tính sẵn sàng | Tỷ lệ request hợp lệ được `vhm-ocr-ekyc` phục vụ thành công theo tháng | ≥99,9% | Đo tại service ingress, không tính request 4xx do caller; lỗi/phụ thuộc FPT được đo riêng và không được che khỏi dashboard. Triển khai tối thiểu hai replica trên Multi-AZ. |
-| NFR-002 — Độ trễ tiếp nhận OCR | Thời gian từ khi nhận request tạo OCR đến khi commit request/media/outbox và trả `202` | p95 <2 giây; p99 <5 giây | Không bao gồm thời gian upload media hoặc xử lý FPT; phải giữ target tại tải thiết kế NFR-008. |
-| NFR-003 — Điều phối và hoàn tất OCR | Tuổi outbox/Kafka trước khi worker nhận; thời gian từ `202` đến terminal | Dispatch p95 ≤5 giây, p99 ≤15 giây; OCR thường p95 ≤60 giây, p99 ≤120 giây; Sale p95 ≤4 phút 30 giây và 100% terminal ≤5 phút | Terminal gồm thành công hoặc lỗi/timeout tường minh. Thời gian FPT được tách thành SLI phụ thuộc; không tự retry khi delivery outcome không rõ. |
+| NFR-002 — Độ trễ tiếp nhận OCR | Thời gian từ khi nhận request tạo OCR đến khi commit request/media/outbox và trả `202` | p95 ≤500 ms; p99 ≤1.000 ms | Không bao gồm thời gian upload media hoặc xử lý FPT; đo tại service ingress và giữ target tại tải thiết kế NFR-008. |
+| NFR-003 — Processing SLA của OCR bất đồng bộ | Tuổi outbox/Kafka trước khi worker nhận; thời gian từ `202` đến terminal | Dispatch p95 ≤5 giây, p99 ≤15 giây; OCR thường p95 ≤5 phút, p99 ≤10 phút và 100% terminal ≤15 phút; Sale p95 ≤4 phút 30 giây và 100% terminal ≤5 phút | Đây là SLA của tác vụ chạy nền, không phải HTTP response time. Terminal gồm thành công hoặc lỗi/timeout tường minh; thời gian FPT được tách thành SLI phụ thuộc. |
 | NFR-004 — Độ trễ eKYC đồng bộ | Overhead do các hop VHM bổ sung, không gồm thời gian xử lý FPT; tỷ lệ lỗi do proxy | Overhead p95 ≤100 ms, p99 ≤250 ms; lỗi do proxy <0,1% | Đo riêng theo init/OCR/liveness và phiên bản SDK tại 200 active streams/deployment, request tối đa 20 MB. |
 | NFR-005 — Tính toàn vẹn và idempotency | OCR đã trả `202` bị mất; duplicate provider mutation/result khi replay/crash; terminal result bị ghi đè | 0 request đã nhận bị mất; 0 duplicate provider mutation/result trong bộ fault test; 0 terminal result bị ghi đè | Bắt buộc vượt kiểm thử rollback, crash window trước/sau Kafka acknowledgement, concurrent idempotency và duplicate delivery. |
 | NFR-006 — An toàn thông tin | Bao phủ TLS/xác thực; lỗ hổng chưa xử lý; phát hiện secret/PII trong log, event và APM | 100% external/internal traffic dùng TLS ≥1.2; 100% protected route xác thực đúng audience/scope; 0 Critical/High còn mở; 0 secret/PII leak | Workload identity, secret manager/KMS, endpoint allowlist, SAST/DAST/SCA và kiểm thử IDOR là bằng chứng nghiệm thu an toàn thông tin. |
