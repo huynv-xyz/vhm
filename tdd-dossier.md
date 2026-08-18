@@ -394,6 +394,37 @@ Các mục tiêu `200 req/s`, P95 cụ thể và availability `99.9%` chưa có 
 | NFR-10 | Maintainability | Versioned migration/schema/pipeline; backward-compatible API | `BẮT BUỘC` |
 | NFR-11 | Workflow configurability | Thêm/bớt một cấp duyệt bằng definition mới, không cần đổi DB/public API; hồ sơ version cũ tiếp tục xử lý được | `BẮT BUỘC` |
 
+## 4.1 NFR Target Values dự kiến
+
+Các giá trị dưới đây là **DỰ KIẾN để sizing và thiết kế kiểm thử**, chưa phải SLO
+production được phê duyệt. Latency HTTP không bao gồm thời gian client upload/download
+binary hoặc thời gian provider thực hiện OCR; các khoảng đó được đo thành SLI riêng.
+Target chỉ chuyển thành baseline khi Product cung cấp workload forecast và
+load/soak/DR test đạt trên cấu hình production-like với data volume/index gần thực
+tế.
+
+| **ID/phạm vi** | **SLI/cách đo** | **Target dự kiến** | **Điều kiện/loại trừ** | **Cổng xác nhận baseline** |
+| --- | --- | --- | --- | --- |
+| NFR-T01 — Availability Core | Tỷ lệ valid HTTP request không trả `5xx` tại internal ingress theo tháng | **≥99,9%/tháng** | Không tính `4xx` hợp lệ và maintenance window được duyệt; availability end-to-end với File/OCR/TTOL/Message phải có SLI riêng | 30 ngày STAG/PROD telemetry, dependency SLA và error-budget policy được System Owner/Vận hành duyệt |
+| NFR-T02 — Local read API | P95/P99 của list/detail/progress/timeline chỉ dùng Core DB/cache | **P95 ≤800 ms; P99 ≤1.500 ms** | Page mặc định 20, tối đa dự kiến 100; không gồm hydrate PII, download hoặc report generation | Load test theo filter/visibility/role, data volume dự báo và query plan không N+1/seq-scan ngoài budget |
+| NFR-T03 — Mutation API | P95/P99 create/update/submit/pipeline action, gồm transaction và validation bắt buộc | **P95 ≤2.000 ms; P99 ≤4.000 ms** | Không gồm upload bytes/OCR processing; dependency call bắt buộc vẫn tính trong latency endpoint | Mixed-workload test với contention, file/OCR/project stub có latency/error distribution theo contract |
+| NFR-T04 — External orchestration API | P95/P99 prepare-upload, OCR create/poll/confirm và authorized hydrate proxy nếu còn áp dụng | **P95 ≤3.000 ms; P99 ≤8.000 ms** | Không gồm PUT/download binary và OCR background SLA; timeout/retry không được làm vượt end-to-end deadline | Contract/load test với real sandbox, connect/read timeout và `Retry-After`/degradation policy được chốt |
+| NFR-T05 — Throughput | Mixed non-binary request rate tại Core, error/CPU/pool dưới ngưỡng | **≥200 req/s trong 30 phút; burst ≥400 req/s trong 5 phút** | Workload mix dự kiến: 70% read, 25% mutation, 5% integration/report initiation; `5xx <1%`, CPU trung bình <70%, DB pool <80% | Product xác nhận peak factor; load/soak test production-like và capacity/headroom review |
+| NFR-T06 — Concurrency/integrity | Kết quả concurrent create/update/action và số invariant bị vi phạm | **100%** cùng actor/key/payload trả cùng dossier khi chạy **≥100 request đồng thời**; **0** duplicate active subject/project hoặc active unit; **0** lost update | Khác actor/cùng key hoặc cùng key/khác payload phải bị từ chối; optimistic conflict là business outcome, không tính platform error | Concurrency test trên PostgreSQL thật, unique/advisory/optimistic guard và reconciliation query |
+| NFR-T07 — Event outbox | Thời gian từ business commit đến Kafka publish khi broker healthy | **P95 ≤10 giây; P99 ≤60 giây; 0 event mất** | At-least-once nên duplicate được phép nhưng consumer phải idempotent; maintenance/outage đo recovery riêng | Load/failure/replay test với relay interval 2 giây, batch 500, Kafka ACL/quota production-like |
+| NFR-T08 — Notification/reminder | Commit intent đến delivery acceptance; độ lệch reminder so với due time | Notification **P95 ≤60 giây, P99 ≤5 phút**; reminder drift **≤5 phút** khi dependency healthy | Không cam kết delivery tới inbox/thiết bị cuối; business transition không rollback vì notification lỗi | Message contract/quota test, backlog replay và scheduler failover/duplicate drill |
+| NFR-T09 — Report/export | Thời gian tạo và lưu artefact cho dataset giới hạn | Tối đa dự kiến **10.000 rows/file**, hoàn tất **≤120 giây**, tối đa **5 job đồng thời/instance** | Export lớn hơn phải chunk/async/quota; không giữ file tạm quá TTL và không tính download time | Capacity test Syncfusion/POI với template thật, memory/temp-disk limit và File Management latency |
+| NFR-T10 — Recoverability DB | RPO/RTO từ PITR/restore/failover drill | **RPO ≤5 phút; RTO Core ≤60 phút** | Dossier, pipeline/history/checklist/reviewer/outbox phải phục hồi cùng consistency point; File/OCR theo SLA ngoài | DBA/System Owner/Vận hành phê duyệt và restore/reconciliation drill đạt |
+| NFR-T11 — Security | Tỷ lệ request PROD có workload + signed actor/subject hợp lệ; release vulnerability | **100%** request bắt buộc được xác thực/chống replay; **0 Critical** và **0 High exploitable** chưa có risk acceptance | Local bypass không áp dụng STAG/PROD; `4xx` denial đúng policy không phải availability error | Security/IDOR/replay test, SAST/SCA/container/IaC scan và ANBM sign-off |
+| NFR-T12 — Privacy/data leakage | Phát hiện raw OCR/PII trong Core persistence/cache/event/log/APM/report staging | **0 phát hiện**; **100%** response PII dùng field projection/masking/no-store theo contract | Opaque references/business metadata allowlist vẫn được phép; scan phải bao phủ backup mẫu và DLQ | Automated data scan + SIT/E2E negative test + ANBM/Privacy approval trước dữ liệu thật |
+| NFR-T13 — Observability | Correlation/metric/trace coverage và thời gian phát hiện lỗi nghiêm trọng | **100%** request có correlation ID; dashboard/metric cho mọi dependency; alert P1/P2 phát trong **≤5 phút** | Trace sampling được phép nhưng security/error trace phải đủ; body/PII/token/file URL luôn loại bỏ | Dashboard/alert synthetic test, on-call routing và incident drill |
+| NFR-T14 — Workflow evolution | Regression khi thêm/bớt một stage bằng definition mới | **100%** hồ sơ cũ tiếp tục chạy version đã pin; **0** DB/public API change chỉ vì thêm/bớt stage | Side effects assignment/reminder/notification/report/audit phải dùng stage policy, không hard-code tên stage | Pipeline validation, backward-compatibility và E2E hai version chạy song song |
+
+Target page size, report concurrency, workload mix và timeout ở bảng trên là giả
+định ban đầu, không phải lý do hard-code. Giá trị production phải externalize khi
+phù hợp, có upper bound server-side và được cập nhật đồng thời ở mục 11, 13, 14
+sau khi baseline được phê duyệt.
+
 # 5. Technology Stack & Justification
 
 | **Công nghệ** | **Vai trò** | **Cơ sở lựa chọn/hệ quả** |
@@ -1106,11 +1137,18 @@ Log tối thiểu gồm correlation ID, client ID, actor subject dạng opaque, 
 
 ## 10.1 Environments
 
-| **Môi trường** | **Mục đích** | **Đặc điểm/điều kiện** |
-| --- | --- | --- |
-| Local | Phát triển và E2E cục bộ | Core và dependency cục bộ; không dùng dữ liệu/credential thật. |
-| STAG | Contract/UAT/integration | Security nội bộ bật như PROD; external sandbox; migration rehearsal; synthetic/masked data. |
-| PROD | Nghiệp vụ thật | HA, secrets runtime, signature/actor required, file validation, outbox relay, alert/runbook và policy privacy đã duyệt. |
+| **Môi trường** | **Mục đích/SLO** | **Topology và dependency** | **Dữ liệu** | **Security và truy cập** | **HA/DR** | **Cấu hình/tính năng** | **Cổng vào/ra môi trường** |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Local (`local` profile) | Phát triển và E2E trên máy; không dùng để đo SLO | Dossier Core `:8888`, Agent API `:8090`, UI `:5173`; PostgreSQL/Redis/Kafka và dependency local/sandbox qua `../docker-compose.yml` khi cần | Chỉ synthetic/fixture đã làm sạch; không cookie/credential/dump STG/PROD | Local auth bypass chỉ hợp lệ khi active profile chính xác là `local`; bind loopback/private dev network; secret local không tái sử dụng môi trường khác | Không HA; rebuild/reseed được; không dùng làm bằng chứng RTO/RPO | Có thể tắt Kafka publisher/external integration; không được thêm mock fallback cho API list/create; structural/security guard vẫn được test | Unit/integration/E2E local đạt; không promote data/config/secret local |
+| CI/Test ephemeral | Compile, unit/integration/contract/security scan cho từng change | Runner/container tạm thời; PostgreSQL/Redis/Kafka test container hoặc fixture có version; external client dùng stub/contract sandbox có kiểm soát | Synthetic only; repository/image/log/artefact phải qua secret/PII scan | Credential ngắn hạn, least privilege; runner cô lập; không inbound từ internet ngoài CI control plane | Không HA; tạo mới và hủy sau job; test artefact giữ theo CI retention | Cùng image/source với release; Liquibase validate, pipeline/schema validation, feature combinations bắt buộc | 100% quality gate bắt buộc pass; SBOM/SAST/SCA/license/container/IaC và contract evidence được lưu |
+| STAG/UAT (`stag` profile) | SIT/contract/UAT, migration rehearsal, load baseline và security verification; chưa áp production SLO | Topology gần PROD ở quy mô nhỏ; Agent/Market API STAG; real sandbox của File/OCR/Message/TTOL/Kafka khi contract-test | Synthetic/masked; dữ liệu thật chỉ theo ngoại lệ được Privacy duyệt, kho cô lập và có bằng chứng xóa | Không local bypass; workload signature, actor/subject context, replay protection, network policy và secret manager như PROD; chỉ VPN/enterprise ingress được duyệt | Có thể giảm replica/không HA đầy đủ nhưng phải diễn tập failover/restore theo lịch; không dùng cấu hình tối giản để chứng minh capacity PROD | Security/file/schema validation bật như PROD. Kafka publisher hiện có thể tắt theo config nhưng phải bật với topic/ACL thật trước khi dùng làm release evidence | Promote cùng image digest đã test; contract/UAT/security/migration/load gate đạt; dữ liệu test được purge sau campaign |
+| PROD (`prod` profile) | Nghiệp vụ thật; target dự kiến mục 4.1 và SLO cuối được phê duyệt | Core multi-replica/private ingress; PostgreSQL HA/PITR, Redis HA cho replay, Kafka/outbox, File/OCR/Message/TTOL production | Dữ liệu thật; Core chỉ giữ aggregate/opaque reference; OCR/File giữ dữ liệu authoritative theo mục 7.3/7.4 | Signature/actor required, local bypass absent, deny-by-default network/IAM, runtime secrets/KMS, encryption/masking/audit/DLP đầy đủ | Multi-AZ/HA theo capacity; RTO/RPO mục 14.1; backup/restore, backlog replay và runbook on-call | File validation, replay guard và security invariants bắt buộc; Kafka/notification/auto-assignment chỉ bật khi production gate/degradation path đạt | Canary/rolling theo mục 10.3; System Owner/Vận hành/DBA/ANBM/Privacy phê duyệt tương ứng; monitoring/alert/runbook sẵn sàng |
+| DR rehearsal/recovery (logical, không phải profile ứng dụng) | Chứng minh restore/failover, RTO/RPO và reconciliation; chỉ nhận traffic khi kích hoạt được phê duyệt | Restore isolated từ PostgreSQL PITR/backup cùng pipeline/history/checklist/outbox; dependency endpoint/credential DR theo runbook | Bản restore production được cô lập, mã hóa, audit; purge lại sau drill; không copy sang local/STAG | Break-glass có thời hạn và audit; network deny-by-default; key/restore permission tách quyền | Target dự kiến RTO ≤60 phút, RPO ≤5 phút; File/OCR theo SLA ngoài | Không phát Kafka/notification thật trong rehearsal nếu chưa fencing; sau activation phải đối soát lease/outbox/idempotency | DBA/Vận hành/System Owner ký biên bản drill, row/constraint/business reconciliation đạt và restore environment được thu hồi an toàn |
+
+`STAG/UAT` chỉ được coi là production-like cho một gate khi chính control/dependency
+liên quan đã bật với semantics tương đương PROD. Việc dùng cùng tên profile không
+tự chứng minh parity; image digest, migration version, feature/security config và
+contract version phải được lưu trong release evidence.
 
 ## 10.2 Production Deployment Diagram (CI/CD)
 
@@ -1143,11 +1181,20 @@ Sơ đồ là topology logic. Số replica, AZ, CPU/RAM, connection pool, Kafka 
 
 ## 10.3 Deployment Strategy
 
-- Build artifact/image bất biến; cùng artifact đi qua STAG và PROD, khác nhau bằng externalized configuration.
-- Triển khai rolling hoặc canary với readiness, graceful shutdown và backward-compatible DB changes.
-- Migration chạy một lần trước app version cần schema; không để mọi replica tự tranh DDL production.
-- Feature flag cho JSON Schema enforcement, file validation, Kafka publish, actor replay và auto-assignment phải có owner/default production được duyệt.
-- Rollback ứng dụng chỉ an toàn khi migration tương thích ngược; destructive cleanup thực hiện ở release sau khi hết compatibility window.
+| **Thành phần/thay đổi** | **Chiến lược triển khai** | **Downtime kỳ vọng** | **Chiến lược rollback** | **Cửa sổ triển khai** | **Phê duyệt production** |
+| --- | --- | --- | --- | --- | --- |
+| Dossier Core API replicas | Canary trên image digest mới, đạt health/error/latency/security gate rồi rolling; readiness chỉ bật sau dependency/config check, graceful shutdown drain request | 0 downtime có kế hoạch; không nhận traffic khi pod chưa ready | Dừng rollout, chuyển traffic khỏi canary và triển khai lại image digest liền trước; chỉ hợp lệ khi DB/event/API contract còn backward-compatible | Release window đã duyệt, ngoài peak create/submit/review/report | **Y** — System Owner + Vận hành; ANBM nếu thay đổi security/data path |
+| Outbox/notification relay và reminder/assignment scheduler trong modular monolith | Cùng artifact với Core; rolling với DB claim/lease, scheduler lock và graceful stop để không có hai owner xử lý cùng row | 0 downtime có kế hoạch; backlog có thể tăng tạm thời nhưng không mất intent | Tắt feature/worker role mới, rollback image, tiếp tục claim/replay từ PostgreSQL; không xóa/đánh dấu thành công thủ công khi delivery chưa đối soát | Không trùng peak notification/reminder và maintenance Kafka/Message/TTOL | **Y** — Backend + Vận hành; Message/Kafka owner khi đổi contract/quota |
+| Liquibase/PostgreSQL schema, constraint và index | Job migration chạy đúng một lần trước khi pod mới nhận traffic; expand/migrate/contract, preflight lock/duplicate/size trên snapshot gần production | 0 downtime với migration tương thích ngược; migration lock vượt budget phải dừng trước PROD | Rollback application về version tương thích và forward-fix migration; không dùng down migration phá hủy trong rollback window; PITR marker trước thay đổi rủi ro | Đầu release window, trước canary; index/DDL nặng có DBA window riêng | **Y** — DBA + System Owner + Vận hành; Privacy/ANBM nếu chạm dữ liệu nhạy cảm |
+| Pipeline YAML và JSON Schema versioned | Deploy version mới ở trạng thái inactive, validate/contract/E2E trên STAG rồi activate chỉ cho hồ sơ tạo mới; definition đã được dossier pin là immutable | 0 downtime; hồ sơ cũ tiếp tục version cũ | Chuyển active version về bản trước cho hồ sơ mới; không đổi version hồ sơ đang chạy. Migration hồ sơ là quy trình ngoại lệ có dry-run/rollback riêng | Cùng release hoặc configuration window có audit; tránh activate giữa đợt submit lớn | **Y** — Product/BA + Backend + QA; Architecture khi đổi stage/semantics |
+| Feature flag và externalized configuration | Staged rollout theo môi trường/canary; flag có owner, default PROD, expiry và dependency readiness; secret chỉ cấp runtime | 0 downtime nếu config reload được chứng nhận; nếu cần restart thì rolling | Trả flag/config về giá trị trước, disable integration publisher/auto-assignment theo runbook; không dùng flag để bỏ security invariant bắt buộc | Change window theo mức rủi ro; security flag không được đổi ad-hoc ngoài quy trình khẩn cấp có audit | **Y** — owner chức năng + Vận hành; ANBM cho signature/replay/file/security control |
+
+`Y` áp dụng cho production. Build artifact/image phải bất biến và được quảng bá từ
+STAG sang PROD, không build lại. CI bắt buộc compile/unit/integration/contract,
+Liquibase validation, SAST/SCA/license, secret/container/IaC scan, SBOM và các gate
+PII/log liên quan. Rollback ứng dụng chỉ an toàn khi schema, event và integration
+contract còn tương thích ngược; destructive cleanup chỉ chạy sau compatibility
+window và retention/legal-hold gate.
 
 ### Quản lý cấu hình
 
@@ -1163,11 +1210,44 @@ Sơ đồ là topology logic. Số replica, AZ, CPU/RAM, connection pool, Kafka 
 
 ## 10.4 Infrastructure & Network Security
 
-- Chỉ workload Agent API và Market API đã được allowlist riêng mới gọi Core internal ingress; hai kênh không gọi Core trực tiếp.
-- DB, Redis, Kafka và external credentials dùng network identity/ACL tối thiểu; không public internet nếu không bắt buộc.
-- Dossier Core được egress tới File Management cho tài liệu không OCR và tới `vhm-ocr-ekyc` cho nhánh OCR, cùng TTOL và Message Delivery; provider OCR chỉ do `vhm-ocr-ekyc` truy cập.
-- TLS termination và re-encryption tuân theo platform standard; không hạ cấp clear text qua trust boundary.
-- Backup, log, trace và exported report phải ở vùng dữ liệu được duyệt.
+### Hạng mục bảo mật hạ tầng
+
+| **Hạng mục** | **Giải pháp** | **Thông số/yêu cầu cấu hình** | **Phạm vi/owner** | **Bằng chứng production** |
+| --- | --- | --- | --- | --- |
+| Public edge, WAF, DDoS và anti-bot | Đặt tại public ingress của Agent API/Market API; Dossier Core không mở public endpoint | WAF block mode với managed rules/method/path allowlist; DDoS L3/L4 và L7 rate limit; anti-bot/challenge theo channel, không áp dụng cho workload route | Agent/Market API + Platform Security; Core chỉ nhận traffic nội bộ | Edge topology, WAF/rate-limit policy, penetration test và alert drill |
+| Network segmentation | Private subnet/namespace, security group/network policy deny-by-default; DB/Redis/Kafka không public | Chỉ mở source, destination, port và protocol trong ma trận luồng mạng; không cấp public IP/route cho Core/data stores | Platform/DevOps cho Core, PostgreSQL, Redis, Kafka | Network policy/security group export, reachability và unauthorized-path test |
+| Ingress allowlist | Chỉ workload identity riêng của Agent API và Market API gọi Core; channel người dùng không gọi Core trực tiếp | Tách client ID/credential/audience theo BFF; TLS + HMAC/signed actor; Basic username khớp registered client; body/size/rate limit | Backend + ANBM | Positive/negative mTLS/HMAC/client/channel tests và replay/IDOR evidence |
+| Egress control/SSRF | Firewall/service mesh policy mặc định từ chối, chỉ allowlist endpoint enterprise đã chốt | Core chỉ tới PostgreSQL, Redis, Kafka, File Management, `vhm-ocr-ekyc`, TTOL, Message Delivery, market/project source, secret/KMS và observability; không gọi URL do client cung cấp; provider OCR chỉ do OCR service truy cập | Platform/ANBM + integration owner | Egress policy, DNS/endpoint inventory, SSRF test và denied-egress alert |
+| Workload Identity & IAM | Danh tính workload ngắn hạn, least privilege, tách runtime và deployment identity | Quyền DB schema, Redis keyspace/command, Kafka topic/group, File path/API, OCR scope và secret được cấp riêng; không dùng cloud access key tĩnh | Platform IAM + Backend/owner dependency | IAM matrix, unused/excess permission review, rotation/revocation test |
+| PostgreSQL security | Private endpoint, TLS, DB role riêng, encryption at rest/backup, audit và PITR | App role không DDL/superuser; Liquibase role tách; connection limit/timeout; administrative access qua approved path; row/data export có audit | DBA/Platform | TLS/role grant evidence, encryption/PITR attestation, restore drill và access review |
+| Redis security | Private endpoint, TLS, ACL, command/keyspace tối thiểu và HA theo replay requirement | Cấm public/anonymous/default credential; persistence/backup chỉ khi policy cho phép; không lưu OCR/PII; replay store lỗi thì fail closed | Platform Redis + Backend/ANBM | ACL/TLS/HA config, failover/replay test và data scan |
+| Kafka security | Private broker, TLS, producer ACL đúng topic, consumer group riêng và retention/DLQ có policy | Không auto-create topic ở PROD; event schema allowlist không PII/path/URL; quota, partition và retention `TBD` theo capacity | Kafka Platform + Backend | Topic/ACL/schema inventory, duplicate/replay test, payload/DLQ scan và lag alert |
+| File/OCR boundary | Private service/API hoặc approved enterprise ingress; presigned URL đúng object/method và TTL ngắn | Core credential File chỉ cho tài liệu không OCR; media OCR đi qua `vhm-ocr-ekyc`; owner/upload-grant bắt buộc trước attach/download; Core không có provider OCR credential | File/OCR owner + Backend/ANBM | Cross-owner negative E2E, URL expiry/scope, encryption/delete evidence và contract approval |
+| Secrets, key và certificate | Secret manager/KMS/certificate manager cấp runtime; không đưa vào source/image/manifest/ConfigMap/log | Secret tách environment/client, owner + rotation + emergency revoke; certificate auto-renew; key decrypt chỉ cho workload cần thiết | Platform KMS + Vận hành + ANBM | Secret scan, runtime injection, key/cert rotation và revocation drill |
+| Container/Kubernetes hardening | Immutable signed image, non-root, read-only filesystem khi khả thi, dropped capabilities, seccomp, resource request/limit và admission policy | Không privileged/host network/host path; image digest allowlist, vulnerability SLA, namespace/service-account tách; temp volume có quota và không giữ PII | Platform/DevSecOps + Backend | Image signature/SBOM, admission/IaC scan, runtime policy và vulnerability report |
+| Security monitoring/SIEM | Thu thập WAF/IAM/network/Kubernetes/auth failure và policy denial dưới dạng metadata | Không capture body/PII/token/path/presigned URL; alert auth/replay/IDOR-like spike, denied egress, privilege/config drift; retention theo policy | SOC/ANBM + Vận hành | SIEM field allowlist, alert routing/on-call, tabletop/incident drill và log DLP scan |
+| Data zone, backup và export | Backup/log/trace/report/ZIP/XLSX ở region/bucket/private store được duyệt, mã hóa và có retention | Không tải production data sang local/non-prod; export có TTL, quota, authorization và audit; backup key/restore access tách quyền | DBA/Vận hành/File/Privacy | Data-residency approval, access log, purge/restore-and-repurge và export expiry evidence |
+
+### Ma trận luồng mạng
+
+| **Nguồn** | **Đích** | **Giao thức/dữ liệu** | **Kiểm soát bắt buộc** |
+| --- | --- | --- | --- |
+| Market client | Market API | HTTPS business request/upload orchestration | Customer authentication, data-subject/object authorization, WAF/DDoS/rate limit và session control |
+| Agent/Back Office client | Agent API | HTTPS business request/upload orchestration | User authentication, BUS role/scope, WAF/DDoS/rate limit và session control |
+| Market API | Dossier Core | HTTPS JSON + signed Market subject context | Allowlisted workload/client ID, TLS, HMAC/body hash, timestamp/JTI/nonce, channel/owner binding và body limit |
+| Agent API | Dossier Core | HTTPS JSON + signed Agent actor context | Allowlisted workload/client ID, TLS, HMAC/body hash, timestamp/JTI/nonce, BUS role/scope/visibility và body limit |
+| Dossier Core | PostgreSQL | TLS database protocol; aggregate/outbox metadata | Private network, app/Liquibase role tách, least privilege, pool/timeout, encryption/audit/PITR |
+| Dossier Core | Redis | TLS; nonce/replay/counter/cache metadata | Private endpoint, ACL/keyspace, TTL, no PII và fail-closed cho replay control |
+| Dossier Core | Kafka | TLS; opaque domain event metadata | Producer topic ACL, schema allowlist, idempotent/outbox relay, quota/retention và no PII/path/URL |
+| Dossier Core | File Management | HTTPS metadata/prepare/verify/download/store artefact | Workload identity, exact object/grant, MIME/size/checksum, timeout và no arbitrary URL |
+| Dossier Core | `vhm-ocr-ekyc` | HTTPS OCR resource/status/confirm và authorized projection nếu contract cho phép | Workload IAM + signed actor/purpose, timeout/idempotency, no-cache/no-body-log; không gọi provider trực tiếp |
+| Dossier Core | TTOL/Market/Message Delivery | HTTPS/Thrift business metadata hoặc notification intent | Workload identity, endpoint allowlist, field minimization, timeout/retry policy và no credential/PII log |
+| Dossier Core và platform | Observability/SIEM | TLS, technical telemetry allowlist | Chỉ metadata; không body/PII/token/file URL; retention, RBAC và DLP scan |
+
+Mọi `TBD` về CIDR/namespace, port, certificate issuer, WAF/rate-limit threshold,
+Kafka ACL/retention, KMS key và region phải được Platform, Vận hành, ANBM và data
+owner phê duyệt trước production; sơ đồ logic không thay thế IaC/network policy
+evidence.
 
 ## 10.5 Migration Strategy
 
@@ -1204,7 +1284,65 @@ Trước production, Product cung cấp MAU/DAU, hồ sơ/ngày, peak factor, t�
 
 ## 11.2 Cost
 
-Cost drivers gồm PostgreSQL HA/backup, Redis, Kafka retention, object storage/egress, Message Delivery, document rendering và mức sử dụng `vhm-ocr-ekyc`. Dossier không hạch toán trực tiếp provider OCR. Cost model phải có unit cost trên một hồ sơ hoàn tất, storage growth theo retention, peak compute và alert ngân sách; giá trị tiền tệ là TBD do FinOps/System Owner phê duyệt.
+### Giả định estimate sơ bộ
+
+Estimate dưới đây là **budget envelope, không phải báo giá**. Baseline giả định
+10.000 hồ sơ hoàn tất/tháng, workload target mục 4.1, Core chạy 2 pods thường trực
+(mỗi pod khoảng 1 vCPU/2 GiB) và HPA tối đa 6 pods, PostgreSQL HA/PITR, Redis HA,
+Kafka dùng chung, 100–300 GiB log/metric/trace mỗi tháng và một region. Giá chưa
+gồm thuế, enterprise support, private discount/Savings Plan, second-region DR và
+nhân sự vận hành.
+
+Để có order-of-magnitude, bảng dùng mô hình public on-demand kiểu AWS tại thời điểm
+soạn thảo; cloud/region thực tế chưa được chốt. AWS tính riêng EKS control plane và
+worker resource; RDS, ElastiCache và MSK thay đổi theo region/instance/storage;
+observability và object storage tính theo usage. Nguồn tham chiếu:
+[EKS](https://aws.amazon.com/eks/pricing/),
+[RDS PostgreSQL](https://aws.amazon.com/rds/postgresql/pricing/),
+[ElastiCache](https://aws.amazon.com/elasticache/pricing/),
+[MSK](https://aws.amazon.com/msk/pricing/),
+[CloudWatch](https://aws.amazon.com/cloudwatch/pricing/),
+[S3](https://aws.amazon.com/s3/pricing/) và
+[AWS Pricing Calculator](https://calculator.aws/). FinOps phải thay bằng
+rate card/contract chính thức của VHM trước khi phê duyệt.
+
+| **Cost driver trực tiếp của Dossier Core** | **Giả định sizing** | **Estimate USD/tháng** | **Biến số chính/ghi chú** |
+| --- | --- | ---: | --- |
+| Compute/Kubernetes allocation | 2 × 1 vCPU/2 GiB baseline, HPA tối đa 6; rolling/canary headroom; phần phân bổ control plane/worker | **150–500** | Kiến trúc node/Fargate, utilization, shared cluster allocation, Savings Plan và thời gian scale-out |
+| PostgreSQL HA, storage và PITR | Managed Multi-AZ tương đương 2–4 vCPU/8–16 GiB, 100–300 GiB storage + backup | **350–1.000** | Region, instance family, IOPS, backup retention, cross-AZ/PITR và growth JSONB/history/outbox |
+| Redis HA allocation | Hai node hoặc managed/serverless tương đương, dataset <5 GiB; TLS/backup nếu bật | **80–300** | Dedicated so với shared, engine/node class, cross-AZ traffic và retention snapshot |
+| Kafka allocation | Topic/consumer group dùng chung, metadata event nhỏ, retention 3–7 ngày dự kiến | **80–400** | Shared chargeback so với dedicated broker, partitions, throughput, retention/DLQ và cross-AZ traffic |
+| Observability/SIEM | 100–300 GiB log/metric/trace mỗi tháng, dashboard/alert và DLP scan | **75–350** | Log verbosity/retention, custom metrics cardinality, trace sampling và SIEM ingestion |
+| Network, load balancing, KMS, secret và certificate | Internal ingress/egress, cross-AZ, KMS/secret operations và certificate lifecycle | **75–300** | Region/topology, private endpoint/service mesh, cross-AZ/egress volume và key count |
+| Backup/export/temp artefact allocation | DB backup ngoài free allowance, report/ZIP/XLSX private TTL store và restore drill overhead | **50–250** | Report volume/size, retention, backup growth, request/transfer và lifecycle tiering |
+| **Subtotal trực tiếp** | Không gồm các capability/service bên ngoài bên dưới | **860–3.100** | Khoảng rộng do chưa chốt platform/region và tỷ lệ shared-service allocation |
+| Contingency | 20% subtotal cho peak/headroom và sai số sizing ban đầu | **170–620** | Không thay thế FinOps reserve hay incident/DR budget |
+| **Budget sơ bộ PROD/tháng** | Subtotal + contingency | **1.030–3.720 USD** | Làm tròn khi lập ngân sách: **~1,0k–3,7k USD/tháng** |
+
+### Chi phí ngoài phạm vi tổng trên
+
+| **Capability/chi phí** | **Cách hạch toán yêu cầu** |
+| --- | --- |
+| `vhm-ocr-ekyc` và provider OCR/eKYC | OCR service owner cung cấp fixed allocation + unit price/request/document; Dossier không nhân đôi provider cost |
+| File Management/object binary | File owner tính storage/request/egress theo số file, dung lượng trung bình và retention; bảng trên chỉ tính artefact export nhỏ thuộc Core |
+| Message Delivery | Message owner tính theo email/ZNS/SMS/notification accepted/delivered và retry; Core chỉ tính relay compute nhỏ |
+| Agent API/Market API/UI | Hạch toán tại repository/channel owner; không đưa compute/WAF/CDN của hai BFF vào Core |
+| Shared Kafka/Redis/Kubernetes/observability | Platform/FinOps cung cấp chargeback rule; không vừa tính full cluster vừa tính allocation cho Core |
+| Nhân sự, license và support | Syncfusion/license enterprise, on-call/DBA/SOC, support plan, VAT và commercial discount phải được Procurement/FinOps bổ sung |
+
+Với baseline 10.000 hồ sơ hoàn tất/tháng, unit cost hạ tầng trực tiếp dự kiến là
+**0,10–0,37 USD/hồ sơ** (`budget PROD / completed dossiers`), chưa gồm OCR, file,
+message và channel. Chỉ số này không tuyến tính ở volume thấp do chi phí HA cố định;
+ở volume cao phải cộng storage/egress, DB/Kafka/Redis scale step và capacity
+headroom. Tổng ngân sách gồm STAG production-like dự kiến tăng thêm khoảng
+**30–50% chi phí PROD**, tùy mức chia sẻ data store/dependency.
+
+Trước khi chuyển TDD sang `APPROVED`, Product cung cấp hồ sơ/tháng, file/hồ sơ,
+dung lượng/retention, report/export và peak factor; Platform cung cấp topology;
+FinOps chạy calculator/rate card chính thức và chốt ba kịch bản `P50`, `P90` và
+stress. Budget alert đề xuất ở 80%/100% forecast và theo dõi riêng cost/hồ sơ,
+PostgreSQL storage growth, log ingestion, Kafka retention và external capability
+unit cost.
 
 # 12. Scalability & Reliability
 
@@ -1278,7 +1416,7 @@ Label không được chứa dossier ID, actor ID, project ID có cardinality ca
 
 ## 13.4 SLI/SLO
 
-SLI bắt buộc: availability của read/mutation, successful submit/transition, event delivery latency, notification intent delivery, reminder timeliness và data consistency. Giá trị mục tiêu, measurement window, error budget, maintenance exclusion và owner đều `TBD`; không được chuyển trạng thái `APPROVED` nếu chưa có baseline đo trên STAG/load test.
+SLI bắt buộc: availability của read/mutation, successful submit/transition, event delivery latency, notification intent delivery, reminder timeliness và data consistency. Giá trị tại mục 4.1 là target **DỰ KIẾN**; measurement window/error budget/maintenance exclusion/owner và baseline production cuối vẫn `TBD`. Không được chuyển trạng thái `APPROVED` nếu workload forecast chưa được chốt hoặc STAG/load/soak test không chứng minh đạt target trên cấu hình production-like.
 
 # 14. Operational Readiness
 
@@ -1286,8 +1424,8 @@ SLI bắt buộc: availability của read/mutation, successful submit/transition
 
 | **Hạng mục** | **Mục tiêu** | **Trạng thái** |
 | --- | --- | --- |
-| RTO dossier core | TBD | System Owner/Vận hành phê duyệt và diễn tập |
-| RPO PostgreSQL | TBD | DBA phê duyệt và có bằng chứng PITR |
+| RTO dossier core | **DỰ KIẾN ≤60 phút** | Chưa là baseline; System Owner/Vận hành phải phê duyệt và diễn tập |
+| RPO PostgreSQL | **DỰ KIẾN ≤5 phút** | Chưa là baseline; DBA phải phê duyệt và có bằng chứng PITR |
 | Event/notification recovery | Trong delivery SLO được duyệt | Cần backlog replay drill |
 | File/object recovery | Theo File Management SLA và retention | Contract ngoài |
 | OCR recovery | Theo `vhm-ocr-ekyc` SLO; OCR capability giữ lifecycle/result theo `referenceId` | Contract ngoài |
