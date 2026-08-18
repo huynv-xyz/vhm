@@ -328,7 +328,7 @@ mục 6.5.2; sơ đồ không hàm ý HTTP FPT và PostgreSQL nằm trong cùng 
 | Domain Backend Service → `vhm-ocr-ekyc` | Zero Trust nội bộ | Danh tính workload/mTLS/JWT, audience/scope, chống phát lại; phân quyền business object trước lời gọi | Bắt buộc kiểm thử danh tính workload, IDOR và sai phạm vi. |
 | Mobile/Web → kho riêng tư | Đầu vào media không tin cậy | Presigned PUT chính xác, hạn ngắn, checksum, không đọc/liệt kê | URL phải đi theo File Management → `vhm-ocr-ekyc` → Domain Backend Service → Domain BFF. |
 | Service/processor → File Management/kho riêng tư | Hạn chế | Danh tính workload, TLS, phạm vi object và giới hạn byte | Bắt buộc kiểm thử truy cập chéo object và giới hạn dữ liệu. |
-| Service/processor → FPT | Bên ngoài | TLS, endpoint cố định, credential bí mật, timeout, quota | Bắt buộc kiểm thử contract, timeout và quota. |
+| Service/processor → FPT | Bên ngoài | HTTPS, endpoint cố định, credential bí mật, timeout, quota | Bắt buộc kiểm thử contract, timeout và quota. |
 | Service → PostgreSQL/Kafka | Hạn chế | Mạng riêng, TLS/xác thực, đặc quyền tối thiểu | Bắt buộc có bằng chứng cấu hình và kiểm thử truy cập. |
 
 ## 2.3 Vòng đời OCR
@@ -1003,8 +1003,8 @@ Ký hiệu `==>` biểu diễn luồng có media hoặc response nhạy cảm. D
 
 | **Chủ thể DL** | **Hệ thống lưu trữ** | **Số lượng bản ghi** | **Tổng dung lượng** | **Truyền sang bên ngoài** | **Khu vực DL đi qua** | **Kiểu DL thu thập** | **Mục đích** | **Mã hóa lưu trữ** | **Vị trí khóa** | **Xoay khóa** | **Mã hóa đường truyền** | **Masking** | **Vòng đời DL** | **Tự động xóa** | **Xóa theo yêu cầu KH** | **Ẩn danh** |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| Khách hàng/người có thông tin trên giấy tờ | PostgreSQL, kho object riêng tư, FPT | `TBD` — OI-002 | `TBD` — OI-002 | Có — FPT | VHM → FPT; region `TBD` — OI-003 | Ảnh giấy tờ/PLHĐ, thông tin định danh, response và kết quả OCR | OCR và đối chiếu hồ sơ | Có | Hệ thống quản lý khóa VHM | Có — đội dự án/vận hành hệ thống thực hiện | TLS ≥1.2 | Có | Thu thập → lưu → xử lý → khai thác → xóa; thời hạn `TBD` — OI-003 | Có | Có, trừ legal hold | Không |
-| Khách hàng thực hiện eKYC | PostgreSQL, kho object riêng tư, FPT | `TBD` — OI-002 | `TBD` — OI-002 | Có — FPT | VHM → FPT; region `TBD` — OI-003 | Giấy tờ, selfie/video, dữ liệu phiên/thiết bị, OCR, liveness, face matching, NFC và response FPT | Xác minh danh tính | Có | Hệ thống quản lý khóa VHM | Có — đội dự án/vận hành hệ thống thực hiện | TLS ≥1.2 | Có | Thu thập → lưu → xử lý → khai thác → xóa; thời hạn `TBD` — OI-003 | Có | Có, trừ legal hold | Không |
+| Khách hàng/người có thông tin trên giấy tờ | PostgreSQL, kho object riêng tư, FPT | `TBD` — OI-002 | `TBD` — OI-002 | Có — FPT | VHM → FPT; region `TBD` — OI-003 | Ảnh giấy tờ/PLHĐ, thông tin định danh, response và kết quả OCR | OCR và đối chiếu hồ sơ | Có | Hệ thống quản lý khóa VHM | Có — đội dự án/vận hành hệ thống thực hiện | HTTPS bắt buộc | Có | Thu thập → lưu → xử lý → khai thác → xóa; thời hạn `TBD` — OI-003 | Có | Có, trừ legal hold | Không |
+| Khách hàng thực hiện eKYC | PostgreSQL, kho object riêng tư, FPT | `TBD` — OI-002 | `TBD` — OI-002 | Có — FPT | VHM → FPT; region `TBD` — OI-003 | Giấy tờ, selfie/video, dữ liệu phiên/thiết bị, OCR, liveness, face matching, NFC và response FPT | Xác minh danh tính | Có | Hệ thống quản lý khóa VHM | Có — đội dự án/vận hành hệ thống thực hiện | HTTPS bắt buộc | Có | Thu thập → lưu → xử lý → khai thác → xóa; thời hạn `TBD` — OI-003 | Có | Có, trừ legal hold | Không |
 
 `TBD` tại OI-002 và OI-003 phải được đóng theo mục 16.2.
 
@@ -1242,8 +1242,7 @@ sequenceDiagram
 - Dữ liệu nhạy cảm phải được mã hóa theo tiêu chuẩn VHM; cần quy trình luân chuyển,
   thu hồi và khôi phục khóa.
 - Token/thông tin xác thực FPT không được xuất hiện trong thông báo exception/log.
-- Tối thiểu TLS 1.2, ưu tiên TLS 1.3; phải lập tài liệu quyết định kiểm tra/ghim
-  chứng thư cho FPT và Mobile SDK.
+- HTTPS bắt buộc khi tích hợp FPT; kiểm tra chứng thư theo tiêu chuẩn bảo mật VHM.
 
 ## 9.4 Application Security & Data Protection
 
