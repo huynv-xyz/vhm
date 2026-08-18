@@ -1501,19 +1501,17 @@ hết cửa sổ rollback/lưu giữ được phê duyệt.
 
 ## 11.1 Capacity/Performance
 
-| **Chỉ số/đầu vào** | **Giá trị thiết kế** | **Cổng/bằng chứng** |
-| --- | --- | --- |
-| OCR hằng ngày theo use case/FPT/kênh | `CHƯA XÁC ĐỊNH` | Dự báo sản phẩm |
-| TPS đỉnh của tạo/trạng thái/kết quả | ≥5.000 req/s cho API không mang media theo NFR-005 | Kiểm thử tải trước go-live |
-| Outbox publisher | Quét mỗi 1.000 ms, tối đa 20 event/lần, lease 30 giây, retry sau 5 giây | Kiểm thử backlog, retry và khả năng phục hồi |
-| Lời gọi FPT đồng thời | `UNRESOLVED` | Quota/SLA của FPT |
-| Request eKYC đồng thời | Giới hạn concurrency theo capacity đã nghiệm thu; request tối đa 20 MiB | Kiểm thử tải và quota FPT |
-| Kích thước media p50/p95/p99 | `CHƯA XÁC ĐỊNH`; trần cứng 20 MB/object | Đo tại staging |
-| Bộ nhớ làm việc Sale | Tối thiểu ba file cộng bản sao multipart/HTTP cho mỗi job đồng thời | Kiểm thử heap/native memory; phải đo mức đệm của giải pháp triển khai |
-| Hoàn tất Sale | Contract FPT tối đa 5 phút | E2E với chờ/kết thúc/timeout |
-| eKYC/FPT | Connect timeout 2.000 ms; response timeout 600.000 ms | SLA FPT và kiểm thử tải |
-| Bản ghi DB/ngày/tăng trưởng lưu trữ | `CHƯA XÁC ĐỊNH` | Lưu giữ + phân bố payload kết quả OCR/eKYC |
-| Dung lượng kết quả OCR/eKYC p95/p99 | `CHƯA XÁC ĐỊNH` | Tính dung lượng PostgreSQL |
+| **Component** | **Metric** | **Current Value** | **Target Value** | **Headroom** |
+| --- | --- | --- | --- | --- |
+| API OCR/status/result | Throughput API không mang media | Chưa có production baseline vì hệ thống chưa triển khai; theo dõi tại CAP-02 | ≥5.000 req/s theo NFR-005 | ≥30%; kiểm thử đạt ≥6.500 req/s mà không vi phạm NFR-001/NFR-002 |
+| API OCR/status/result | Response time | Chưa có production baseline; theo dõi tại CAP-02 | p95 <2.000 ms tại tải mục tiêu theo NFR-002 | Giữ p95 <2.000 ms tại mức tải 6.500 req/s |
+| Outbox Publisher/Kafka | Tốc độ phát và tiêu thụ OCR event | Chưa có workload mix; theo dõi tại CAP-01/CAP-02 | ≥1,3 × peak OCR create rate đã được Sản phẩm phê duyệt | 30% trên peak OCR create rate; backlog phải được xử lý hết sau burst trong cửa sổ kiểm thử CAP-02 |
+| OCR Processor — OCR thường | Thời gian hoàn tất và concurrency FPT | Chưa có baseline; quota FPT theo dõi tại CAP-03 | Deadline ≤900.000 ms theo NFR-003; concurrency ≥1,3 × `peakArrivalRate × durationP99`, không vượt quota FPT | 30% concurrency so với peak đã phê duyệt |
+| OCR Processor — FPT Sale | Thời gian hoàn tất hồ sơ | Contract FPT tối đa 300.000 ms | ≤300.000 ms theo NFR-003; polling không ngắn hơn 3.000 ms | Không cộng thêm thời gian vượt contract FPT; tài nguyên worker duy trì 30% concurrency headroom |
+| eKYC Proxy | Số request đang hoạt động đồng thời | Chưa có forecast và quota FPT; theo dõi tại CAP-01/CAP-03 | ≥1,3 × `peakArrivalRate × responseDurationP99`, connect timeout 2.000 ms và response timeout 600.000 ms | 30% trên peak concurrency; quota eKYC tách khỏi OCR worker |
+| Media ingress/worker | Kích thước object và working set | Giới hạn contract 20 MiB/object, hồ sơ Sale tối đa 60 MiB; phân bố thực tế theo dõi tại CAP-02 | Không nhận object >20 MiB hoặc hồ sơ Sale >60 MiB; memory limit không được thấp hơn working set p99 đo được | ≥30% memory so với working set p99 tại concurrency mục tiêu |
+| PostgreSQL | Bản ghi/ngày, dung lượng kết quả và tăng trưởng lưu trữ | Chưa có forecast sản lượng/retention; theo dõi tại CAP-01/CAP-04 | Dung lượng provisioned ≥1,3 × dữ liệu phát sinh trong retention window; PITR đáp ứng RPO ≤15 phút | ≥30% dung lượng, IOPS và connection headroom tại peak |
+| Kho object riêng tư | Media, payload lớn, recovery object và backup | Chưa có forecast sản lượng/retention; theo dõi tại CAP-01/CAP-04 | Dung lượng provisioned ≥1,3 × tổng byte trong retention window; không public object | ≥30% dung lượng và request-rate headroom tại peak |
 
 Các công thức bắt buộc:
 
@@ -1526,21 +1524,33 @@ Các công thức bắt buộc:
 Số replica, kích thước heap, connection pool, rate-limit và concurrency limit được
 xác định bằng kiểm thử tải để đạt NFR-002/NFR-005 và không vượt quota FPT.
 
+### Theo dõi đầu vào capacity/cost chưa có baseline
+
+| **ID** | **Đầu vào phải chốt** | **Owner** | **Deadline** | **Bằng chứng bắt buộc** |
+| --- | --- | --- | --- | --- |
+| CAP-01 | Forecast OCR/eKYC theo ngày, peak-hour, kênh và tỷ lệ từng use case | Sản phẩm/Nghiệp vụ và Vận hành | Trước cổng `UNDER REVIEW → APPROVED` của TDD | Forecast được phê duyệt và workload mix dùng cho capacity model |
+| CAP-02 | Baseline throughput/latency, media p50/p95/p99, concurrency/pod, heap và thời gian xử lý backlog | QA Performance và Vận hành | Trước OAT | Capacity Test Report chứng minh NFR-001/NFR-002/NFR-005 và headroom trong bảng 11.1 |
+| CAP-03 | Quota đồng thời/RPS, SLA và giới hạn 429 của từng API FPT | Tích hợp và FPT | Trước cổng `UNDER REVIEW → APPROVED` của TDD | Contract/quota FPT được hai bên xác nhận |
+| CAP-04 | Retention, số bản ghi, dung lượng request/result/media và tốc độ tăng trưởng | Sản phẩm/Nghiệp vụ, Quyền riêng tư và DBA | Trước cổng `UNDER REVIEW → APPROVED` của TDD | Retention policy và storage sizing sheet được phê duyệt |
+| COST-01 | AWS estimate cho Compute, Storage và Network theo CAP-01/CAP-04 | Cloud Platform/FinOps và Vận hành | Trước cổng `APPROVED → IMPLEMENTATION BASELINE` | Saved AWS Pricing Calculator estimate và dự toán tháng/năm |
+| COST-02 | Đơn giá FPT OCR thường, FPT Sale, eKYC/liveness và quota mua | Mua sắm, Tích hợp và Sản phẩm | Trước cổng `APPROVED → IMPLEMENTATION BASELINE` | Báo giá/hợp đồng FPT và cost model theo workload mix CAP-01 |
+
 ## 11.2 Cost
 
-| **Nguồn chi phí** | **Đầu vào tính dung lượng** | **Trạng thái** |
-| --- | --- | --- |
-| Tài nguyên tính toán ứng dụng | Replica API/worker, bộ nhớ cho media | TBD |
-| PostgreSQL | Dung lượng dữ liệu, tăng trưởng và backup/PITR | TBD |
-| Kafka | messages, poll amplification, retention | TBD |
-| Object storage/File Management | upload/download/storage/retention | TBD |
-| Egress | Media tới FPT và response FPT | TBD |
-| KMS/Secret | Request mã hóa/giải mã/luân chuyển | TBD |
-| Quan sát hệ thống | Thu nhận và lưu giữ log/metric/cảnh báo | TBD |
-| FPT | Giao dịch FPT IDR, FPT Sale, eKYC/liveness | Báo giá TBD |
+**AWS Pricing Calculator:** [Tạo/lưu estimate](https://calculator.aws/#/addService).
+Saved estimate của dự án phải được gắn vào COST-01; không sử dụng estimate mẫu của
+hệ thống khác làm số liệu thẩm định.
 
-Bản xuất công cụ tính chi phí AWS/nền tảng, báo giá FPT, cảnh báo ngân sách/quota
-và dự toán tháng là đầu vào bắt buộc cho kế hoạch vận hành production.
+| **Hạng mục** | **Phạm vi chi phí** | **Cơ sở tính** | **Chi phí/tháng** | **Chi phí/năm** | **Owner / Deadline** |
+| --- | --- | --- | --- | --- | --- |
+| Compute | EKS control plane/worker node, API Pods và OCR Processor Pods | Replica, vCPU, memory, autoscaling và 730 giờ/tháng theo CAP-01/CAP-02 | Chốt tại COST-01 | `12 × chi phí/tháng` | Cloud Platform/FinOps và Vận hành / trước `APPROVED → IMPLEMENTATION BASELINE` |
+| Storage | PostgreSQL, Kafka storage, kho object, backup/PITR, KMS/secret và lưu trữ log/metric | Dung lượng, IOPS, retention, request count và backup theo CAP-04 | Chốt tại COST-01 | `12 × chi phí/tháng` | Cloud Platform/FinOps, DBA và Vận hành / trước `APPROVED → IMPLEMENTATION BASELINE` |
+| Network | Load balancer/WAF/DDoS, NAT/egress, inter-AZ và truyền media/response tới FPT | GB ingress/egress, request count và topology production theo CAP-01/CAP-02 | Chốt tại COST-01 | `12 × chi phí/tháng` | Cloud Platform/FinOps và Vận hành / trước `APPROVED → IMPLEMENTATION BASELINE` |
+| 3rd party | FPT OCR thường, FPT Sale, eKYC/liveness và phí File Management nếu có chargeback | Đơn giá × số giao dịch theo use case; quota và cam kết tối thiểu theo CAP-01/COST-02 | Chốt tại COST-02 | `12 × chi phí/tháng` | Mua sắm, Tích hợp và Sản phẩm / trước `APPROVED → IMPLEMENTATION BASELINE` |
+| **Tổng chi phí** | Tổng Compute + Storage + Network + 3rd party | Saved estimate COST-01 + báo giá COST-02 | Chốt tại COST-01/COST-02 | `12 × tổng chi phí/tháng` | FinOps và Sản phẩm / trước `APPROVED → IMPLEMENTATION BASELINE` |
+
+Saved AWS estimate, báo giá FPT, ngưỡng cảnh báo ngân sách/quota và tổng dự toán
+tháng/năm là điều kiện bắt buộc trước khi chốt implementation baseline.
 
 <a id="muc-12"></a>
 
