@@ -1370,11 +1370,11 @@ response body hoặc tái dựng lịch sử thay đổi nghiệp vụ.
 
 ## 10.1 Environments
 
-| **Môi trường** | **Dữ liệu/FPT** | **Kiểm soát** |
-| --- | --- | --- |
-| SIT | Dữ liệu tổng hợp/đã che; FPT staging | Giới hạn ingress/egress, fixture contract, test migration/an toàn thông tin. |
-| UAT | Dữ liệu tổng hợp/đã che được duyệt | Cấu hình giống production, nghiệm thu nghiệp vụ/quyền riêng tư. |
-| Production | Dữ liệu cá nhân/sinh trắc thật | WAF, IAM workload, secret manager, data plane riêng, HA, sao lưu và giám sát. |
+| **Môi trường** | **Availability** | **Infrastructure** | **Internet Exposure** | **Data Type** | **HA/DR** | **Key Differences so với Production** |
+| --- | --- | --- | --- | --- | --- | --- |
+| SIT | Không áp dụng SLO; chỉ yêu cầu sẵn sàng trong cửa sổ kiểm thử đã lập lịch | Cụm non-production tách biệt; API, OCR Processor, PostgreSQL, Kafka, File Management/kho object và FPT staging | Không public trực tiếp `vhm-ocr-ekyc`; truy cập qua kênh nội bộ/VPN và Domain BFF non-production; egress chỉ tới các endpoint non-production được cho phép | Dữ liệu tổng hợp hoặc đã che; không dùng PII/sinh trắc production | Không yêu cầu HA; được phép cấu hình tối thiểu một instance; phục hồi bằng triển khai lại, migration và test fixture | Quy mô nhỏ, credential riêng, FPT staging, cho phép bật công cụ kiểm thử; không mang dữ liệu production và không dùng để xác nhận SLO production |
+| UAT | Không áp dụng SLO production; phải sẵn sàng trong toàn bộ cửa sổ nghiệm thu đã công bố | Topology logic tương đương production nhưng tách biệt tài nguyên, credential và endpoint; sử dụng FPT non-production | Không public trực tiếp `vhm-ocr-ekyc`; chỉ nhận lưu lượng qua Domain BFF/Domain Backend Service UAT; egress theo allowlist | Dữ liệu tổng hợp hoặc đã che được phê duyệt cho nghiệm thu; không dùng credential hay dữ liệu production | Cấu hình dự phòng có thể giảm so với production; bắt buộc kiểm thử backup/restore và quy trình triển khai/rollback | Giữ nguyên contract, migration và security control của production nhưng giảm capacity, redundancy; dùng endpoint/credential non-production và không xử lý dữ liệu thật |
+| Production | ≥99,9% theo tháng theo NFR-001 | AWS/EKS; API và OCR Processor mở rộng độc lập; PostgreSQL, Kafka, File Management/kho object riêng tư, secret manager/KMS và FPT production | Không public trực tiếp `vhm-ocr-ekyc`; ingress qua Domain BFF và Domain Backend Service; egress chỉ tới FPT, File Management và nền tảng quan sát theo allowlist | Dữ liệu cá nhân, giấy tờ, hợp đồng và dữ liệu sinh trắc thật; dữ liệu nhạy cảm phải mã hóa và phân quyền | Triển khai đa instance/đa AZ; PostgreSQL PITR, Kafka replication, sao lưu kho object và runbook DR; mục tiêu RTO/RPO theo mục 14.1 | Môi trường chuẩn đối chiếu: đầy đủ capacity, HA/DR, giám sát/cảnh báo, security gate, retention/xóa dữ liệu và credential FPT production |
 
 ## 10.2 Production Deployment Diagram (CI/CD)
 
