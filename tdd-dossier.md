@@ -1032,6 +1032,56 @@ L3 và được contract-test để tránh drift với bảng này.
 | Event | Chỉ opaque ID và metadata tối thiểu; không PII, media path hoặc presigned URL. |
 | Retention/deletion | Policy theo purpose/legal hold; purge cả primary, object, outbox đã hết hạn và backup theo lịch. |
 
+### Data Masking
+
+Ba mức hiển thị được áp dụng sau authorization tại mục 9.2: `FULL` chỉ cho
+persona có purpose và quyền trên đúng dossier; `MASKED` cho list/search/report
+hoặc persona chỉ cần đối chiếu; `NONE` là không trả field. Masking phải thực hiện
+tại nguồn authoritative hoặc server-side projection trước khi response rời
+Agent/Market API/Core; không gửi giá trị đầy đủ rồi trông chờ UI che. Export được
+xem là một lần công bố `FULL` hàng loạt nên cần scope, giới hạn, audit và approval
+riêng.
+
+| **Trường/nhóm dữ liệu** | **Authority/persistence** | **Hiển thị theo role/purpose** | **Log/event/APM** | **Format masking/yêu cầu** |
+| --- | --- | --- | --- | --- |
+| Họ tên applicant/spouse | `vhm-ocr-ekyc`/nguồn applicant authoritative; không persist tại Core | Market owner và `APPLICANT_AGENT` owner: `FULL`; PKD/PTT: `FULL` chỉ ở detail đúng stage/purpose, `MASKED` ở list/report; BO/Admin: `NONE` nếu chưa có purpose contract | Không ghi | Giữ ký tự đầu mỗi từ, phần còn lại `*`; ví dụ `N***** V** A*` |
+| CCCD/CMND/hộ chiếu | `vhm-ocr-ekyc`; không persist tại Core | Owner hoặc reviewer có purpose định danh: `FULL` ở màn hình chi tiết được duyệt; các view khác `MASKED`/`NONE` | Không ghi, không dùng làm correlation/search log | Chỉ giữ 4 ký tự cuối: `********1234` |
+| Ngày sinh | `vhm-ocr-ekyc`; không persist tại Core | `FULL` cho owner/reviewer đúng purpose; list/report mặc định `MASKED`; role không liên quan `NONE` | Không ghi | `**/**/YYYY`; ví dụ `**/**/1990` |
+| Địa chỉ/nơi cư trú/quê quán | Nguồn applicant authoritative hoặc binary tại File Management; không persist raw value tại Core | `FULL` chỉ khi kiểm tra điều kiện cư trú; PKD/list/report dùng `MASKED`; role khác `NONE` | Không ghi | Chỉ giữ tỉnh/thành phố: `***, <Tỉnh/Thành phố>` |
+| Số điện thoại applicant/spouse | Nguồn applicant authoritative; không persist tại Core | Market/Applicant owner và PTT đúng purpose: `FULL`; `PKD`/`PKD_LEAD`: `MASKED`; BO/Admin: `NONE` nếu không có support purpose | Không ghi | Giữ 2 ký tự đầu + 2 cuối: `09******89` |
+| Email applicant/spouse | Nguồn applicant authoritative; không persist tại Core | Market/Applicant owner và PTT đúng purpose: `FULL`; `PKD`/`PKD_LEAD`: `MASKED`; BO/Admin: `NONE` nếu không có support purpose | Không ghi | Giữ ký tự đầu local-part và domain: `a***@example.com` |
+| Thu nhập/tài chính/việc làm/hộ gia đình trong tài liệu | Binary tại File Management/nguồn authoritative; Core chỉ giữ reference/checklist metadata | Không trả thành field list; chỉ download/view tài liệu cho role đúng stage/purpose. Preview/report nếu có mặc định `MASKED` | Không ghi nội dung, filename gốc hoặc extracted text | `MASKED` che toàn bộ giá trị: `******`; media phải dùng viewer/download grant có thời hạn |
+| Media CCCD và tài liệu không OCR | OCR media tại `vhm-ocr-ekyc`; tài liệu khác tại File Management | Core không render hoặc trả raw media. BFF/UI chỉ nhận download/view grant sau object authorization; thumbnail cũng áp dụng cùng quyền | Không ghi bytes, checksum nhạy cảm, path, filename PII hoặc presigned URL | Không masking binary tại Core; dùng access control, watermark/redaction nếu File/OCR contract yêu cầu |
+| `subjectRef`, `ownerSubject`, actor/reviewer/recipient ID | Core lưu opaque reference tối thiểu | `NONE` trên UI nghiệp vụ trừ support view được duyệt; UI dùng display projection từ nguồn authoritative | Chỉ dossier/correlation ID trong allowlist; không log subject/owner/recipient reference nếu không cần | Không partial-mask; phải opaque, không nhúng PII và không đảo ngược được. Loại khỏi response thay vì che hình thức |
+| Tên reviewer/agent và contact công việc | IAM/TTOL/Message Delivery; Core chỉ lưu opaque ID theo target design | Tên có thể `FULL` trong assignment/timeline cho người xem dossier; email/phone `NONE` trừ notification/support purpose | Log opaque actor ID; không log tên/email/phone | Email nếu buộc hiển thị dùng `a***@domain`; phone dùng `09******89` |
+| Dossier code, project/unit, status, progress và decision metadata | Core authoritative | `FULL` sau scope/object authorization; report chỉ trả column allowlist | Có thể ghi dossier ID/action/status/error code theo allowlist; không ghi full response | Không masking mặc định nhưng vẫn là metadata có thể liên kết cá nhân; cấm dùng làm metric label cardinality cao |
+| File path, filename và presigned URL | Path/reference tại Core/File; URL chỉ cấp tạm thời | Path/URL `NONE`; chỉ hiển thị filename đã sanitize khi persona có quyền download | Không ghi | Không trả storage path; presigned URL đúng object/method, TTL ngắn và response `no-store` |
+| Secret, HMAC/actor token, idempotency key và credential tích hợp | Secret manager/runtime hoặc state kỹ thuật tối thiểu | `NONE` cho mọi role/UI/API response | Không ghi; lỗi phải redact | Redact toàn bộ: `[REDACTED]`; idempotency key chỉ dùng lookup/hash theo thiết kế được duyệt |
+
+Format trên là baseline cần ANBM/Privacy và Product phê duyệt trong field-level
+authorization contract. Khi nhiều role cùng tồn tại trong actor context, áp dụng
+mức hiển thị hạn chế nhất trừ khi contract có rule ưu tiên rõ ràng; tuyệt đối không
+dùng việc ghép role để nâng từ `MASKED/NONE` lên `FULL` ngoài purpose đã ký.
+
+### Encryption
+
+| **Phạm vi** | **Dữ liệu/vị trí** | **Cơ chế mã hóa** | **Thuật toán/baseline** | **Quản lý khóa và xoay khóa** | **Cổng bằng chứng trước production** |
+| --- | --- | --- | --- | --- | --- |
+| PostgreSQL Dossier | Aggregate, `subjectRef`, `ownerSubject`, checklist/history/outbox/audit metadata | Mã hóa storage/volume/database và backup theo chuẩn nền tảng; access bằng workload identity/DB role tối thiểu | AES-256 hoặc baseline at-rest được VHM/ANBM phê duyệt; cấu hình cụ thể `TBD` | CMK/key service do platform owner quản lý; account/key owner, rotation/revocation period `TBD` | Cấu hình encryption, DB privilege review, backup/restore và rotation evidence |
+| Opaque subject/owner reference | Giá trị cần index/unique trong PostgreSQL | Không mã hóa field-level mặc định để giữ lookup/constraint; dựa vào non-reversibility, DB encryption và access control. Nếu reference có thể suy ra PII thì contract không đạt | Opaque random/pseudonymous reference với entropy/format do source authority chốt; không hash CCCD bằng salt dùng chung | Core không giữ salt/key sinh `subjectRef`; issuer quản lý lifecycle. Thay đổi thuật toán/reference cần migration/version contract | Non-reversibility/threat review, cross-subject negative test và DB/log data scan |
+| Redis | Nonce/replay, counter, cache/coordination; không OCR/PII | TLS in transit; encryption at rest nếu persistence/snapshot bật; ACL và network isolation | Theo baseline Redis managed service được ANBM duyệt; cipher/config `TBD` | Platform owner quản lý certificate/key và rotation; security nonce lỗi phải fail closed | Redis ACL/TLS/persistence config, failover và replay test |
+| Kafka/outbox | Event metadata opaque, không PII/media/path/presigned URL | TLS cho producer/broker; broker/storage encryption theo nền tảng; topic ACL | TLS 1.2 trở lên, ưu tiên TLS 1.3; at-rest baseline `TBD` | Platform Kafka owner quản lý certificate/CMK và rotation; Core không nhúng key vào config rõ | Topic/schema/ACL review, payload scan, certificate rotation và DLQ evidence |
+| Tài liệu không OCR | Binary tại File Management/object storage; Core chỉ giữ reference | Server-side encryption bằng KMS, bucket/object private; presigned URL TTL ngắn và scope chính xác | SSE-KMS/AES-256 hoặc baseline File được ANBM duyệt | CMK thuộc File owner; Core không nhận key. Rotation, revocation và cryptographic erasure theo File Contract | File encryption attestation, owner/upload-grant E2E, access log và delete/restore drill |
+| OCR media/kết quả/PII | Lưu tại `vhm-ocr-ekyc`; transient trong Core chỉ khi proxy contract được giữ | Không persist/cache/spill tại Core; TLS khi truyền. At-rest/payload encryption và key lifecycle thuộc OCR capability | Theo TDD `vhm-ocr-ekyc`; Core không định nghĩa lại thuật toán | OCR owner/KMS quản lý; Core chỉ yêu cầu evidence và không có decrypt/key permission | OCR OpenAPI/IAM, no-cache/no-body-log/heap-dump evidence và ANBM/Privacy approval |
+| Kết nối service-to-service | Agent/Market API ↔ Core ↔ PostgreSQL/Redis/Kafka/OCR/File/Message/TTOL | HTTPS/TLS; mTLS hoặc signed workload identity tại trust boundary theo chuẩn VHM; không clear text sau TLS termination | TLS 1.2 trở lên, ưu tiên TLS 1.3; cấm protocol/cipher yếu | Certificate/private key từ certificate/secret manager, tự động renew/revoke; không nằm trong source/image | TLS scan, trust-store/certificate rotation test và network-flow approval |
+| Secret và credential | HMAC, Basic credential, DB/File/Message/TTOL credential | Chỉ cấp runtime qua secret manager/KMS; không lưu trong PostgreSQL, Kafka, log, image hoặc source | Cơ chế encryption của secret manager/KMS được VHM phê duyệt | Owner, version, rotation period và emergency revocation bắt buộc; credential tách theo client/environment | Secret scan/SBOM, runtime injection evidence và rotation/revocation drill |
+| Backup, snapshot và artefact export | PostgreSQL backup/PITR, Redis snapshot nếu bật, report/ZIP/XLSX tạm | Backup mã hóa bằng key tách quyền; artefact export private, TTL/retention và download authorization | Baseline backup/object encryption `TBD`; không dùng key hard-code | DBA/Vận hành/File owner quản lý key và restore permission; rotation không làm mất khả năng restore trong retention window | Restore drill, expired artefact purge, key recovery và restore-and-repurge evidence |
+
+TDD này không khẳng định encryption đã hoàn tất chỉ vì platform hỗ trợ. Mọi giá
+trị `TBD`, thuật toán tương đương, vị trí CMK, quyền decrypt, rotation period và
+backup-key recovery phải có evidence và được ANBM/Vận hành phê duyệt trước dữ liệu
+thật/production.
+
 ### Nhật ký kỹ thuật
 
 Log tối thiểu gồm correlation ID, client ID, actor subject dạng opaque, dossier ID, action, kết quả, duration và error code. Không log request/response body chứa PII, CCCD, contact, file URL, HMAC/actor token hoặc OCR result. Audit quyết định nghiệp vụ phải tách khỏi debug log và có quyền truy cập/retention riêng.
