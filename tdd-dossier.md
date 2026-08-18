@@ -760,45 +760,52 @@ Không có đường ghi dữ liệu OCR/PII vào PostgreSQL của dossier. `vhm
 
 ### 7.3.1 Checklist dữ liệu cá nhân
 
-Hệ thống có xử lý dữ liệu cá nhân. Tương tự TDD mẫu của `vhm-ocr-ekyc`, **Có**
-trong bảng dưới đây nghĩa là loại dữ liệu xuất hiện trong ít nhất một input,
-tài liệu, OCR contract, luồng hydrate/search/export/notification hoặc định danh
-vận hành thuộc phạm vi Dossier. Giá trị **Có** không đồng nghĩa dữ liệu được lưu
-trong PostgreSQL của Dossier Core; vị trí lưu và ranh giới xử lý được quy định tại
-các mục 7.3.2–7.3.4. **Không** nghĩa là loại dữ liệu không được chủ đích thu thập;
-nếu phát sinh trong file/free text ngoài contract thì phải bị từ chối hoặc xử lý
-theo policy được Privacy phê duyệt.
+Nghiệp vụ hồ sơ NOXH có liên quan dữ liệu cá nhân, nhưng **Dossier Core không thực
+hiện OCR/eKYC, không là source of truth và không lưu nội dung PII của
+applicant/spouse**. Tương tự checklist trong TDD mẫu của `vhm-ocr-ekyc`, cột
+**Phát sinh trong use case** cho biết loại dữ liệu có xuất hiện trong toàn bộ luồng
+nghiệp vụ hay không; cột **Lưu tại Dossier Core** xác định ranh giới persistence
+của service. Dữ liệu ngoài contract không được chủ đích thu thập; nếu phát sinh
+trong file/free text thì phải bị từ chối hoặc xử lý theo policy được Privacy phê
+duyệt.
 
-| **Loại dữ liệu cá nhân** | **Phân nhóm** | **Có/Không** |
-| --- | --- | :---: |
-| Họ, chữ đệm, tên applicant/spouse/người liên quan | Cơ bản | **Có** |
-| Ngày, tháng, năm sinh | Cơ bản | **Có** |
-| Giới tính | Cơ bản | **Có** |
-| Nơi sinh, quê quán, nơi cư trú, địa chỉ liên hệ | Cơ bản | **Có** |
-| Quốc tịch | Cơ bản | **Có** |
-| Số và thông tin giấy tờ định danh; ngày/nơi cấp; ngày hết hạn | Cơ bản | **Có** |
-| Số điện thoại, thư điện tử | Cơ bản | **Có** |
-| Tình trạng hôn nhân, quan hệ vợ/chồng/đồng đăng ký và thông tin hộ gia đình/người phụ thuộc | Cơ bản | **Có** |
-| Tình trạng nhà ở, sở hữu bất động sản và nhóm đối tượng được hưởng chính sách NOXH | Cơ bản | **Có** |
-| Nghề nghiệp, đơn vị công tác, quan hệ lao động, mã số thuế/BHXH trong hồ sơ chứng minh điều kiện | Cơ bản | **Có** |
-| Thu nhập, bảng lương, tài khoản hoặc nội dung tài chính trong tài liệu chứng minh | Nhạy cảm | **Có** |
-| Thông tin trẻ em/người chưa thành niên trong giấy tờ hộ gia đình hoặc tài liệu chứng minh | Cơ bản | **Có** |
-| `subjectRef`, `ownerSubject`, `pcid/cid`, actor/reviewer/recipient ID và định danh kỹ thuật có thể liên kết tới cá nhân | Cơ bản | **Có** |
-| Họ tên, email/số điện thoại công việc của agent/reviewer/recipient phục vụ phân công và thông báo | Cơ bản | **Có** |
-| Ảnh giấy tờ định danh, ảnh chân dung và chữ ký có trong tài liệu hồ sơ | Nhạy cảm | **Có** |
-| Selfie/video, liveness, face matching hoặc NFC eKYC | Nhạy cảm | **Không** |
-| Dữ liệu vị trí thời gian thực hoặc lịch sử di chuyển | Nhạy cảm | **Không** |
-| Nguồn gốc chủng tộc, dân tộc | Nhạy cảm | **Không** |
-| Quan điểm chính trị, tôn giáo, tín ngưỡng | Nhạy cảm | **Không** |
-| Đời sống riêng tư, bí mật cá nhân/bí mật gia đình ngoài thông tin quan hệ và điều kiện NOXH đã nêu | Nhạy cảm | **Không** |
-| Tình trạng sức khỏe, hồ sơ y tế hoặc dữ liệu di truyền | Nhạy cảm | **Không** |
-| Xu hướng tính dục | Nhạy cảm | **Không** |
-| Dữ liệu về hành vi phạm tội, tiền án, tiền sự | Nhạy cảm | **Không** |
+| **Loại dữ liệu cá nhân** | **Phân nhóm** | **Phát sinh trong use case** | **Lưu tại Dossier Core** | **Nơi xử lý/source of truth** |
+| --- | --- | :---: | :---: | --- |
+| Họ, chữ đệm, tên applicant/spouse/người liên quan | Cơ bản | **Có** | **Không** | `vhm-ocr-ekyc`; File Management với tài liệu không OCR |
+| Ngày, tháng, năm sinh | Cơ bản | **Có** | **Không** | `vhm-ocr-ekyc` |
+| Giới tính | Cơ bản | **Có** | **Không** | `vhm-ocr-ekyc` |
+| Nơi sinh, quê quán, nơi cư trú, địa chỉ liên hệ | Cơ bản | **Có** | **Không** | `vhm-ocr-ekyc`; File Management với tài liệu không OCR |
+| Quốc tịch | Cơ bản | **Có** | **Không** | `vhm-ocr-ekyc` |
+| Số và thông tin giấy tờ định danh; ngày/nơi cấp; ngày hết hạn | Cơ bản | **Có** | **Không** | `vhm-ocr-ekyc` |
+| Số điện thoại, thư điện tử của applicant/spouse | Cơ bản | **Có** | **Không** | Nguồn authoritative cho applicant/spouse theo OCR Contract L3 |
+| Tình trạng hôn nhân, quan hệ vợ/chồng/đồng đăng ký và thông tin hộ gia đình/người phụ thuộc | Cơ bản | **Có** | **Không** | Nguồn authoritative cho applicant/spouse; File Management với tài liệu chứng minh |
+| Tình trạng nhà ở, sở hữu bất động sản và nhóm đối tượng được hưởng chính sách NOXH | Cơ bản | **Có** | **Không** | Nguồn authoritative được Product/Privacy chốt; File Management giữ tài liệu chứng minh |
+| Nghề nghiệp, đơn vị công tác, quan hệ lao động, mã số thuế/BHXH trong hồ sơ chứng minh điều kiện | Cơ bản | **Có** | **Không** | File Management/nguồn dữ liệu nghiệp vụ authoritative |
+| Thu nhập, bảng lương, tài khoản hoặc nội dung tài chính trong tài liệu chứng minh | Nhạy cảm | **Có** | **Không** | File Management/nguồn dữ liệu nghiệp vụ authoritative |
+| Thông tin trẻ em/người chưa thành niên trong giấy tờ hộ gia đình hoặc tài liệu chứng minh | Cơ bản | **Có** | **Không** | File Management/nguồn dữ liệu nghiệp vụ authoritative |
+| `subjectRef`, `ownerSubject`, actor/reviewer/recipient ID và định danh kỹ thuật có thể liên kết tới cá nhân | Cơ bản/giả danh | **Có** | **Có** | Core chỉ lưu opaque reference tối thiểu; nguồn phát hành reference nằm ngoài Core |
+| Họ tên, email/số điện thoại công việc của agent/reviewer/recipient phục vụ phân công và thông báo | Cơ bản | **Có** | **Không** | IAM/TTOL/Message Delivery; Core chỉ lưu opaque recipient/actor ID |
+| Ảnh giấy tờ định danh, ảnh chân dung và chữ ký có trong tài liệu hồ sơ | Nhạy cảm | **Có** | **Không** | `vhm-ocr-ekyc` với media OCR; File Management với tài liệu không OCR |
+| Selfie/video, liveness, face matching hoặc NFC eKYC | Nhạy cảm | **Không** | **Không** | Ngoài phạm vi Dossier |
+| Dữ liệu vị trí thời gian thực hoặc lịch sử di chuyển | Nhạy cảm | **Không** | **Không** | Ngoài phạm vi Dossier |
+| Nguồn gốc chủng tộc, dân tộc | Nhạy cảm | **Không** | **Không** | Ngoài phạm vi Dossier |
+| Quan điểm chính trị, tôn giáo, tín ngưỡng | Nhạy cảm | **Không** | **Không** | Ngoài phạm vi Dossier |
+| Đời sống riêng tư, bí mật cá nhân/bí mật gia đình ngoài thông tin quan hệ và điều kiện NOXH đã nêu | Nhạy cảm | **Không** | **Không** | Ngoài phạm vi Dossier |
+| Tình trạng sức khỏe, hồ sơ y tế hoặc dữ liệu di truyền | Nhạy cảm | **Không** | **Không** | Ngoài phạm vi Dossier |
+| Xu hướng tính dục | Nhạy cảm | **Không** | **Không** | Ngoài phạm vi Dossier |
+| Dữ liệu về hành vi phạm tội, tiền án, tiền sự | Nhạy cảm | **Không** | **Không** | Ngoài phạm vi Dossier |
+
+`Lưu tại Dossier Core = Không` không loại bỏ trách nhiệm Privacy nếu một API của
+Core vẫn proxy/stream raw PII: truyền dữ liệu transient vẫn phải được xem xét như
+một hoạt động xử lý. Target contract phải ưu tiên chỉ trả readiness/status và
+opaque reference cho Core; nếu bắt buộc proxy PII thì ANBM/Privacy phải duyệt riêng
+field projection, authorization, masking và no-cache/no-log evidence.
 
 Checklist này ở trạng thái **DRAFT — chờ ANBM và Privacy/Pháp chế xác nhận và ký
-duyệt**. Product/System Owner phải chốt purpose/lawful basis cho từng dòng **Có**;
-Backend, OCR, File và Message owner phải cung cấp contract/evidence chứng minh các
-dòng **Không** không được persist, log, phát event hoặc thu thập ngoài mục đích.
+duyệt**. Product/System Owner phải chốt purpose/lawful basis cho từng dòng **Có**
+ở cột use case; Backend, OCR, File và Message owner phải cung cấp contract/evidence
+chứng minh các dòng **Không** không được persist, log, phát event hoặc thu thập
+ngoài mục đích.
 
 ### 7.3.2 Phân loại và tối thiểu hóa
 
