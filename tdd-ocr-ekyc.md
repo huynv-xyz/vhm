@@ -963,7 +963,33 @@ Ký hiệu `==>` biểu diễn luồng có media hoặc response nhạy cảm. D
 
 ## 7.3 Data Privacy & PII
 
-### 7.3.1 Phân loại và tối thiểu hóa dữ liệu
+### 7.3.1 Checklist dữ liệu cá nhân
+
+Hệ thống có xử lý dữ liệu cá nhân. `Có` trong bảng dưới đây nghĩa là loại dữ liệu
+nằm trong input, media hoặc result contract của một trong các flow OCR/eKYC; dữ
+liệu không phục vụ các flow này không được thu thập thêm.
+
+| **Loại dữ liệu cá nhân** | **Phân nhóm** | **Có/Không** |
+| --- | --- | --- |
+| Họ, chữ đệm, tên khai sinh; tên gọi khác | Cơ bản | Có |
+| Ngày, tháng, năm sinh | Cơ bản | Có |
+| Giới tính | Cơ bản | Có |
+| Nơi sinh, quê quán, nơi cư trú, địa chỉ liên hệ | Cơ bản | Có |
+| Quốc tịch | Cơ bản | Có |
+| Số và thông tin giấy tờ định danh; ngày/nơi cấp; ngày hết hạn | Cơ bản | Có |
+| Số điện thoại, thư điện tử | Cơ bản | Không |
+| Dữ liệu vị trí hoặc lịch sử di chuyển | Cơ bản | Không |
+| Định danh thiết bị, phiên eKYC và định danh kỹ thuật có thể liên kết tới cá nhân | Cơ bản | Có |
+| Nguồn gốc chủng tộc, dân tộc | Nhạy cảm | Không |
+| Quan điểm chính trị, tôn giáo, tín ngưỡng | Nhạy cảm | Không |
+| Đời sống riêng tư, bí mật cá nhân, bí mật gia đình | Nhạy cảm | Không |
+| Tình trạng sức khỏe và hồ sơ y tế | Nhạy cảm | Không |
+| Dữ liệu sinh trắc học: ảnh khuôn mặt, selfie/video, liveness và face matching | Nhạy cảm | Có |
+| Dữ liệu tài chính: thu nhập, tài khoản hoặc nội dung tài chính trong PLHĐ | Nhạy cảm | Có |
+| Dữ liệu việc làm và quan hệ lao động trong PLHĐ | Cơ bản | Có |
+| Dữ liệu về hành vi phạm tội, tiền án, tiền sự | Nhạy cảm | Không |
+
+### 7.3.2 Phân loại và tối thiểu hóa dữ liệu
 
 | **Phân loại** | **Ví dụ** | **Cách xử lý được phép** |
 | --- | --- | --- |
@@ -974,7 +1000,7 @@ Ký hiệu `==>` biểu diễn luồng có media hoặc response nhạy cảm. D
 | Metadata nhạy cảm | Đường dẫn object, provider job/session/request ID, confidence/cảnh báo | Chỉ nội bộ; không đưa vào API/event/log công khai nếu có thể tránh. |
 | Nội bộ | OCR ID, trạng thái, enum FPT, taxonomy lỗi không PII | Có thể xuất hiện trong log/metric được kiểm soát; không làm nhãn metric có cardinality cao. |
 
-### 7.3.2 Danh mục dữ liệu và yêu cầu quản lý
+### 7.3.3 Danh mục dữ liệu và yêu cầu quản lý
 
 - Kết quả OCR/eKYC được lưu và mã hóa trong PostgreSQL schema `ocr_ekyc`.
 - Tham chiếu media phải được tối thiểu hóa, giới hạn truy cập và bảo vệ dữ liệu lưu
@@ -988,7 +1014,17 @@ Thời hạn 30 ngày của FPT Sale không phải retention mặc định cho V
 lưu giữ/xóa phải tách theo kết quả OCR, eKYC, media, metadata, log và bản sao lưu;
 có phiên bản theo mục đích/đồng thuận/legal hold và được kiểm thử xóa idempotent.
 
-## 7.4 Data Stores & Ownership
+## 7.4 Data Privacy
+
+| **Chủ thể DL** | **Hệ thống lưu trữ** | **Số lượng bản ghi** | **Tổng dung lượng** | **Truyền sang bên ngoài** | **Khu vực DL đi qua** | **Kiểu DL thu thập** | **Mục đích** | **Mã hóa lưu trữ** | **Vị trí khóa** | **Xoay khóa** | **Mã hóa đường truyền** | **Masking** | **Vòng đời DL** | **Tự động xóa** | **Xóa theo yêu cầu KH** | **Ẩn danh** |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Khách hàng/người có thông tin trên CCCD, CMND hoặc PLHĐ | Kho object riêng tư lưu media OCR; PostgreSQL schema `ocr_ekyc` lưu tham chiếu, trạng thái và kết quả; FPT xử lý theo contract | `TBD` — theo dự báo sản phẩm | `TBD` — theo số hồ sơ, kích thước media và kết quả; trần 20 MiB/file, hồ sơ Sale tối đa 60 MiB, response lưu tối đa 2 MiB | Có — truyền media và dữ liệu cần thiết tới FPT để OCR/đối chiếu | Mobile/Web → hệ thống VHM → FPT; region của VHM và vùng xử lý/lưu trữ của FPT: `TBD` theo DPA/DPIA | Ảnh giấy tờ, số giấy tờ, họ tên, ngày sinh, giới tính, địa chỉ, quê quán, quốc tịch, ngày/nơi cấp, ngày hết hạn; nội dung PLHĐ và kết quả đối chiếu/chữ ký | Nhận dạng giấy tờ, kiểm tra đầy đủ/đối chiếu hồ sơ và trả kết quả cho nghiệp vụ đã được phê duyệt | Có — kết quả trong PostgreSQL dùng AES-GCM; media ở kho object riêng tư phải bật mã hóa theo tiêu chuẩn nền tảng | AWS Secrets Manager/KMS; chỉ cấp cho workload được phép | `TBD` — theo chính sách KMS/ANBM được phê duyệt | TLS 1.2 trở lên; ưu tiên TLS 1.3 | Domain áp dụng projection/masking trước khi trả qua Domain BFF; không ghi PII/media/path vào log | Upload → OCR/đối chiếu → lưu kết quả trong thời hạn theo mục đích → xóa; thời hạn cụ thể `TBD` theo retention policy/DPIA | Có — yêu cầu thiết kế; lịch và SLA purge idempotent: `TBD` | Có — yêu cầu thiết kế; phối hợp PostgreSQL, object storage, FPT và bản sao lưu, trừ legal hold | Không ẩn danh dữ liệu giao dịch đang hoạt động; metric/log kỹ thuật không chứa PII |
+| Khách hàng thực hiện eKYC | PostgreSQL schema `ocr_ekyc` lưu metadata và response FPT đã mã hóa; raw selfie/video chỉ đi qua memory/stream, không lưu trong PostgreSQL; FPT xử lý theo contract | `TBD` — theo dự báo sản phẩm | `TBD` — theo số phiên và kích thước response; request tối đa 20 MiB, response lưu tối đa 2 MiB | Có — truyền request SDK, giấy tờ và media sinh trắc tới FPT | Mobile/Web → Domain BFF → Domain Backend Service → `vhm-ocr-ekyc` → FPT; region của VHM và vùng xử lý/lưu trữ của FPT: `TBD` theo DPA/DPIA | Ảnh giấy tờ, selfie/video, thông tin phiên/thiết bị, OCR, liveness, face matching và NFC khi flow sử dụng | Xác minh danh tính, kiểm tra sống và đối sánh khuôn mặt theo nghiệp vụ/đồng thuận đã được phê duyệt | Có — response lưu trong PostgreSQL dùng AES-GCM; raw media không persist tại `vhm-ocr-ekyc` | AWS Secrets Manager/KMS; chỉ cấp cho workload được phép | `TBD` — theo chính sách KMS/ANBM được phê duyệt | TLS 1.2 trở lên; ưu tiên TLS 1.3 | Không ghi media, sinh trắc, định danh phiên hoặc response FPT vào log; Domain chịu trách nhiệm masking khi hiển thị | Khởi tạo phiên → OCR/liveness/NFC → lưu kết quả → phục vụ nghiệp vụ → xóa; thời hạn cụ thể `TBD` theo consent, retention policy và DPIA | Có — yêu cầu thiết kế; lịch và SLA purge idempotent: `TBD` | Có — yêu cầu thiết kế; phối hợp PostgreSQL, FPT và bản sao lưu, trừ legal hold | Không ẩn danh kết quả eKYC đang phục vụ nghiệp vụ; dữ liệu tổng hợp chỉ được dùng khi có mục đích được duyệt |
+
+Các giá trị `TBD` là đầu vào bắt buộc của Product, Vận hành, ANBM và Pháp chế/Quyền
+riêng tư trước khi sử dụng dữ liệu thật.
+
+## 7.5 Data Stores & Ownership
 
 | **Kho** | **Dữ liệu** | **Nguồn sự thật** | **Phục hồi** |
 | --- | --- | --- | --- |
