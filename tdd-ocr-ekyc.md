@@ -522,7 +522,7 @@ duyệt của từng quyết định được quản lý tại Phụ lục D.
 | ADR-004 | Nguồn dữ liệu chính cho vòng đời OCR/eKYC | **PostgreSQL schema `ocr_ekyc`** — Ưu: transaction quan hệ, ràng buộc duy nhất, truy vấn trạng thái và Transactional Outbox trong cùng DB. Nhược: cần HA/PITR, capacity planning và quản lý tăng trưởng. | **DynamoDB** — Ưu: mở rộng ngang và vận hành hạ tầng thấp. Nhược: mô hình truy vấn/ràng buộc khác, tăng độ phức tạp cho transaction/outbox và tạo thêm phụ thuộc nền tảng. | Phương án A | Vòng đời, idempotency và outbox cần transaction nhất quán; không cần thêm một mô hình lưu trữ riêng. |
 | ADR-005 | Cách lựa chọn provider OCR | **FPT do capability quản lý và cố định trên OCR khi tạo** — Ưu: retry/định tuyến xác định, caller không phụ thuộc provider. Nhược: không tự động chuyển provider khi FPT lỗi. | **Caller chọn provider hoặc đổi provider khi retry** — Ưu: linh hoạt định tuyến/failover. Nhược: lộ chi tiết provider, kết quả không đồng nhất và khó kiểm soát credential/contract. | Phương án A | TDD chỉ định FPT là provider duy nhất và không cho phép failover mù quáng giữa một vòng đời OCR. |
 | ADR-006 | Contract kết quả OCR trả cho domain | **Kết quả chuẩn VHM** — Ưu: ổn định contract, giới hạn dữ liệu công bố và giảm vendor lock-in ở caller. Nhược: cần mapping/versioning khi FPT thay đổi. | **Trả nguyên payload FPT** — Ưu: ít mapping, tiếp cận đầy đủ trường provider. Nhược: caller phụ thuộc schema FPT, tăng phạm vi PII và rủi ro breaking change. | Phương án A | Domain chỉ cần contract nghiệp vụ ổn định, không cần biết cấu trúc nội bộ của FPT. |
-| ADR-007 | Theo dõi kết quả OCR hồ sơ Sale | **Lưu provider job ID và polling định kỳ** — Ưu: không giữ thread/kết nối trong lúc FPT xử lý; phục hồi được sau restart. Nhược: phát sinh polling traffic và cần deadline/reconciliation. | **Webhook/callback từ provider** — Ưu: giảm polling và nhận kết quả gần thời gian thực. Nhược: FPT không cung cấp callback cho flow này; nếu có sẽ cần public ingress, xác thực và chống replay. | Phương án A | Contract FPT Sale cung cấp API tra cứu trạng thái, không cung cấp callback/webhook. |
+| ADR-007 | Theo dõi kết quả OCR hồ sơ Sale | **Lưu provider job ID và polling định kỳ** — Ưu: chủ động tra cứu, phục hồi được sau restart và không phụ thuộc việc callback được giao thành công. Nhược: phát sinh polling traffic và có độ trễ theo chu kỳ poll. | **Webhook/callback từ FPT** — Ưu: giảm độ trễ nhận kết quả và số lần polling. Nhược: khi bật callback, VHM và FPT phải thống nhất cơ chế xác thực cho chiều lấy token và chiều gửi callback, đồng thời xử lý idempotency, retry và chống replay. | Phương án A; callback là tín hiệu bổ sung | FPT có hỗ trợ callback. Polling theo `request_id` được giữ làm đường đối soát khi callback bị trễ, gửi lặp hoặc không đến. |
 | ADR-008 | Vận chuyển và lưu trữ media OCR | **File Management/object storage riêng tư, chỉ truyền path** — Ưu: không đưa binary vào PostgreSQL/Kafka, hỗ trợ upload trực tiếp và kiểm soát thời hạn truy cập. Nhược: phụ thuộc presigned URL, checksum và vòng đời object. | **Nhúng media vào DB, API OCR hoặc Kafka** — Ưu: giảm một bước tham chiếu. Nhược: tăng payload, memory, dung lượng DB/broker và phạm vi dữ liệu nhạy cảm. | Phương án A | Media lớn và nhạy cảm phải tách khỏi dữ liệu giao dịch và message điều phối. |
 | ADR-009 | Có lưu request/kết quả eKYC hay không | **Lưu metadata request và response FPT đã mã hóa** — Ưu: đối soát, truy vết trạng thái và cung cấp kết quả qua service VHM. Nhược: tăng dữ liệu nhạy cảm, yêu cầu mã hóa và chính sách lưu giữ/xóa. | **Chỉ proxy, không lưu kết quả** — Ưu: giảm lưu trữ và phạm vi dữ liệu. Nhược: không có nguồn kết quả phía VHM để đối soát hoặc phục vụ bước nghiệp vụ sau. | Phương án A | Kết quả cuối phải được lấy qua service VHM; dữ liệu lưu phải tuân thủ mã hóa và retention. |
 | ADR-010 | Ranh giới triển khai API và processor | **Một artifact/deployable với hai vai trò logic** — Ưu: dùng chung domain/contract và giảm chi phí phát hành ban đầu; mỗi vai trò vẫn có thể scale riêng bằng cấu hình triển khai. Nhược: cần giữ ranh giới package và kiểm soát tài nguyên theo vai trò. | **Hai service/artifact độc lập** — Ưu: cô lập release và failure domain rõ hơn. Nhược: tăng pipeline, versioning contract và chi phí vận hành. | Phương án A | Chưa có nhu cầu tách vòng đời phát hành; ranh giới logic đủ để triển khai và scale API/processor độc lập. |
@@ -651,7 +651,10 @@ metadata và gọi File Management để nhận presigned URL rồi trả ngư�
 
 Luồng tích hợp giữ nguyên mô hình bất đồng bộ: VHM gửi hồ sơ, nhận `request_id`,
 sau đó chủ động thăm dò FPT theo chu kỳ tối thiểu 3 giây cho tới trạng thái kết
-thúc. FPT không cung cấp callback/webhook cho luồng này.
+thúc. FPT có hỗ trợ callback; khi bật callback, VHM và FPT phải thống nhất cơ chế
+xác thực cho chiều lấy token và chiều gửi callback. Callback phải được xử lý
+idempotent; tra cứu theo `request_id` vẫn là đường đối soát khi callback bị trễ,
+gửi lặp hoặc không đến.
 
 | **Trạng thái FPT** | **Ý nghĩa** | **Khối kết quả** | **`error_code`** | **Ánh xạ vòng đời VHM** |
 | --- | --- | --- | --- | --- |
@@ -696,9 +699,12 @@ của FPT.
 xác thực này được `vhm-ocr-ekyc` bổ sung ở biên tích hợp. Bốn thao tác trên là đồng
 bộ; SDK quyết định thứ tự gọi và xử lý response.
 
-Baseline không công bố callback hoặc API lấy lại kết quả eKYC. Request nghiệp vụ
-được ghi nhận trước khi gọi FPT; response FPT được lưu trong cùng vòng xử lý theo
-quy tắc nhất quán dưới đây.
+FPT eKYC hỗ trợ callback server-to-server và API Get Result. Khi bật callback, VHM
+và FPT phải thống nhất cơ chế xác thực cho chiều lấy token và chiều gửi callback.
+Với topology proxy, response FPT được lưu tại `vhm-ocr-ekyc`; callback và Get Result
+là đường đối soát phía server, không phải API công bố cho Mobile/Web. Request
+nghiệp vụ được ghi nhận trước khi gọi FPT; response FPT được lưu trong cùng vòng
+xử lý theo quy tắc nhất quán dưới đây.
 
 ### 6.5.2 Quy tắc request/response và lưu trữ
 
