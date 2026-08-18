@@ -968,6 +968,41 @@ Authorization áp dụng defense in depth nhưng ma trận khác nhau theo chann
 
 Các visibility `REGION` và `DEPARTMENT` hiện chưa có semantics đầy đủ cho Agent nên bị từ chối, không fallback `ALL`. Chúng không áp dụng cho Market. Lịch sử assignment chỉ mở read visibility Agent khi feature tương ứng được bật và phê duyệt. `source=MARKET|AGENT` là nguồn tạo hồ sơ, không thay thế data-subject ownership hoặc BUS authorization.
 
+### 9.2.1 Role × Function matrix
+
+Ký hiệu: **✓** là role/principal có capability nhưng vẫn phải qua channel,
+project/team scope, visibility, state/invariant và ownership tương ứng; **△** là
+capability có điều kiện chưa đủ contract hoặc chỉ áp dụng cho một phần chức năng;
+**—** là không được phép. Role là điều kiện cần, không tự tạo quyền nếu action
+không có trong `availableActions` của dossier.
+
+| **Function** | **Market Customer** | **`APPLICANT_AGENT`** | **`PKD`** | **`PKD_LEAD`** | **`PTT`** | **`PTT_LEAD`** | **BO/Admin** |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| List/search hồ sơ | **✓** `DATA_SUBJECT`, luôn ép owner filter | **✓** project/scope + visibility được ký | **✓** project/team/assigned theo scope | **✓** project/team scope của PKD | **✓** project/team/assigned theo scope | **✓** project/team scope của PTT/SXD | **△** chỉ khi BUS cấp role/scope tra cứu chính thức |
+| Xem detail/progress/timeline và download được phép | **✓** đúng owner subject | **✓** `OWNER` + scope | **✓** stage/scope/visibility hợp lệ | **✓** scope PKD hợp lệ | **✓** stage/scope/visibility hợp lệ | **✓** scope PTT/SXD hợp lệ | **△** purpose, field projection và audit access phải được chốt |
+| Tạo DRAFT | **✓** Market API bind `ownerSubject`; không business role | **✓** project/scope hợp lệ | **—** | **—** | **—** | **—** | **—** trừ khi đồng thời mang role tạo hồ sơ được BUS cấp |
+| Update business snapshot, upload/attach và xóa DRAFT | **✓** `DATA_SUBJECT` + state/action Market | **✓** `OWNER` + DRAFT/ADD_INFO; delete chỉ DRAFT | **—** | **—** | **—** | **—** | **—** |
+| Tạo/poll/xác nhận OCR applicant/spouse | **✓** đúng subject/dossier và purpose | **✓** `OWNER` + scope | **—** không xác nhận thay applicant | **—** | **—** | **—** | **—**; support access cần contract riêng |
+| `SUBMIT`/`RESUBMIT` hồ sơ | **✓** `DATA_SUBJECT` + action Market được công bố | **✓** `OWNER` + readiness/state guard | **—** | **—** | **—** | **—** | **—** |
+| `SUBMIT_HARDCOPY` | **△** chỉ khi Market channel policy công bố action | **✓** `OWNER` tại stage hỗ trợ | **—** | **—** | **—** | **—** | **—** |
+| `ASSIGN`/`REASSIGN`/`CLAIM` reviewer | **—** | **—** | **—**; nhận auto-assignment không cấp quyền reassign | **✓** tại stage PKD; theo slot và assignee guard | **△** `ASSIGN` tại stage PTT/SXD khi definition cho phép; không `REASSIGN/CLAIM` | **✓** tại stage PTT/SXD; theo slot và assignee guard | **—** trừ khi đồng thời có Lead role phù hợp |
+| Duyệt checklist/tài liệu | **—** | **—**; chỉ upload/view được phép | **✓** stage PKD + `CLAIMER` | **✓** stage PKD + `CLAIMER` | **✓** stage PTT/SXD + `CLAIMER` | **✓** stage PTT/SXD + `CLAIMER` | **—** trừ khi đồng thời có reviewer role phù hợp |
+| `APPROVE`/`REJECT`/`REQUEST_REVISION` | **—** | **—** | **✓** stage PKD + `CLAIMER` | **✓** stage PKD + `CLAIMER` | **✓** stage PTT/SXD + `CLAIMER` | **✓** stage PTT/SXD + `CLAIMER` | **—** trừ khi đồng thời có reviewer role phù hợp |
+| `RETURN_TO_SALES` | **—** | **—** | **—** | **—** | **✓** stage thủ tục + `CLAIMER` | **✓** stage thủ tục + `CLAIMER` | **—** |
+| `ALLOCATE_UNIT`/`REVOKE_UNIT` | **—** | **—** | **✓** allocate tại PKD khi `CLAIMER`; revoke ở state được định nghĩa | **✓** như PKD | **△** chỉ `REVOKE_UNIT` ở state PTT/SXD được định nghĩa | **△** chỉ `REVOKE_UNIT` ở state PTT/SXD được định nghĩa | **—** trừ khi đồng thời có functional role phù hợp |
+| `CONFIRM_HARDCOPY_RECEIVED` | **—** | **—** | **✓** tại stage được định nghĩa | **✓** tại stage được định nghĩa | **✓** tại stage được định nghĩa | **✓** tại stage được định nghĩa | **—** trừ khi đồng thời có reviewer role phù hợp |
+| Statistics/report/export/hydrate PII | **△** chỉ dữ liệu của chính subject và contract data-subject export | **△** owner/project scope và field projection được duyệt | **△** scope PKD; contact/PII masking theo persona | **△** scope PKD; contact/PII masking theo persona | **△** scope PTT/SXD và purpose được duyệt | **△** scope PTT/SXD và purpose được duyệt | **△** cần BUS admin role, purpose, export limit và audit contract |
+| Quản lý `agent_project_permission` | **—** | **—** | **—** | **—** | **—** | **—** | **△** BO/Admin role code và scope quản trị còn phải đóng băng trong BUS Contract L3 |
+| Trigger reminder thủ công | **—** | **—** | **✓** theo rule/endpoint được phép | **✓** theo rule/endpoint được phép | **—** | **—** | **△** chỉ với operations role được phê duyệt, không mặc định theo nhãn Admin |
+
+Đầu mối SXD là một **stage**, không phải role độc lập trong catalogue hiện tại;
+quyền tại `sxdPending` dùng `PTT`/`PTT_LEAD` theo Pipeline Definition đã pin.
+`PKD_LEAD` không có quyền ở stage PTT/SXD và `PTT_LEAD` không có quyền ở stage
+PKD chỉ vì là Lead. BO/Admin không bypass pipeline: nếu thực hiện action nghiệp vụ
+thì signed context phải đồng thời có functional BUS role, scope và ownership phù
+hợp. Ma trận chính thức phải được xuất từ BUS Role Catalogue + Pipeline Definition
+L3 và được contract-test để tránh drift với bảng này.
+
 ## 9.3 Secrets & Credential Management
 
 - HMAC secret, Basic credential và File/OCR/Message/TTOL credential không được nằm trong source, image, application config rõ hoặc tài liệu này. Agent API và Market API dùng credential nội bộ riêng khi gọi Core. Credential File của Core chỉ có scope cho tài liệu không OCR; encryption key và credential File/provider của nhánh OCR thuộc `vhm-ocr-ekyc`.
