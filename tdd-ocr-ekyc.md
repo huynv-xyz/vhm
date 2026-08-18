@@ -1786,7 +1786,20 @@ lưu giữ đích danh và bằng chứng xóa. Fixture response FPT phải có 
 | AR-014 | Toàn vẹn | API commit OCR nhưng sự kiện Kafka bị mất hoặc phát trùng có thể làm OCR không chạy/chạy lặp | Nghiêm trọng | Transactional Outbox, broker acknowledgement, consumer idempotent và cảnh báo tuổi outbox | Backend/Kiến trúc — kiểm thử crash window |
 | AR-015 | Toàn vẹn eKYC | PostgreSQL lỗi sau khi FPT đã trả response có thể làm thiếu bản lưu kết quả eKYC | Cao | Không đổi response SDK; retry lưu hữu hạn không gọi lại FPT, cảnh báo tức thời và runbook đối soát sự cố dữ liệu | Backend/Vận hành — kiểm thử lỗi lưu và cảnh báo |
 
-## 16.2 Vấn đề thiết kế cần quyết định
+## 16.2 Tech Debt
+
+Tech Debt chỉ ghi nhận thỏa hiệp kỹ thuật được chủ động quản lý và có kế hoạch đánh giá
+lại. Rủi ro kiến trúc nằm tại mục 16.1; quyết định hoặc đầu vào chưa chốt tiếp tục
+được quản lý dưới Open Issues tại mục 16.3.
+
+| **Debt ID** | **Hệ thống** | **Mô tả** | **Lý do phát sinh** | **Ảnh hưởng** | **Ưu tiên** | **Kế hoạch xử lý** | **Effort** | **Owner** | **Ngày dự kiến** | **Trạng thái** |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| TD-001 | Build/deployment `vhm-ocr-ekyc` | API Pods và OCR Processor Pods triển khai độc lập nhưng dùng chung một build artifact và container image | Phương án delivery ban đầu ưu tiên một pipeline/image để giảm độ phức tạp quản lý dependency và phát hành | Bản vá hoặc thay đổi riêng cho một runtime vẫn phải build/test/phát hành chung; tăng phạm vi ảnh hưởng của dependency/CVE và chi phí rollback | Trung bình | Duy trì hai runtime role, deployment và autoscaling tách biệt; đánh giá lại build time, dependency/CVE, tần suất release và sự cố rollback sau go-live. Tách module/image khi API hoặc Processor cần dependency, lịch phát hành hoặc rollback độc lập | M | Backend Lead và Solution Architect | Go-live + 90 ngày | Proposed — chờ thẩm định |
+
+Không ghi nhận thêm Tech Debt tại thời điểm thẩm định. Khoản mới chỉ được thêm khi
+có mô tả ảnh hưởng, owner, kế hoạch xử lý và mốc đánh giá như bảng trên.
+
+## 16.3 Open Issues
 
 | **ID** | **Vấn đề cần quyết định** | **Ảnh hưởng/ưu tiên** | **Điều kiện đóng** |
 | --- | --- | --- | --- |
