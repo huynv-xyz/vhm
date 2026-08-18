@@ -802,7 +802,7 @@ sequenceDiagram
     B->>C: Xác nhận OCR + ocrId
     C->>O: Xác nhận trên nguồn authoritative
     O-->>C: CONFIRMED + opaque subjectRef
-    C-->>B: Thành công; không trả/persist raw result
+    C-->>B: Thành công, không trả hoặc lưu raw result
 ```
 
 Không có đường ghi dữ liệu OCR/PII vào PostgreSQL của dossier. `vhm-ocr-ekyc` liên kết OCR resource với `referenceId=dossierId` và giữ toàn bộ media, lifecycle, kết quả, xác nhận và audit OCR. Core chỉ persist `subjectRef` opaque do service trả trực tiếp; các business field không thuộc OCR tiếp tục đi qua PATCH dossier bình thường.
