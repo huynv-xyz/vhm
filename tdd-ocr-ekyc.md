@@ -472,26 +472,21 @@ tài nguyên xử lý hoặc transaction PostgreSQL trong thời gian chờ FPT.
 
 # 4. Non-Functional Requirements
 
-Các giá trị Availability, Response Time và Throughput dưới đây là target thiết kế
-theo feedback thẩm định Mục 4, không phải kết quả đã đo. Các giới hạn còn lại lấy từ
-code và cấu hình hiện tại. Bằng chứng đáp ứng các target hiệu năng được lập bằng
-kiểm thử tải/OAT trước go-live.
-
 Response Time chỉ áp dụng cho API OCR trả `202` và API đọc dữ liệu nội bộ. Thời gian
 OCR chạy nền và eKYC chờ FPT được đo riêng; hai khoảng thời gian này không cộng vào
 Response Time của API OCR.
 
 | **Hạng mục** | **Chỉ số đo lường** | **Giá trị mục tiêu (Target)** | **Ghi chú** |
 | --- | --- | --- | --- |
-| NFR-001 — Tính sẵn sàng | Tỷ lệ HTTP request không trả `5xx` theo tháng | ≥99,9% | Target từ feedback thẩm định. Repository đã có health/readiness probe, Prometheus và dashboard Availability SLI; cấu hình replica/Multi-AZ không nằm trong repository này. |
-| NFR-002 — Response Time | Thời gian xử lý API OCR tạo/đọc tại `vhm-ocr-ekyc`, không gồm upload media và xử lý provider | p95 <2.000 ms | Target `<2 giây` từ feedback được biểu diễn bằng mili giây. API tạo OCR commit request, media reference và outbox rồi trả `202`; chưa có kết quả kiểm thử tải trong repository. |
-| NFR-003 — Processing SLA OCR | Thời gian từ lúc tạo OCR đến processing deadline | OCR thường ≤15 phút; Sale OCR ≤5 phút | Hai deadline được khai báo trong `OcrService`. Response `202` trả `Retry-After: 3`; Sale OCR poll FPT mỗi 3 giây. Đây là tác vụ chạy nền, không phải Response Time của HTTP request. |
-| NFR-004 — Timeout và giới hạn tích hợp | Connect timeout, response timeout, poll interval và kích thước request | FPT/eKYC: connect 2.000 ms, response 600.000 ms, request ≤20 MiB; FPT Sale: connect 2.000 ms, response 30.000 ms, poll 3.000 ms; File Management: connect 2.000 ms, read 30.000 ms, object ≤20 MiB | Giá trị lấy từ `application.yml`; eKYC đồng bộ trả nguyên status/body của FPT và không tự retry mutation. |
-| NFR-005 — Throughput | Tổng request/giây của API không mang media | ≥5.000 req/s | Target từ feedback thẩm định; không áp dụng cho upload/download media hoặc throughput FPT. Repository chưa có kết quả load test, giới hạn concurrency hoặc rate-limit chứng minh target này. |
-| NFR-006 — Tính toàn vẹn và idempotency | Xử lý request tạo OCR lặp và phát outbox | 100% request lặp tuần tự có cùng `source` + `Idempotency-Key` + payload trả lại OCR đã tạo; cùng key nhưng khác payload trả `409`; Kafka producer `acks=all` và `enable.idempotence=true` | Request, media reference và outbox được ghi trong cùng transaction. Outbox quét mỗi 1.000 ms, tối đa 20 event/lần, lease 30 giây và phát lại sau 5 giây khi lỗi. Code chưa xử lý tường minh race của hai request idempotency đồng thời. |
-| NFR-007 — Bảo vệ dữ liệu | Kết quả OCR/eKYC lưu trong PostgreSQL được mã hóa; giới hạn response FPT được lưu | 100% result được mã hóa AES-GCM trước khi persist; khóa AES hợp lệ dài 128/192/256 bit; response FPT chỉ được lưu khi ≤2 MiB | Code không cưỡng chế riêng AES-256. eKYC request body được stream tới FPT và không lưu raw media; repository chưa có purge/retention job hoặc audit log riêng. |
-| NFR-008 — Logging và observability | Correlation HTTP, endpoint quan sát và cấu hình ghi response body | 100% HTTP request có `X-Correlation-Id`; expose đúng 3 endpoint `health`, `info`, `prometheus`; `FPT_LOG_RESPONSE_BODY=false` và `VINBIGDATA_LOG_RESPONSE_BODY=false` trong production | Application log dùng ECS và MDC correlation ID; đây không phải audit log. Repository có một Grafana dashboard, nhưng không có alert rule định nghĩa thời gian phát cảnh báo. |
-| NFR-009 — Kiểm thử | Kết quả Maven test suite | 100% test phải pass; 0 test bị skip tại thời điểm nghiệm thu | Lệnh kiểm chứng của repository là `mvn clean test`. `pom.xml` hiện không cấu hình JaCoCo nên không ghi target line/branch coverage. |
+| NFR-001 — Tính sẵn sàng | Tỷ lệ HTTP request không trả `5xx` theo tháng | ≥99,9% | Đo tại service ingress bằng HTTP metric/Prometheus; không tính `4xx` do caller. Health/readiness probe phục vụ kiểm tra trạng thái instance. |
+| NFR-002 — Response Time | Thời gian xử lý API OCR tạo/đọc tại `vhm-ocr-ekyc`, không gồm upload media và xử lý provider | p95 <2.000 ms | API tạo OCR commit request, media reference và outbox rồi trả `202`. Kiểm chứng bằng load test trên cấu hình production-like. |
+| NFR-003 — Processing SLA OCR | Thời gian từ lúc tạo OCR đến processing deadline | OCR thường ≤900.000 ms; Sale OCR ≤300.000 ms | Đo riêng cho tác vụ chạy nền, không cộng vào Response Time của HTTP request. |
+| NFR-004 — Timeout và giới hạn tích hợp | Connect timeout, response timeout, poll interval và kích thước request | FPT/eKYC: connect 2.000 ms, response 600.000 ms, request ≤20 MiB; FPT Sale: connect 2.000 ms, response 30.000 ms, poll 3.000 ms; File Management: connect 2.000 ms, read 30.000 ms, object ≤20 MiB | eKYC đồng bộ trả nguyên status/body của FPT và không tự retry mutation. |
+| NFR-005 — Throughput | Tổng request/giây của API không mang media | ≥5.000 req/s | Không áp dụng cho upload/download media hoặc throughput FPT. Kiểm chứng bằng load test và tách kết quả theo từng endpoint. |
+| NFR-006 — Tính toàn vẹn và idempotency | Xử lý request tạo OCR lặp và phát outbox | 100% request đồng thời hoặc tuần tự có cùng `source` + `Idempotency-Key` + payload trả lại cùng một OCR; cùng key nhưng khác payload trả `409`; Kafka producer `acks=all` và `enable.idempotence=true` | Request, media reference và outbox phải được ghi trong cùng transaction. Outbox quét mỗi 1.000 ms, tối đa 20 event/lần, lease 30 giây và phát lại sau 5 giây khi lỗi. |
+| NFR-007 — Bảo vệ dữ liệu | Kết quả OCR/eKYC lưu trong PostgreSQL được mã hóa; giới hạn response FPT được lưu | 100% result được mã hóa AES-GCM trước khi persist; khóa AES dài 128/192/256 bit; response FPT chỉ được lưu khi ≤2 MiB | eKYC request body được stream tới FPT và không lưu raw media. |
+| NFR-008 — Logging và observability | Correlation HTTP, endpoint quan sát và cấu hình ghi response body | 100% HTTP request có `X-Correlation-Id`; expose đúng 3 endpoint `health`, `info`, `prometheus`; không ghi response body của FPT/VinBigData trong production | Application log dùng ECS và MDC correlation ID. Dashboard sử dụng HTTP, JVM, database pool và function metric từ Prometheus. |
+| NFR-009 — Kiểm thử | Kết quả test suite tại quality gate | 100% test phải pass; 0 test bị skip tại thời điểm nghiệm thu | Phạm vi test gồm unit, integration, contract, security và performance theo Mục 15. |
 
 <a id="muc-5"></a>
 
@@ -1367,14 +1362,14 @@ hết cửa sổ rollback/lưu giữ được phê duyệt.
 | **Chỉ số/đầu vào** | **Giá trị thiết kế** | **Cổng/bằng chứng** |
 | --- | --- | --- |
 | OCR hằng ngày theo use case/FPT/kênh | `CHƯA XÁC ĐỊNH` | Dự báo sản phẩm |
-| TPS đỉnh của tạo/trạng thái/kết quả | Target ≥5.000 req/s cho API không mang media theo NFR-005; chưa có kết quả đo | Kiểm thử tải trước go-live |
-| Outbox publisher | Quét mỗi 1.000 ms, tối đa 20 event/lần, lease 30 giây, retry sau 5 giây | Giá trị hiện có trong code/config |
+| TPS đỉnh của tạo/trạng thái/kết quả | ≥5.000 req/s cho API không mang media theo NFR-005 | Kiểm thử tải trước go-live |
+| Outbox publisher | Quét mỗi 1.000 ms, tối đa 20 event/lần, lease 30 giây, retry sau 5 giây | Kiểm thử backlog, retry và khả năng phục hồi |
 | Lời gọi FPT đồng thời | `UNRESOLVED` | Quota/SLA của FPT |
-| Request eKYC đồng thời | Chưa cấu hình giới hạn concurrency; request tối đa 20 MiB | Kiểm thử tải và quota FPT |
+| Request eKYC đồng thời | Giới hạn concurrency theo capacity đã nghiệm thu; request tối đa 20 MiB | Kiểm thử tải và quota FPT |
 | Kích thước media p50/p95/p99 | `CHƯA XÁC ĐỊNH`; trần cứng 20 MB/object | Đo tại staging |
 | Bộ nhớ làm việc Sale | Tối thiểu ba file cộng bản sao multipart/HTTP cho mỗi job đồng thời | Kiểm thử heap/native memory; phải đo mức đệm của giải pháp triển khai |
 | Hoàn tất Sale | Contract FPT tối đa 5 phút | E2E với chờ/kết thúc/timeout |
-| eKYC/FPT | Connect timeout 2.000 ms; response timeout 600.000 ms; chưa có p95/p99 | SLA FPT và kiểm thử tải |
+| eKYC/FPT | Connect timeout 2.000 ms; response timeout 600.000 ms | SLA FPT và kiểm thử tải |
 | Bản ghi DB/ngày/tăng trưởng lưu trữ | `CHƯA XÁC ĐỊNH` | Lưu giữ + phân bố payload kết quả OCR/eKYC |
 | Dung lượng kết quả OCR/eKYC p95/p99 | `CHƯA XÁC ĐỊNH` | Tính dung lượng PostgreSQL |
 
@@ -1386,9 +1381,8 @@ Các công thức bắt buộc:
 - Dung lượng thăm dò phải tính riêng Mobile/Web → Domain BFF, Domain BFF → Domain Backend Service,
   Domain Backend Service → OCR/eKYC và worker → FPT Sale.
 
-Repository hiện không chứa số replica, kích thước heap, connection pool, rate-limit,
-concurrency limit hoặc kết quả load test. Các tham số triển khai phải được xác định
-từ kiểm thử đạt NFR-002/NFR-005 và quota FPT, không suy ra từ source code.
+Số replica, kích thước heap, connection pool, rate-limit và concurrency limit được
+xác định bằng kiểm thử tải để đạt NFR-002/NFR-005 và không vượt quota FPT.
 
 ## 11.2 Cost
 
@@ -1517,9 +1511,9 @@ path, correlation ID hoặc PII làm metric label.
 SLI phải tách: API tiếp nhận OCR, hoàn tất OCR đầu-cuối, thao tác FPT, độ trễ
 Kafka, thời gian chờ FPT Sale, response eKYC đồng bộ và đọc
 trạng thái/kết quả. Thời gian FPT phải quan sát được, không bị ẩn trong tính sẵn
-sàng nền tảng. Mục 4 định nghĩa target Availability, Response Time và Throughput;
-repository mới cung cấp HTTP metric/Prometheus và dashboard để đo, chưa chứa kết quả
-kiểm thử tải hoặc alert rule chứng minh các target đó.
+sàng nền tảng. Mục 4 định nghĩa target Availability, Response Time và Throughput.
+HTTP metric, Prometheus và dashboard cung cấp SLI; load test và OAT cung cấp bằng
+chứng nghiệm thu.
 
 <a id="muc-14"></a>
 
@@ -1574,7 +1568,7 @@ hiệu năng hoặc phục hồi. Bằng chứng thực thi phải được lưu
 
 | **Lớp kiểm thử** | **Phạm vi bắt buộc** | **Cổng** |
 | --- | --- | --- |
-| Unit | Nhánh trạng thái/idempotency/chuẩn hóa/mã hóa/lỗi | `mvn clean test` đạt 100%, không có test bị skip; repository chưa cấu hình coverage gate |
+| Unit | Nhánh trạng thái/idempotency/chuẩn hóa/mã hóa/lỗi | 100% test pass và không có test bị skip tại quality gate |
 | Tích hợp dữ liệu | PostgreSQL schema `ocr_ekyc`, migration, tính nhất quán và test đồng thời | Bắt buộc |
 | Outbox/Kafka/worker | Rollback, crash window trước/sau broker acknowledgement, phát trùng, retry/DLT và phục hồi công việc treo | Bắt buộc |
 | Contract provider | FPT IDR, mọi trạng thái/lỗi FPT Sale và wire contract eKYC theo `INT-01` | Bắt buộc |
