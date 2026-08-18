@@ -758,7 +758,49 @@ Không có đường ghi dữ liệu OCR/PII vào PostgreSQL của dossier. `vhm
 
 ## 7.3 Data Privacy & PII
 
-### 7.3.1 Phân loại và tối thiểu hóa
+### 7.3.1 Checklist dữ liệu cá nhân
+
+Hệ thống có xử lý dữ liệu cá nhân. Tương tự TDD mẫu của `vhm-ocr-ekyc`, **Có**
+trong bảng dưới đây nghĩa là loại dữ liệu xuất hiện trong ít nhất một input,
+tài liệu, OCR contract, luồng hydrate/search/export/notification hoặc định danh
+vận hành thuộc phạm vi Dossier. Giá trị **Có** không đồng nghĩa dữ liệu được lưu
+trong PostgreSQL của Dossier Core; vị trí lưu và ranh giới xử lý được quy định tại
+các mục 7.3.2–7.3.4. **Không** nghĩa là loại dữ liệu không được chủ đích thu thập;
+nếu phát sinh trong file/free text ngoài contract thì phải bị từ chối hoặc xử lý
+theo policy được Privacy phê duyệt.
+
+| **Loại dữ liệu cá nhân** | **Phân nhóm** | **Có/Không** |
+| --- | --- | :---: |
+| Họ, chữ đệm, tên applicant/spouse/người liên quan | Cơ bản | **Có** |
+| Ngày, tháng, năm sinh | Cơ bản | **Có** |
+| Giới tính | Cơ bản | **Có** |
+| Nơi sinh, quê quán, nơi cư trú, địa chỉ liên hệ | Cơ bản | **Có** |
+| Quốc tịch | Cơ bản | **Có** |
+| Số và thông tin giấy tờ định danh; ngày/nơi cấp; ngày hết hạn | Cơ bản | **Có** |
+| Số điện thoại, thư điện tử | Cơ bản | **Có** |
+| Tình trạng hôn nhân, quan hệ vợ/chồng/đồng đăng ký và thông tin hộ gia đình/người phụ thuộc | Cơ bản | **Có** |
+| Tình trạng nhà ở, sở hữu bất động sản và nhóm đối tượng được hưởng chính sách NOXH | Cơ bản | **Có** |
+| Nghề nghiệp, đơn vị công tác, quan hệ lao động, mã số thuế/BHXH trong hồ sơ chứng minh điều kiện | Cơ bản | **Có** |
+| Thu nhập, bảng lương, tài khoản hoặc nội dung tài chính trong tài liệu chứng minh | Nhạy cảm | **Có** |
+| Thông tin trẻ em/người chưa thành niên trong giấy tờ hộ gia đình hoặc tài liệu chứng minh | Cơ bản | **Có** |
+| `subjectRef`, `ownerSubject`, `pcid/cid`, actor/reviewer/recipient ID và định danh kỹ thuật có thể liên kết tới cá nhân | Cơ bản | **Có** |
+| Họ tên, email/số điện thoại công việc của agent/reviewer/recipient phục vụ phân công và thông báo | Cơ bản | **Có** |
+| Ảnh giấy tờ định danh, ảnh chân dung và chữ ký có trong tài liệu hồ sơ | Nhạy cảm | **Có** |
+| Selfie/video, liveness, face matching hoặc NFC eKYC | Nhạy cảm | **Không** |
+| Dữ liệu vị trí thời gian thực hoặc lịch sử di chuyển | Nhạy cảm | **Không** |
+| Nguồn gốc chủng tộc, dân tộc | Nhạy cảm | **Không** |
+| Quan điểm chính trị, tôn giáo, tín ngưỡng | Nhạy cảm | **Không** |
+| Đời sống riêng tư, bí mật cá nhân/bí mật gia đình ngoài thông tin quan hệ và điều kiện NOXH đã nêu | Nhạy cảm | **Không** |
+| Tình trạng sức khỏe, hồ sơ y tế hoặc dữ liệu di truyền | Nhạy cảm | **Không** |
+| Xu hướng tính dục | Nhạy cảm | **Không** |
+| Dữ liệu về hành vi phạm tội, tiền án, tiền sự | Nhạy cảm | **Không** |
+
+Checklist này ở trạng thái **DRAFT — chờ ANBM và Privacy/Pháp chế xác nhận và ký
+duyệt**. Product/System Owner phải chốt purpose/lawful basis cho từng dòng **Có**;
+Backend, OCR, File và Message owner phải cung cấp contract/evidence chứng minh các
+dòng **Không** không được persist, log, phát event hoặc thu thập ngoài mục đích.
+
+### 7.3.2 Phân loại và tối thiểu hóa
 
 - `vhm-ocr-ekyc` sở hữu tập trung media CCCD, dữ liệu applicant/spouse, kết quả trích xuất, confidence, lịch sử xác nhận và audit OCR.
 - Dossier Core chỉ persist `subjectRef` opaque và dữ liệu nghiệp vụ không thuộc OCR; request form chứa CCCD, họ tên, ngày sinh, phone/email, media path hoặc OCR result phải bị từ chối tại persistence boundary.
@@ -766,7 +808,7 @@ Không có đường ghi dữ liệu OCR/PII vào PostgreSQL của dossier. `vhm
 - Reviewer/recipient dùng opaque ID; tên/email được resolve từ IAM/TTOL/Message tại thời điểm sử dụng và không persist trong Dossier Core.
 - Detail, search, export hoặc notification cần dữ liệu applicant phải gọi API được phân quyền của nguồn authoritative; không tạo local projection/cache chứa PII.
 
-### 7.3.2 Ranh giới bảo vệ dữ liệu với `vhm-ocr-ekyc`
+### 7.3.3 Ranh giới bảo vệ dữ liệu với `vhm-ocr-ekyc`
 
 Media CCCD, PII applicant/spouse, provider payload, storage, retention, encryption và key rotation được xử lý tập trung tại `vhm-ocr-ekyc`; xem [L2 - VHMKDO2O - Dịch vụ OCR/eKYC](https://vin3s.atlassian.net/wiki/spaces/VARW/pages/3014268156/L2+-+VHMKDO2O+-+D+ch+v+OCR+eKYC). TDD Dossier không định nghĩa lại cơ chế mã hóa hoặc vòng đời khóa của OCR capability.
 
@@ -779,7 +821,7 @@ Trách nhiệm của Dossier Core giới hạn ở:
 5. Search theo họ tên/CCCD, export và hydrate detail dùng API batch/read có phân quyền của OCR capability. Khi OCR unavailable, fail/degrade theo contract; không fallback sang bản sao local.
 6. Dossier Core không sở hữu encryption key/salt cho OCR data. Rotation, emergency revocation và cryptographic erasure thuộc runbook của `vhm-ocr-ekyc`.
 
-### 7.3.3 Danh mục dữ liệu và yêu cầu quản lý
+### 7.3.4 Danh mục dữ liệu và yêu cầu quản lý
 
 Retention/legal hold/purge/quyền data subject đối với OCR/PII tuân theo TDD và policy của `vhm-ocr-ekyc`. Dossier Core chỉ quản retention của aggregate nghiệp vụ và opaque reference; purge dossier không được hiểu là đã purge dữ liệu tại OCR capability, vì vậy cần orchestration/delete contract hoặc runbook đối soát giữa hai nguồn.
 
