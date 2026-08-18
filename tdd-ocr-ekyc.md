@@ -472,11 +472,12 @@ tài nguyên xử lý hoặc transaction PostgreSQL trong thời gian chờ FPT.
 
 # 4. Non-Functional Requirements
 
-Mục này xác lập bộ tiêu chí NFR dùng để thẩm định thiết kế và nghiệm thu production.
-Kết quả được đo trên môi trường production-like sau 10 phút warm-up, trong 30 phút
-tải ổn định và phải đạt ở cả ba lần chạy liên tiếp. Khi dự báo tải hoặc SLA FPT làm
-thay đổi một target, TDD phải cập nhật giá trị mới và được thẩm định lại trước khi
-triển khai; không diễn giải lại target trong biên bản kiểm thử.
+Mục này xác lập bộ tiêu chí NFR dùng để thẩm định thiết kế và làm đầu vào nghiệm thu
+production. Mỗi tiêu chí gồm chỉ số, target và phương pháp kiểm chứng. Bằng chứng đáp
+ứng được lập trong giai đoạn kiểm thử hiệu năng/OAT trước go-live: môi trường
+production-like, warm-up 10 phút, tải ổn định 30 phút và ba lần chạy liên tiếp. Khi
+dự báo tải hoặc SLA FPT làm thay đổi một target, TDD được cập nhật và thẩm định lại
+trước khi triển khai; biên bản kiểm thử không thay thế quyết định thiết kế này.
 
 | **Hạng mục** | **Chỉ số đo lường** | **Giá trị mục tiêu (Target)** | **Ghi chú** |
 | --- | --- | --- | --- |
