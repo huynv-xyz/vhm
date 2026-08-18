@@ -1036,11 +1036,30 @@ riêng tư trước khi sử dụng dữ liệu thật.
 
 <a id="muc-8"></a>
 
-# 8. Business Flow Diagrams
+# 8. Luồng nghiệp vụ chi tiết
 
-## 8.1 Sequence/State Diagram
+## 8.1 Bảng tổng hợp luồng nghiệp vụ
 
-### 8.1.1 Chuẩn bị upload và tạo OCR
+| **STT** | **Actor/System** | **Hành động** | **Thành phần liên quan** | **Mô tả chi tiết** |
+| --- | --- | --- | --- | --- |
+| 1 | Mobile/Web | Yêu cầu chuẩn bị upload | Domain BFF, Domain Backend Service | Gửi metadata file, loại tài liệu, kích thước và MIME theo kênh nghiệp vụ. |
+| 2 | Domain Backend Service | Phân quyền hồ sơ và media | Domain BFF, `vhm-ocr-ekyc` | Kiểm tra quyền trên business object và media role trước khi chuyển yêu cầu vào capability. |
+| 3 | `vhm-ocr-ekyc` | Chuẩn bị upload | File Management, kho object riêng tư | Kiểm tra metadata, tạo path phía server và lấy presigned URL cùng signed headers. |
+| 4 | Mobile/Web | Upload media | Kho object riêng tư | PUT media trực tiếp bằng presigned URL và đúng signed headers; binary không đi qua Kafka. |
+| 5 | Mobile/Web | Yêu cầu tạo OCR | Domain BFF, Domain Backend Service, `vhm-ocr-ekyc` | Gửi tham chiếu media và `Idempotency-Key` sau khi upload hoàn tất. |
+| 6 | `vhm-ocr-ekyc` | Tạo OCR và công việc xử lý | File Management, PostgreSQL, outbox | Xác minh media tồn tại; ghi request, media reference và outbox event trong cùng transaction; trả `202 Accepted`. |
+| 7 | Outbox Publisher | Phát công việc OCR | PostgreSQL, Kafka | Đọc event đã commit, phát `eventId` và OCR ID lên Kafka, sau đó đánh dấu event đã phát. |
+| 8 | OCR Worker | Nhận và giữ quyền xử lý | Kafka, PostgreSQL | Nhận OCR ID, claim bản ghi; bỏ qua an toàn khi message trùng hoặc request đã terminal. |
+| 9 | OCR Worker | Xử lý OCR tài liệu thông thường | File Management, kho object riêng tư, FPT, PostgreSQL | Lấy media bằng presigned URL ngắn hạn, gọi FPT đồng bộ, chuẩn hóa trường cho phép và lưu kết quả mã hóa cùng trạng thái kết thúc. |
+| 10 | OCR Worker | Gửi hồ sơ FPT Sale | Kho object riêng tư, FPT Sale OCR, PostgreSQL | Tải ba tài liệu, gửi hồ sơ một lần, lưu FPT request ID, trạng thái xử lý và lịch thăm dò. |
+| 11 | OCR Worker | Thăm dò kết quả FPT Sale | Kafka, PostgreSQL, FPT Sale OCR | Thăm dò theo lịch đến khi hoàn tất, thất bại, hết hạn hoặc quá deadline; lưu kết quả mã hóa hoặc mã lỗi terminal. |
+| 12 | FPT SDK trên Mobile/Web | Gửi request eKYC đồng bộ | Domain BFF, Domain Backend Service, `vhm-ocr-ekyc` | Request được stream qua các lớp; Domain Backend Service phân quyền hành trình và capability chèn credential FPT phía server. |
+| 13 | `vhm-ocr-ekyc` | Gọi FPT eKYC | PostgreSQL, FPT | Lưu request và metadata lần gọi trước khi gọi FPT; nếu bước lưu thất bại thì dừng và không tạo giao dịch FPT. |
+| 14 | `vhm-ocr-ekyc` | Lưu và trả response eKYC | PostgreSQL, Domain Backend Service, Domain BFF, FPT SDK | Lưu status, header thuộc allowlist và body mã hóa; trả nguyên status/body cùng header hợp lệ cho SDK, không tự retry mutation. |
+
+## 8.2 Sequence/State Diagram
+
+### 8.2.1 Chuẩn bị upload và tạo OCR
 
 ```mermaid
 sequenceDiagram
@@ -1083,7 +1102,7 @@ sequenceDiagram
     O->>D: đánh dấu PUBLISHED
 ```
 
-### 8.1.2 OCR tài liệu thông thường
+### 8.2.2 OCR tài liệu thông thường
 
 ```mermaid
 sequenceDiagram
@@ -1112,7 +1131,7 @@ sequenceDiagram
     end
 ```
 
-### 8.1.3 Gửi/thăm dò FPT Sale
+### 8.2.3 Gửi/thăm dò FPT Sale
 
 ```mermaid
 sequenceDiagram
@@ -1149,7 +1168,7 @@ sequenceDiagram
     end
 ```
 
-### 8.1.4 Request eKYC đồng bộ
+### 8.2.4 Request eKYC đồng bộ
 
 ```mermaid
 sequenceDiagram
@@ -1190,7 +1209,7 @@ sequenceDiagram
     end
 ```
 
-## 8.2 Ma trận xử lý lỗi
+## 8.3 Ma trận xử lý lỗi
 
 | **Sự cố** | **Hành vi yêu cầu** | **Phục hồi/kiểm soát bắt buộc** |
 | --- | --- | --- |
@@ -1209,7 +1228,7 @@ sequenceDiagram
 | PostgreSQL lỗi sau khi đã nhận response eKYC từ FPT | Thử lưu hữu hạn, không gọi lại FPT; vẫn trả response FPT theo mục 6.5.2 | Phát metric/cảnh báo tức thời và xử lý theo runbook; chấp nhận không có tính nguyên tử xuyên HTTP–PostgreSQL. |
 | Không giải mã được kết quả/thiếu khóa | API 500 | Runbook phục hồi/luân chuyển khóa; đóng an toàn. |
 
-## 8.3 Chuẩn hóa dữ liệu
+## 8.4 Chuẩn hóa dữ liệu
 
 - Tên trường FPT chỉ được ánh xạ qua danh sách cho phép tường minh.
 - Số giấy tờ luôn là chuỗi; không chuyển thành số.
