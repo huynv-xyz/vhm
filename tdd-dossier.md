@@ -141,7 +141,7 @@ liệu nhạy cảm sang từng ứng dụng.
 | A-01 | OCR luôn bất đồng bộ từ góc nhìn kênh, kể cả khi lời gọi provider đồng bộ | Quyết định kiến trúc | API trả `202`; Domain Backend Service thăm dò OCR, chiếu kết quả nghiệp vụ qua Domain BFF cho Mobile/Web. |
 | A-02 | eKYC init/OCR/liveness đồng bộ và không tự thử lại mutation | Quyết định kiến trúc | Timeout/không rõ sau khi gửi phải trả lỗi, không phát lại mù. |
 | A-03 | `vhm-ocr-ekyc` gọi File Management để lấy presigned URL ngắn hạn và trả qua Domain Backend Service/Domain BFF; Mobile/Web PUT trực tiếp lên kho riêng tư | Quyết định kiến trúc | Processor lấy URL tải xuống qua File Management bằng tham chiếu đã lưu. |
-| A-04 | Kafka chuyển phát at-least-once; consumer phải idempotent | Giả định nền tảng | Thông điệp trùng không gọi FPT sau khi OCR đã được nhận xử lý hoặc đã kết thúc. |
+| A-04 | Luồng Outbox/Kafka vận hành theo cơ chế at-least-once; thông điệp có thể được phát hoặc nhận lặp | `Quyết định kiến trúc — ADR-013/ADR-014 (BASELINED)` | Publisher và consumer phải idempotent; không tạo thêm lần gọi FPT hoặc kết quả thứ hai khi nhận lại cùng OCR event. |
 | A-05 | FPT Sale giữ kết quả 30 ngày, thăm dò tối thiểu mỗi 3 giây, xử lý tối đa 5 phút | Theo tài liệu API OCR FPT cung cấp cho Vinhomes | Cần kiểm thử contract/SLA chính thức trước production. |
 | A-06 | Mỗi file Sale ≤20 MB; đúng 3 file; provider tổng request ≤60 MB | `BÊN NGOÀI` | Bộ nhớ/dung lượng phải được tính theo ba file. |
 | A-07 | FPT SDK yêu cầu duy trì cùng session và device context xuyên suốt luồng eKYC | `BÊN NGOÀI — Contract FPT (INT-01)` | Các hop bảo toàn session/device metadata và các header thuộc allowlist contract; phương án proxy và topology thực hiện theo ADR-003, ADR-011 và ADR-012. |
