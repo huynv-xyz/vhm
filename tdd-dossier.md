@@ -47,15 +47,22 @@ thuật được đánh dấu `READY FOR REVIEW` hoặc `BASELINED` bên dưới
 
 **L3 Artefact Register**
 
-| **Tài liệu L3** | **Trạng thái** | **Chủ sở hữu** | **Cổng bắt buộc** | **Liên kết** |
+Các artefact thiết kế dưới đây đã có nội dung đủ để thẩm định trong đặc tả nguồn
+hoặc được nhúng tại các mục được dẫn chiếu trong TDD. `READY FOR REVIEW` xác nhận
+mức độ sẵn sàng của nội dung thiết kế, không thay thế sign-off. Runbook thao tác,
+test report, dashboard URL và biên bản diễn tập là evidence nghiệm thu được tạo và
+gắn tại quality gate tương ứng, không được tuyên bố hoàn tất chỉ từ nội dung L2.
+
+| **Tài liệu L3** | **Trạng thái** | **Chủ sở hữu** | **Phạm vi/nguồn thẩm định** | **Evidence và cổng xác nhận** |
 | --- | --- | --- | --- | --- |
-| Đặc tả OpenAPI — OCR/eKYC/Upload | READY FOR REVIEW | Trưởng nhóm Backend | Trước khi duyệt API | OpenAPI tại artefact dự án; liên kết tài liệu chính thức: TBD |
-| Contract eKYC FPT & Ma trận tương thích kênh | READY FOR REVIEW | Tích hợp/Mobile/Web | Trước production eKYC | Nội dung contract tại các mục tích hợp, API và kiểm thử của TDD; liên kết chính thức: TBD |
-| Bộ kiểm thử contract FPT Sale OCR | READY FOR REVIEW | Tích hợp/QA | Trước production Sale OCR | Tài liệu API OCR FPT tại mục B; evidence thực thi chính thức được gắn tại quality gate |
-| Đặc tả Upload/Download media & Lưu giữ | PLANNED | Backend/ANBM/Quyền riêng tư | Trước khi duyệt media production | TBD |
-| Contract Kafka & Runbook phục hồi | PLANNED | Backend/Vận hành | Trước khi duyệt độ tin cậy | TBD |
-| Runbook migration & phục hồi CSDL | PLANNED | DBA/Vận hành | Trước OAT | TBD |
-| Runbook dashboard, cảnh báo & sự cố | PLANNED | Vận hành | Trước go-live | TBD |
+| OpenAPI eKYC SDK | READY FOR REVIEW | Backend/Integration Architecture | `src/main/resources/static/openapi/ekyc-bff-api-v1.yaml`; TDD mục 6.5 và 6.7 | Contract review và kiểm thử tương thích SDK theo INT-01/OI-004 trước E2E eKYC |
+| Contract API OCR và Media | READY FOR REVIEW | Backend/Solution Architecture | TDD mục 6.1–6.3, 6.6–6.7 và 8.2.1–8.2.3 | OpenAPI/contract-test report tại API quality gate; xác nhận backward compatibility trước phát hành |
+| Contract eKYC FPT và ma trận tương thích kênh | READY FOR REVIEW | Integration Architecture/Mobile/Web | TDD mục 6.5.1–6.5.3, 8.2.4, 8.3 và 15.3 | FPT, Mobile/Web và Tích hợp xác nhận INT-01; E2E theo phiên bản SDK và điều kiện đóng OI-004 |
+| Đặc tả contract-test FPT Sale OCR | READY FOR REVIEW | Integration Architecture/QA | TDD mục 6.4.2, 8.2.3, 8.3 và 15.2–15.4; tài liệu FPT tại Appendix B | Báo cáo contract test bao phủ trạng thái, lỗi, timeout và fixture đã làm sạch trước production Sale OCR |
+| Đặc tả media upload/download và yêu cầu lưu giữ | READY FOR REVIEW | Backend/ANBM/Data Privacy | TDD mục 6.3, 7.3.3–7.5, 8.2.1 và 9.4 | ANBM/Data Privacy duyệt retention/purge; storage sizing theo CAP-04 và điều kiện đóng OI-003 trước dữ liệu production |
+| Đặc tả Kafka reliability và phục hồi | READY FOR REVIEW | Backend/SRE | TDD mục 2.4.2–2.4.4, 12.2, 14.2 và 15.2–15.3 | Runbook được phê duyệt, test replay/trùng/crash window/DLT và biên bản diễn tập phục hồi; đóng OI-006 |
+| Yêu cầu migration và phục hồi CSDL | READY FOR REVIEW | DBA/SRE | TDD mục 7.1, 10.5, 12.3, 14.1–14.2 và 15.2 | Runbook được phê duyệt, kết quả migration/rollback, PITR/restore và xác nhận RTO/RPO theo OI-008 trước OAT |
+| Đặc tả observability và ứng phó sự cố | READY FOR REVIEW | SRE/Operations | TDD mục 13.1–13.4 và 14.2–14.3 | Dashboard URL, ngưỡng cảnh báo, routing/on-call, runbook và biên bản diễn tập tại OAT/Go-live |
 
 **Quy ước trạng thái thiết kế**
 
