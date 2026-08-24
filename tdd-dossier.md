@@ -144,10 +144,10 @@ liệu nhạy cảm sang từng ứng dụng.
 | A-04 | Kafka chuyển phát at-least-once; consumer phải idempotent | Giả định nền tảng | Thông điệp trùng không gọi FPT sau khi OCR đã được nhận xử lý hoặc đã kết thúc. |
 | A-05 | FPT Sale giữ kết quả 30 ngày, thăm dò tối thiểu mỗi 3 giây, xử lý tối đa 5 phút | Theo tài liệu API OCR FPT cung cấp cho Vinhomes | Cần kiểm thử contract/SLA chính thức trước production. |
 | A-06 | Mỗi file Sale ≤20 MB; đúng 3 file; provider tổng request ≤60 MB | `BÊN NGOÀI` | Bộ nhớ/dung lượng phải được tính theo ba file. |
-| A-07 | Luồng phiên FPT eKYC duy trì cùng ngữ cảnh phiên và thông tin thiết bị xuyên suốt các bước | Yêu cầu tích hợp FPT | Domain BFF, Domain Backend Service và `vhm-ocr-ekyc` giữ nguyên dữ liệu phiên/thiết bị, status/body và các header cần thiết theo contract SDK. |
-| A-08 | Luồng kênh đi theo `Mobile/Web → Domain BFF → Domain Backend Service → vhm-ocr-ekyc` | Yêu cầu kiến trúc | Domain BFF xác thực kênh; Domain Backend Service phân quyền đối tượng/ngữ cảnh nghiệp vụ và là caller trực tiếp được `vhm-ocr-ekyc` xác thực bằng danh tính workload. Backend process có thể đi vào Domain Backend Service mà không qua Domain BFF. |
-| A-09 | Credential provider/khóa mã hóa được cấp qua secret manager/runtime | `BẮT BUỘC` | Không được có secret trong source code, image, manifest hoặc log. |
-| A-10 | Purpose, consent, retention, residency và deletion policy được duyệt | Yêu cầu tuân thủ | Áp dụng trước khi xử lý dữ liệu thật trên production. |
+| A-07 | FPT SDK yêu cầu duy trì cùng session và device context xuyên suốt luồng eKYC | `BÊN NGOÀI — Contract FPT (INT-01)` | Các hop bảo toàn session/device metadata và các header thuộc allowlist contract; phương án proxy và topology thực hiện theo ADR-003, ADR-011 và ADR-012. |
+| A-08 | Luồng kênh đi theo `Mobile/Web → Domain BFF → Domain Backend Service → vhm-ocr-ekyc` | `Quyết định kiến trúc — ADR-012 (BASELINED)` | Domain BFF xác thực kênh; Domain Backend Service phân quyền đối tượng/ngữ cảnh nghiệp vụ và là caller trực tiếp được `vhm-ocr-ekyc` xác thực bằng danh tính workload. Backend process có thể đi vào Domain Backend Service mà không qua Domain BFF. |
+| A-09 | Credential provider/khóa mã hóa được cấp qua secret manager/runtime | `Kiểm soát ANBM bắt buộc` | Không được có secret trong source code, image, manifest hoặc log; lựa chọn nền tảng cấp secret/khóa và workload identity phải theo phương án được ANBM phê duyệt. |
+| A-10 | Purpose, consent, retention, residency và deletion policy được duyệt | `Điều kiện tuân thủ trước production — OI-003` | Áp dụng trước khi xử lý dữ liệu thật trên production; bằng chứng phê duyệt do Pháp chế/Quyền riêng tư sở hữu. |
 | A-11 | `source`, `referenceId`, `requestBy`, `subjectRef` là opaque reference, không nhúng PII | Contract | Vi phạm làm tăng rò rỉ ở DB/log. |
 
 ### Stakeholders & Personas
