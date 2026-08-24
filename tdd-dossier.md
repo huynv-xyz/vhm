@@ -12,30 +12,30 @@
 | **Chủ sở hữu tài liệu** | TBD — một cá nhân chịu trách nhiệm tài liệu |
 | **Chủ sở hữu hệ thống** | TBD |
 | **Hệ thống** | `vhm-ocr-ekyc` — năng lực OCR/eKYC dùng chung |
-| **Đội ngũ/PIC** | Backend: TBD · Kiến trúc: TBD · Tích hợp: TBD · ANBM: TBD · Quyền riêng tư dữ liệu: TBD · Vận hành: TBD |
-| **Người rà soát / Phê duyệt** | Sản phẩm: TBD · Kiến trúc: TBD · Tích hợp: TBD · ANBM: TBD · Quyền riêng tư/Pháp chế: TBD · Vận hành: TBD |
-| **Mốc thiết kế** | Baseline kiến trúc OCR/eKYC đã đủ nội dung kỹ thuật để thẩm định; việc phê duyệt chính thức tiếp tục được quản lý tại Approval & Review Gates |
+| **Nhóm chịu trách nhiệm** | Backend · Product/Business · Solution Architecture · Integration Architecture · ANBM/Security Architecture · Data Privacy/Legal · SRE/Cloud/DBA |
+| **Cơ chế rà soát/phê duyệt** | Theo workflow thẩm định chính thức của tài liệu; phạm vi trách nhiệm được quy định tại Review Responsibility Matrix |
+| **Mốc thiết kế** | Baseline kiến trúc OCR/eKYC đã đủ nội dung kỹ thuật để thẩm định; việc phê duyệt chính thức được quản lý tại workflow tài liệu và Governance Gates |
 | **Tài liệu L1** | Liên kết Confluence chính thức: TBD |
 | **Tài liệu L3** | Theo phần **L3 Artefact Register** của tài liệu này |
 | **Tiêu chuẩn tham chiếu** | Tiêu chuẩn thiết kế kiến trúc L2, IAM, ANBM, Quyền riêng tư dữ liệu và Quan sát hệ thống của VHM: phiên bản/liên kết chính thức TBD |
 | **Lần rà soát gần nhất** | 24/08/2026 |
 | **Mục lục** | Tự động tạo từ các heading cấp 1–4 khi xuất bản lên Confluence. <!-- CONFLUENCE_TOC --> |
 
-**Approval & Review Gates**
+**Review Responsibility Matrix**
 
-| **Vai trò rà soát/phê duyệt** | **Họ tên** | **Phạm vi rà soát** | **Quyết định** | **Ngày xác nhận** |
-| --- | --- | --- | --- | --- |
-| Chủ sở hữu Sản phẩm/Nghiệp vụ | TBD | Use case OCR thường, CCCD hai mặt, hồ sơ Sale và eKYC | Chờ rà soát | — |
-| Kiến trúc Ứng dụng/Giải pháp | TBD | Ranh giới API/processor/shared, NFR và ADR | Chờ rà soát | — |
-| Kiến trúc Tích hợp | TBD | File Management, kho object riêng tư, Kafka, FPT và contract client | Chờ rà soát | — |
-| ANBM | TBD | IAM, secret, media, mã hóa, bảo vệ dữ liệu và kiểm soát mối đe dọa | Chờ rà soát | — |
-| Quyền riêng tư/Pháp chế | TBD | Consent, PII/sinh trắc, mục đích, vị trí dữ liệu, lưu giữ và xóa | Chờ rà soát | — |
-| Vận hành/Cloud/DBA | TBD | Dung lượng, triển khai, giám sát, sao lưu, phục hồi và runbook | Chờ rà soát | — |
+| **Nhóm chịu trách nhiệm** | **Phạm vi thẩm định** | **Cổng xác nhận** |
+| --- | --- | --- |
+| Product Owner/Business Owner | Use case OCR thường, CCCD hai mặt, hồ sơ Sale/eKYC, trường kết quả và quy tắc áp dụng | Business/UAT |
+| Solution Architecture | Ranh giới API/processor/shared, NFR và ADR | Architecture |
+| Integration Architecture | File Management, kho object riêng tư, Kafka, FPT và contract client | Integration |
+| ANBM/Security Architecture | IAM, secret, media, mã hóa, bảo vệ dữ liệu và threat model | Security |
+| Data Privacy/Legal | Consent, PII/sinh trắc, mục đích, residency, retention và deletion | Data production |
+| SRE/Cloud/DBA | Dung lượng, triển khai, giám sát, sao lưu, phục hồi và runbook | OAT/Go-live |
 
-Trạng thái trong bảng trên theo dõi **quyết định governance và bằng chứng ký duyệt**;
-không biểu thị mức độ hoàn thiện của nội dung thiết kế. Các artefact đã đủ nội dung
-kỹ thuật được đánh dấu `READY FOR REVIEW` hoặc `BASELINED` bên dưới nhưng không mặc
-nhiên thay thế phê duyệt của chủ sở hữu tương ứng.
+Tên người phê duyệt, quyết định, ngày xác nhận và evidence được ghi nhận tại workflow
+thẩm định chính thức của tài liệu. Ma trận này xác định trách nhiệm và phạm vi thẩm
+định, không thay thế approval record của workflow. Các artefact đã đủ nội dung kỹ
+thuật được đánh dấu `READY FOR REVIEW` hoặc `BASELINED` bên dưới.
 
 **Governance Gates**
 
