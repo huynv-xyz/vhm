@@ -47,6 +47,7 @@ L2 chốt nguyên tắc, ownership, invariant và ranh giới tích hợp. Các 
 | Pipeline Definition Social Housing v1 | Backend/BA | Trước triển khai workflow và UAT | Mục 2.3, 6.5 và 8.1 |
 | Consent UX & Evidence Specification | Product/Market/Backend/Privacy/Legal | Trước UAT hành trình khách hàng | Mục 3.2, 7.3.3 và 8.1.2–8.1.4 |
 | Database Schema & Migration Plan | Backend/DBA | Trước integration/OAT | Mục 7.1, 7.4 và 10.5 |
+| Outbound Timeout & Resilience Matrix | Backend/SRE/Tích hợp | Trước duyệt L3 integration; xác nhận bằng load test trước OAT | Mục 4.1, 6.1.3 và 12.2 |
 
 ## Quy ước trạng thái thiết kế
 
@@ -424,24 +425,27 @@ Các mục tiêu `200 req/s`, P95 cụ thể và availability `99.9%` chưa có 
 | NFR-09 | Observability | Metrics/log/trace/correlation và alert có owner | `BẮT BUỘC` |
 | NFR-10 | Maintainability | Versioned migration/schema/pipeline; backward-compatible API | `BẮT BUỘC` |
 
-## 4.1 Ngân sách timeout outbound — NFR-T04
+## 4.1 Nguyên tắc phân bổ deadline và timeout — NFR-T04
 
-Các giá trị dưới đây là baseline cấu hình theo millisecond cho từng attempt, áp
-dụng tại ranh giới `vhm-dossier-core`. Load test được phép hiệu chỉnh nhưng không
-được để timeout không giới hạn hoặc tăng vượt deadline end-to-end mà không có
-quyết định kiến trúc cập nhật.
+L2 không cố định một giá trị millisecond ước lượng khi end-to-end deadline và SLO
+của dependency chưa có nguồn thẩm quyền. Thay vào đó, mọi outbound operation của
+Core phải tuân thủ các invariant sau:
 
-| **Outbound call** | **Connect timeout** | **Read timeout** | **Tổng budget tối đa** | **Retry trong request** |
-| --- | ---: | ---: | ---: | --- |
-| `POST /ocr` → `vhm-ocr-ekyc` | 200 ms | 800 ms | 1.000 ms | Không retry mù; lần gọi lại phải dùng cùng `Idempotency-Key`. |
-| `GET /ocr/{id}` hoặc result → `vhm-ocr-ekyc` | 200 ms | 500 ms | 1.500 ms | Tối đa 1 lần khi connect lỗi hoặc `502/503`, chỉ khi budget còn đủ. |
-| File prepare-upload/presign | 200 ms | 800 ms | 1.000 ms | Không retry mutation khi chưa xác định outcome; chỉ retry nếu File contract bảo đảm idempotent. |
-| File existence/ownership/metadata | 200 ms | 500 ms | 1.500 ms | Tối đa 1 lần khi connect lỗi hoặc `502/503`, chỉ khi budget còn đủ. |
-| File download-presign | 200 ms | 800 ms | 1.000 ms | Không retry sau khi hết budget. |
+- Có `connect timeout`, `read/response timeout` và `total outbound budget` hữu hạn; không dùng timeout vô hạn hoặc default không được kiểm soát.
+- Deadline từ BFF phải được truyền xuống Core. Trước mỗi hop, Core tính remaining deadline và không bắt đầu call/retry nếu budget còn lại không đủ.
+- `outbound budget ≤ remaining deadline − core processing reserve`; tổng `attempt timeout + backoff` không được vượt outbound budget.
+- Thứ tự deadline phải bảo đảm `dependency call < Core < BFF < client`, để lớp ngoài còn thời gian map lỗi và kết thúc response có kiểm soát.
+- Mutation có delivery outcome không xác định không được retry mù. Query/idempotent operation chỉ retry khi còn budget và đúng error class đã được phê duyệt.
+- Timeout, retry exhaustion, circuit state và latency phải được đo riêng theo dependency/operation; không dùng một cấu hình chung cho mọi outbound call.
 
-Core không truyền file binary trong các call trên; upload/download binary đi trực
-tiếp giữa client và Object Storage theo presigned URL. Caller không được bắt đầu
-attempt mới nếu remaining deadline nhỏ hơn budget tối thiểu của attempt đó.
+`Outbound Timeout & Resilience Matrix` tại L3 phải công bố cho từng operation tối
+thiểu: connect timeout, read timeout, total budget, max attempts, backoff,
+retryable error classes, circuit-breaker policy và owner. Giá trị được dẫn xuất từ
+end-to-end deadline, dependency SLO và latency P99; phải hoàn tất trước duyệt L3
+integration và được xác nhận bằng contract/load test trước OAT.
+
+Core không truyền file binary trong các call File nêu tại mục 6; upload/download
+binary đi trực tiếp giữa client và Object Storage theo presigned URL.
 
 # 5. Technology Stack & Justification
 
@@ -1479,6 +1483,7 @@ Bộ kiểm thử phải bao phủ invariant domain, database concurrency, API/s
 - Outbox crash trước/sau broker acknowledgement có thể phát lặp nhưng không mất event.
 - Notification retry/dedupe/FAILED và reminder T+6/T+18 qua ngày nghỉ/cycle mới.
 - OCR: idempotent create, `202`/`Retry-After`, polling `QUEUED/PROCESSING/terminal`, user-confirm-before-apply, timeout và service unavailable.
+- Contract/load test phải chứng minh timeout từng outbound operation khớp L3 matrix, retry dừng khi hết remaining deadline và mutation không bị retry mù.
 - Negative contract/E2E phải chứng minh prepare-upload và submit từ Market bị từ chối khi consent thiếu, sai subject/purpose/version hoặc đã bị rút.
 - UI phải kiểm thử checkbox không tích sẵn, ghi nhận/rút consent và xác nhận submit không bị dùng để suy diễn consent.
 - File cross-owner/cross-reference, path traversal, MIME/magic/checksum, expired presign và upload grant.
