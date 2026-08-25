@@ -416,13 +416,32 @@ Các mục tiêu `200 req/s`, P95 cụ thể và availability `99.9%` chưa có 
 | NFR-01 | Availability | Core stateless, có thể scale ngang; Redis nonce/replay là dependency đồng bộ fail-closed và phải được tính trong availability end-to-end của hành trình | `BẮT BUỘC` |
 | NFR-02 | Consistency | Không mất mutation đã commit; outbox cho event/notification | `BẮT BUỘC` |
 | NFR-03 | Concurrency | Idempotency, optimistic lock, unique index, row/Redis lock | `BẮT BUỘC` |
-| NFR-04 | Performance | P95/P99 theo endpoint và peak TPS phải được đo | TBD |
+| NFR-T04 | Performance/Timeout | P95/P99 theo endpoint phải được đo; outbound call tuân thủ timeout budget tại mục 4.1 | `BẮT BUỘC` |
 | NFR-05 | Scalability | Scale ngang API/relay; không dùng session cục bộ làm authority | `BẮT BUỘC` |
 | NFR-06 | Security | Signed request/actor, least privilege, PII masking, secret rotation | `BẮT BUỘC` |
 | NFR-07 | Privacy | Consent evidence, purpose-bound processing, retention/deletion theo policy và kiểm soát truy cập dữ liệu hồ sơ | `BẮT BUỘC` |
 | NFR-08 | Recoverability | PostgreSQL PITR, outbox replay, backup/restore drill | TBD/BẮT BUỘC |
 | NFR-09 | Observability | Metrics/log/trace/correlation và alert có owner | `BẮT BUỘC` |
 | NFR-10 | Maintainability | Versioned migration/schema/pipeline; backward-compatible API | `BẮT BUỘC` |
+
+## 4.1 Ngân sách timeout outbound — NFR-T04
+
+Các giá trị dưới đây là baseline cấu hình theo millisecond cho từng attempt, áp
+dụng tại ranh giới `vhm-dossier-core`. Load test được phép hiệu chỉnh nhưng không
+được để timeout không giới hạn hoặc tăng vượt deadline end-to-end mà không có
+quyết định kiến trúc cập nhật.
+
+| **Outbound call** | **Connect timeout** | **Read timeout** | **Tổng budget tối đa** | **Retry trong request** |
+| --- | ---: | ---: | ---: | --- |
+| `POST /ocr` → `vhm-ocr-ekyc` | 200 ms | 800 ms | 1.000 ms | Không retry mù; lần gọi lại phải dùng cùng `Idempotency-Key`. |
+| `GET /ocr/{id}` hoặc result → `vhm-ocr-ekyc` | 200 ms | 500 ms | 1.500 ms | Tối đa 1 lần khi connect lỗi hoặc `502/503`, chỉ khi budget còn đủ. |
+| File prepare-upload/presign | 200 ms | 800 ms | 1.000 ms | Không retry mutation khi chưa xác định outcome; chỉ retry nếu File contract bảo đảm idempotent. |
+| File existence/ownership/metadata | 200 ms | 500 ms | 1.500 ms | Tối đa 1 lần khi connect lỗi hoặc `502/503`, chỉ khi budget còn đủ. |
+| File download-presign | 200 ms | 800 ms | 1.000 ms | Không retry sau khi hết budget. |
+
+Core không truyền file binary trong các call trên; upload/download binary đi trực
+tiếp giữa client và Object Storage theo presigned URL. Caller không được bắt đầu
+attempt mới nếu remaining deadline nhỏ hơn budget tối thiểu của attempt đó.
 
 # 5. Technology Stack & Justification
 
@@ -510,8 +529,8 @@ topology nội bộ phía sau các capability bên ngoài không thuộc phạm 
 | **ID** | **Tích hợp** | **Hướng** | **Kiểu** | **Mục đích** | **Failure policy** |
 | --- | --- | --- | --- | --- | --- |
 | INT-01 | Market/Agent/BO BFF | Inbound | HTTPS sync | Registration, consent, list/detail và action | Signature/actor fail closed |
-| INT-02 | Private File Service | Outbound | Client sync | Prepare upload, existence, download/presign | Fail hard cho validation bắt buộc |
-| INT-03 | `vhm-ocr-ekyc` | Core outbound | HTTP async resource | OCR CCCD và kết quả chuẩn sau Domain authorization | Idempotent create, polling hữu hạn, không retry mù |
+| INT-02 | Private File Service | Outbound | Client sync | Prepare upload, existence, download/presign | Fail hard cho validation bắt buộc; timeout theo NFR-T04 |
+| INT-03 | `vhm-ocr-ekyc` | Core outbound | HTTP async resource | OCR CCCD và kết quả chuẩn sau Domain authorization | Idempotent create, polling hữu hạn, không retry mù; timeout theo NFR-T04 |
 | INT-04 | Market/Project | Outbound | HTTP sync + cache | SAP/project/unit/special days | Tùy use case: fail hard hoặc best effort |
 | INT-05 | TTOL | Outbound | HTTP/cache | Roster reviewer/holiday | Auto-assign best effort; manual fallback |
 | INT-06 | Message Delivery | Outbound | Outbox relay | Email notification | Retry/backoff → FAILED |
@@ -926,7 +945,7 @@ sequenceDiagram
     participant Store as Private Object Storage
 
     Customer->>Market: Đăng nhập và vào hành trình NOXH
-    Market-->>Customer: Hiển thị notice; checkbox chưa chọn
+    Market-->>Customer: Hiển thị notice<br/>checkbox chưa chọn
     Customer->>Market: Xác nhận lựa chọn
     Market->>API: Ghi consent evidence<br/>(dossier, purpose, notice version, decision, channel)
     API->>Domain: Bind subject từ actor<br/>validate purpose/version
