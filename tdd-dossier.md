@@ -132,7 +132,7 @@ Tài liệu này mô tả **kiến trúc mục tiêu L2**. Dossier được thi�
 | A-07 | Structural guard và Form Data Contract phải được thực thi trước persistence | `BẮT BUỘC` | Production không được bỏ qua schema validation. |
 | A-08 | Luồng kênh bắt buộc đi `Web → BFF → Core → vhm-ocr-ekyc`; Core gọi prepare-upload/create và thăm dò `/ocr/result`, lưu `ocrId`/status projection | Quyết định kiến trúc | BFF không gọi capability trực tiếp; Core không lưu media/presigned URL/raw OCR result. |
 | A-09 | External services có contract/SLA riêng | `BÊN NGOÀI` | Cần timeout, retry hữu hạn, circuit breaker/bulkhead theo operation, monitoring và contract test. |
-| A-10 | `vhm-dossier-core` là Domain Backend Service sở hữu consent cho hành trình NOXH; BFF không là consent authority | Quyết định kiến trúc | Bằng chứng và workflow được chốt tại mục 7.3.3. |
+| A-10 | `vhm-dossier-core` là backend service sở hữu consent cho hành trình NOXH; BFF không là consent authority | Quyết định kiến trúc | Bằng chứng và workflow được chốt tại mục 7.3.3. |
 | A-11 | Trong hành trình khách hàng trên Market Landing, Core chỉ gọi prepare-upload OCR/File, OCR create và submit khi consent evidence hợp lệ | `BẮT BUỘC` | BFF xác thực, phân quyền kênh và chuyển request; không dùng cờ `consent=true` từ UI/BFF làm authority. |
 | A-12 | Dossier Core là authority của checklist chuẩn có version và snapshot áp dụng cho từng hồ sơ | Quyết định kiến trúc | Client không được quyết định `isRequired` hoặc readiness submit. |
 | A-13 | Trước khi gửi dữ liệu của vợ/chồng hoặc thành viên hộ gia đình, người nộp phải xác nhận đã thông báo và có sự đồng ý/ủy quyền cần thiết của các chủ thể liên quan theo nội dung được Privacy/Legal phê duyệt | `BẮT BUỘC` | Evidence chỉ chứng minh cam kết của người nộp, không được biểu diễn như consent do Core trực tiếp thu từ bên thứ ba. |
@@ -175,7 +175,7 @@ Tài liệu này mô tả **kiến trúc mục tiêu L2**. Dossier được thi�
 
 | **Mã** | **Nguyên tắc** |
 | --- | --- |
-| ARCH-01 | Dossier domain và pipeline được quản lý thống nhất trong cùng ranh giới giao dịch. |
+| ARCH-01 | Hồ sơ và pipeline được Dossier Core quản lý thống nhất trong cùng ranh giới giao dịch. |
 | ARCH-02 | PostgreSQL là nguồn sự thật; mutation hồ sơ, checklist, history và outbox cùng transaction. |
 | ARCH-03 | Create và submit tách biệt; mọi create thành công trả về `DRAFT`. |
 | ARCH-04 | Pipeline được cấu hình bằng phiên bản và thực thi trong cùng process/transaction với dossier. |
@@ -186,7 +186,7 @@ Tài liệu này mô tả **kiến trúc mục tiêu L2**. Dossier được thi�
 | ARCH-09 | File path là tham chiếu opaque; không suy luận ownership từ prefix. |
 | ARCH-10 | Mọi khoảng trống production phải được quản lý bằng risk/open issue, không mô tả như đã triển khai. |
 | ARCH-11 | Core là caller trực tiếp của contract prepare-upload, `POST /ocr` và `/ocr/result` do `vhm-ocr-ekyc` công bố; polling hữu hạn theo `ocrId`/`Retry-After`, không persist media/presigned URL/raw result. |
-| ARCH-12 | Market Landing Page hiển thị/thu consent và third-party attestation; BFF xác thực, phân quyền kênh và chuyển request; Dossier Domain lưu/kiểm tra evidence và sở hữu business gate. |
+| ARCH-12 | Market Landing Page hiển thị/thu consent và third-party attestation; BFF xác thực, phân quyền kênh và chuyển request; Dossier Core lưu/kiểm tra evidence và sở hữu business gate. |
 | ARCH-13 | Core chỉ nhận dữ liệu người liên quan, cho phép upload và submit hồ sơ trực tuyến khi các evidence bắt buộc còn hiệu lực. |
 | ARCH-14 | BFF xử lý authentication/authorization theo kênh và presentation contract; Core thực hiện business authorization và gọi capability; Web PUT media trực tiếp vào private storage bằng presigned URL, byte media không đi qua BFF/Core. |
 | ARCH-15 | Dossier Core sở hữu checklist chuẩn có version và snapshot theo hồ sơ; dữ liệu `isRequired` từ client không có giá trị thẩm quyền. |
@@ -209,7 +209,7 @@ flowchart LR
 
     subgraph SCOPE[IN SCOPE — vhm-dossier-core]
         direction TB
-        Core[Dossier Core<br/>API · Domain · Consent · Pipeline]
+        Core[Dossier Core<br/>Hồ sơ · Consent · Checklist · Pipeline<br/>Outbox & Scheduler]
         PG[(PostgreSQL<br/>dossier_db)]
         Core <--> PG
     end
@@ -248,57 +248,46 @@ flowchart LR
 
     subgraph SCOPE[IN SCOPE — vhm-dossier-core]
         direction TB
-        API[Dossier Core API]
-        DOMAIN[Dossier Domain<br/>Hồ sơ · Consent · Checklist · Pipeline]
-        RELAY[Outbox & Scheduler]
+        CORE[Dossier Core<br/>Hồ sơ · Consent · Checklist · Pipeline<br/>Outbox & Scheduler]
         DB[(PostgreSQL<br/>dossier_db)]
 
-        API --> DOMAIN
-        DOMAIN --> DB
-        DOMAIN --> RELAY
-        RELAY --> DB
+        CORE <--> DB
     end
 
-    MBFF -->|Basic + HMAC<br/>actor context + consent command| API
-    ABFF -->|Basic + HMAC<br/>actor context| API
-    DOMAIN --> Redis[(Redis / Redisson)]
-    RELAY --> Kafka[(Kafka)]
-    RELAY --> Message[Message Delivery]
-    DOMAIN -->|prepare-upload · create<br/>authorized result query| OCR[vhm-ocr-ekyc]
-    RELAY -->|scheduled poll /ocr/result| OCR
-    DOMAIN --> File[File Management]
+    MBFF -->|Basic + HMAC<br/>actor context + consent command| CORE
+    ABFF -->|Basic + HMAC<br/>actor context| CORE
+    CORE --> Redis[(Redis / Redisson)]
+    CORE --> Kafka[(Kafka)]
+    CORE --> Message[Message Delivery]
+    CORE -->|prepare-upload · create<br/>poll/status/result| OCR[vhm-ocr-ekyc]
+    CORE --> File[File Management]
     OCR -->|presigned metadata| File
     File -.-> Store[(Private Object Storage)]
     Landing -->|presigned PUT| Store
     Channel -->|presigned PUT| Store
-    DOMAIN --> Project[Market / Project]
-    DOMAIN --> TTOL[TTOL]
+    CORE --> Project[Market / Project]
+    CORE --> TTOL[TTOL]
 
-    class API,DOMAIN,RELAY,DB inScope
+    class CORE,DB inScope
     class Landing,MBFF,Channel,ABFF,Redis,Kafka,Message,OCR,File,Store,Project,TTOL external
     style SCOPE fill:#F5FBF6,stroke:#137333,stroke-width:2px
 ```
 
-Các component trong khung xanh cùng nằm trong một deployable
-`vhm-dossier-core`; đường biên trong hình là ranh giới logic, không phải service
-hoặc deployment độc lập.
+Khung xanh biểu diễn đúng một deployable `vhm-dossier-core`; hồ sơ, consent,
+checklist, pipeline, outbox, scheduler và các contract vào/ra đều là trách nhiệm
+bên trong Dossier Core, không phải các service độc lập.
 
 ### 2.2.3 Sơ đồ kiến trúc pipeline nội bộ
 
 Pipeline Social Housing là cấu hình có phiên bản được nạp cùng ứng dụng. Khi tạo hồ sơ, core ghi phiên bản pipeline và trạng thái khởi tạo; mỗi command được kiểm tra role, ownership và guard nghiệp vụ rồi cập nhật projection, history, reviewer và outbox trong một transaction. Không có process instance Camunda và không có ranh giới eventual consistency với workflow engine ngoài.
 
-### 2.2.4 Phân định trách nhiệm module
-
-`Dossier Domain` là module logic nằm bên trong `vhm-dossier-core` như thể hiện tại
-mục 2.2.2; đây không phải một service hoặc deployable độc lập.
+### 2.2.4 Phân định trách nhiệm
 
 | **Khối kiến trúc** | **Trách nhiệm** | **Dữ liệu quản lý** | **Không chịu trách nhiệm** |
 | --- | --- | --- | --- |
 | Market Landing/Agent UI | Hiển thị notice/form/result và thu thao tác/xác nhận của người dùng theo response backend | Chỉ giữ trạng thái UI tạm thời | Đánh giá consent, phân quyền dossier, checklist, OCR lifecycle hoặc persistence. |
 | Market/Agent BFF | Xác thực/phân quyền ở biên kênh, map presentation contract, ký workload/actor context và chuyển request/response | Không sở hữu dữ liệu nghiệp vụ | Business invariant, consent gate, OCR orchestration và gọi trực tiếp `vhm-ocr-ekyc`. |
-| Dossier Core API | Internal contract, xác thực workload/actor context, validation request và điều phối command/query | Không sở hữu aggregate riêng | Dữ liệu authoritative của dependency. |
-| Dossier Domain | Vòng đời hồ sơ, consent gate/bằng chứng, business authorization, validation, checklist, pipeline, OCR prepare-upload/create/status-result integration và phân công | Aggregate dossier, checklist definition/version/snapshot, `ocrId`/`ocrStatus` và consent evidence | Identity kênh, media, presigned URL và persistence raw/canonical OCR result. |
-| Outbox/Scheduler | Phát sự kiện, gửi notification, nhắc SLA và polling/reconciliation OCR sau commit | Trạng thái delivery/dedup và lịch poll; cập nhật OCR status projection theo guard của Core | Thay đổi quyết định nghiệp vụ đã commit hoặc persist OCR result. |
+| Dossier Core | Cung cấp internal contract; xác thực workload/actor context; quản lý vòng đời hồ sơ, consent gate/bằng chứng, business authorization, validation, checklist, pipeline, phân công; phát sự kiện/gửi notification, nhắc SLA và polling/reconciliation OCR sau commit | Aggregate dossier, checklist definition/version/snapshot, consent evidence, trạng thái delivery/dedup, lịch poll và `ocrId`/`ocrStatus` projection | Identity kênh, media, presigned URL, dữ liệu authoritative của dependency và persistence raw/canonical OCR result. |
 | `vhm-ocr-ekyc` | Nhận prepare-upload/create/status-result từ Core, quản lý media reference và thực thi OCR lifecycle | OCR lifecycle, media reference, kết quả authoritative và retention media | Phân quyền dossier, hiển thị/thu consent hoặc tự áp kết quả vào hồ sơ. |
 | Enterprise services | File, Market, TTOL, Message Delivery | Dữ liệu thuộc từng miền | Sở hữu aggregate dossier. |
 
@@ -519,7 +508,7 @@ ADR chi tiết nằm tại Phụ lục D. Các quyết định nền tảng: mod
 | CMP-01 | Market Landing Page / Agent UI | Bên ngoài | Hiển thị/thu input theo presentation contract; PUT media bằng presigned URL | Không là authority của hồ sơ, consent, quyền hoặc OCR status/result |
 | CMP-02 | Market / Agent / BO BFF | Bên ngoài | Xác thực/phân quyền ở biên kênh, map presentation contract, ký workload/actor context và chuyển request/response | Không sở hữu business rule và không gọi trực tiếp `vhm-ocr-ekyc` |
 | CMP-03 | `vhm-dossier-core` | **IN SCOPE** | Business authorization, hồ sơ, consent, checklist, pipeline, OCR prepare-upload/create/status-result integration và outbox | Authority của aggregate hồ sơ, checklist và consent NOXH; chỉ chiếu `ocrId`/status, không sở hữu media/result OCR |
-| CMP-04 | PostgreSQL `dossier_db` | **IN SCOPE — owned data store** | Lưu aggregate, checklist definition/snapshot, history, consent evidence và outbox | Source of truth của Dossier Domain |
+| CMP-04 | PostgreSQL `dossier_db` | **IN SCOPE — owned data store** | Lưu aggregate, checklist definition/snapshot, history, consent evidence và outbox | Source of truth của Dossier Core |
 | CMP-05 | Redis / Redisson | Shared platform | Nonce/replay security, counter, cache và coordination | Không là source of truth nghiệp vụ |
 | CMP-06 | Kafka | Shared platform | Phân phối domain event sau commit | Outbox/PostgreSQL là nguồn replay |
 | CMP-07 | Private File Service | Bên ngoài | Presigned upload, kiểm tra tồn tại, download và ownership contract | Authority của file binary/upload grant |
@@ -542,7 +531,7 @@ flowchart LR
 
     subgraph SCOPE[IN SCOPE — vhm-dossier-core]
         direction TB
-        CORE[Dossier Core<br/>API · Domain · Outbox/Scheduler]
+        CORE[Dossier Core<br/>Hồ sơ · Consent · Checklist · Pipeline<br/>Outbox & Scheduler]
         DB[(PostgreSQL<br/>dossier_db)]
         CORE <-->|transactional data| DB
     end
@@ -2162,7 +2151,7 @@ Vấn đề mở không mặc nhiên được chấp nhận. Risk acceptance ph�
 | ADR-009 | File path opaque, không kiểm tra dossier-prefix | Upload namespace độc lập; ownership phải dựa contract File Service | CHẤP NHẬN có điều kiện |
 | ADR-010 | OCR qua capability dùng chung `vhm-ocr-ekyc` | Dossier không sở hữu worker/raw result hoặc dependency phía sau capability; không gọi bỏ qua capability | CHẤP NHẬN |
 | ADR-011 | OCR chỉ áp dụng sau xác nhận và PATCH dossier | OCR không tự quyết định nghiệp vụ; giữ optimistic/business guards | CHẤP NHẬN |
-| ADR-012 | Domain sở hữu consent và third-party attestation cho hành trình NOXH | Market Landing hiển thị/thu lựa chọn; BFF xác thực, phân quyền kênh và chuyển request; Core lưu evidence, phân biệt consent của người nộp với cam kết về dữ liệu người liên quan và kiểm tra tại mutation/upload/submit theo mục 7.3.3 | CHẤP NHẬN |
+| ADR-012 | Dossier Core sở hữu consent và third-party attestation cho hành trình NOXH | Market Landing hiển thị/thu lựa chọn; BFF xác thực, phân quyền kênh và chuyển request; Core lưu evidence, phân biệt consent của người nộp với cam kết về dữ liệu người liên quan và kiểm tra tại mutation/upload/submit theo mục 7.3.3 | CHẤP NHẬN |
 | ADR-013 | Dossier Core sở hữu checklist definition/version và snapshot theo dossier | Client không quyết định requiredness; submit dùng snapshot server-side | CHẤP NHẬN |
 | ADR-014 | Persist OCR intent trước outbound; caller replay create qua BFF bằng stable key/payload, Core polling sau khi có `ocrId` | Outcome unknown không bị ghi `FAILED`; không cần persist `s3PathFile`, retry/crash hội tụ về cùng OCR resource và operation treo được watchdog phát hiện | CHẤP NHẬN |
 | ADR-015 | BFF → Core giữ HTTPS + Basic Auth + HMAC | Phù hợp wire contract hiện tại; Basic credential/HMAC key tách theo caller, môi trường và một chiều. Không tuyên bố mTLS/JWT; residual shared-secret risk phải có sign-off theo AR-017 | CHẤP NHẬN |
