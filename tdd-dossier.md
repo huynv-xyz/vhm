@@ -5,7 +5,7 @@
 | **Trường** | **Nội dung** |
 | --- | --- |
 | **Trạng thái** | **ĐANG THẨM ĐỊNH (UNDER REVIEW)** |
-| **Phiên bản & lịch sử thay đổi** | `v0.9.12` — 26/08/2026 — Rà soát trước Confluence: chuẩn hóa data ownership/DFD/deployment theo chuẩn L2, lựa chọn từ chối consent và cách diễn đạt tại các cổng production.<br>`v0.9.11` — 25/08/2026 — Làm rõ phạm vi NOXH tại capability `vhm-ocr-ekyc` chỉ gồm OCR CCCD.<br>`v0.9.10` — 25/08/2026 — Đồng bộ boundary theo OCR L2: BFF xử lý authentication/authorization ở biên kênh và chuyển contract; Core sở hữu business authorization, prepare-upload/create/poll/result integration và consent gate.<br>`v0.9.9` — 25/08/2026 — Chốt inbound rate-limit contract `429 + Retry-After` và capacity gate theo client/operation.<br>`v0.9.8` — 25/08/2026 — Làm rõ network-origin logging và correlation WAF/BFF/Core.<br>`v0.9.7` — 25/08/2026 — Chốt Basic Auth + HMAC cho BFF → Core, phạm vi credential một chiều và kiểm soát rủi ro shared secret.<br>`v0.9.6` — 25/08/2026 — Làm rõ tính cần thiết, giới hạn mục đích và ownership ảnh CCCD thuộc `vhm-ocr-ekyc`.<br>`v0.9.5` — 25/08/2026 — Làm rõ baseline không thu thập riêng dữ liệu trẻ em/người chưa thành niên.<br>`v0.9.4` — 25/08/2026 — Bổ sung nghĩa vụ và evidence của người nộp khi hồ sơ có dữ liệu vợ/chồng/thành viên hộ gia đình.<br>`v0.9.3` — 25/08/2026 — Chốt idempotency hai kênh, checklist do Core sở hữu, consent journey và ranh giới deployment ở mức L2.<br>`v0.9.2` — 25/08/2026 — Chuẩn hóa scope diagram, integration/DFD/sequence và reliability boundary.<br>`v0.9.1` — 25/08/2026 — Bổ sung ownership và consent gate tại bước upload/submit hồ sơ NOXH trực tuyến.<br>`v0.9.0` — 15/08/2026 — Thiết lập kiến trúc mục tiêu cho dịch vụ quản lý hồ sơ NOXH. |
+| **Phiên bản & lịch sử thay đổi** | `v0.9.13` — 26/08/2026 — Đồng bộ nội dung với comment thẩm định: mã integration OCR, baseline dữ liệu trẻ em, disclosure OCR/AI và retention/purge semantics.<br>`v0.9.12` — 26/08/2026 — Rà soát trước Confluence: chuẩn hóa data ownership/DFD/deployment theo chuẩn L2, lựa chọn từ chối consent và cách diễn đạt tại các cổng production.<br>`v0.9.11` — 25/08/2026 — Làm rõ phạm vi NOXH tại capability `vhm-ocr-ekyc` chỉ gồm OCR CCCD.<br>`v0.9.10` — 25/08/2026 — Đồng bộ boundary theo OCR L2: BFF xử lý authentication/authorization ở biên kênh và chuyển contract; Core sở hữu business authorization, prepare-upload/create/poll/result integration và consent gate.<br>`v0.9.9` — 25/08/2026 — Chốt inbound rate-limit contract `429 + Retry-After` và capacity gate theo client/operation.<br>`v0.9.8` — 25/08/2026 — Làm rõ network-origin logging và correlation WAF/BFF/Core.<br>`v0.9.7` — 25/08/2026 — Chốt Basic Auth + HMAC cho BFF → Core, phạm vi credential một chiều và kiểm soát rủi ro shared secret.<br>`v0.9.6` — 25/08/2026 — Làm rõ tính cần thiết, giới hạn mục đích và ownership ảnh CCCD thuộc `vhm-ocr-ekyc`.<br>`v0.9.5` — 25/08/2026 — Làm rõ baseline không thu thập riêng dữ liệu trẻ em/người chưa thành niên.<br>`v0.9.4` — 25/08/2026 — Bổ sung nghĩa vụ và evidence của người nộp khi hồ sơ có dữ liệu vợ/chồng/thành viên hộ gia đình.<br>`v0.9.3` — 25/08/2026 — Chốt idempotency hai kênh, checklist do Core sở hữu, consent journey và ranh giới deployment ở mức L2.<br>`v0.9.2` — 25/08/2026 — Chuẩn hóa scope diagram, integration/DFD/sequence và reliability boundary.<br>`v0.9.1` — 25/08/2026 — Bổ sung ownership và consent gate tại bước upload/submit hồ sơ NOXH trực tuyến.<br>`v0.9.0` — 15/08/2026 — Thiết lập kiến trúc mục tiêu cho dịch vụ quản lý hồ sơ NOXH. |
 | **Chủ sở hữu tài liệu** | TBD |
 | **Chủ sở hữu hệ thống** | TBD |
 | **Hệ thống** | `vhm-dossier-core` — modular monolith quản lý hồ sơ và pipeline NOXH |
@@ -48,7 +48,7 @@ L2 chốt nguyên tắc, ownership, invariant và ranh giới tích hợp. Các 
 | Consent & Third-party Attestation UX/Evidence Specification | Product/Market/Backend/Privacy/Legal | Trước UAT hành trình khách hàng | Mục 3.2, 7.3.3 và 8.1.2–8.1.4 |
 | Data Retention, Deletion & Legal-hold Schedule | Privacy/Legal/ANBM/Backend/Platform và service owner liên quan | Trước UAT dữ liệu thật | Mục 7.3.2, 7.4 và 9.4; thời hạn số, mốc bắt đầu, cơ chế purge và bằng chứng xóa theo từng nhóm dữ liệu |
 | Database Schema & Migration Plan | Backend/DBA | Trước integration/OAT | Mục 7.1, 7.4 và 10.5 |
-| Runtime Capacity & Resilience Matrix | Backend/DBA/SRE/Tích hợp | Trước duyệt L3 integration; xác nhận bằng load test trước OAT | Mục 4.1, 6.1.3, 11.1 và 12.2 |
+| Runtime Capacity & Resilience Matrix, bao gồm Outbound Timeout & Resilience Matrix | Backend/DBA/SRE/Tích hợp | Trước duyệt L3 integration; xác nhận bằng contract/load test trước OAT | Mục 4.1, 6.1.3, 11.1 và 12.2; phải có giá trị số theo từng outbound operation, DB pool và dependency quota |
 | Logging & Incident Correlation Contract | Backend/BFF/Platform/SRE/ANBM | Trước OAT | Mục 9.4 và 13; field ownership, header sanitization, retention/access và E2E correlation evidence |
 | Platform Deployment & Data Residency SAD | Platform/SRE/ANBM | Trước OAT | Mục 7.4, 10.2.2 và 12.2; landing zone, network/AZ, replica, platform HA và region lưu trữ được xác nhận bởi owner hạ tầng |
 
@@ -481,6 +481,11 @@ thiểu: connect timeout, read timeout, total budget, max attempts, backoff,
 retryable error classes, circuit-breaker policy và owner. Giá trị được dẫn xuất từ
 end-to-end deadline, dependency SLO và latency P99; phải hoàn tất trước duyệt L3
 integration và được xác nhận bằng contract/load test trước OAT.
+
+L2 không tự đặt giá trị timeout tạm khi chưa có dependency SLO/latency evidence.
+Comment về timeout chỉ được coi là đóng khi Outbound Timeout & Resilience Matrix có
+giá trị số cho tối thiểu File prepare/verify/download-presign và
+`vhm-ocr-ekyc` prepare-upload/create/status-result, kèm version và owner phê duyệt.
 
 Core không truyền file binary trong các call File nêu tại mục 6; upload/download
 binary đi trực tiếp giữa client và Object Storage theo presigned URL.
@@ -1055,22 +1060,24 @@ submit/terminal và các bản sao backup/outbox/log.
 | Backup/PITR | DBA/Platform + Privacy/Legal | Hết hạn qua backup lifecycle; restore phải tái áp purge tombstone/schedule để dữ liệu hết hạn không tái xuất hiện lâu dài. |
 
 Data Retention, Deletion & Legal-hold Schedule L3 phải ghi giá trị thời hạn, sự kiện
-bắt đầu tính, ngoại lệ legal hold, owner job, tần suất, retry/alert và evidence query
-cho từng dòng trên. Production gate không đạt nếu bất kỳ nhóm dữ liệu nào chưa có
-policy số hoặc không chứng minh được luồng purge/restore.
+bắt đầu tính, `eligibleAt`, ngoại lệ legal hold, owner job, tần suất, retry/alert và
+evidence query cho từng dòng trên. Purge phải idempotent: chạy lại không làm sai
+trạng thái, không bỏ sót dữ liệu phụ thuộc/reference/index và không tái tạo dữ liệu
+đã hết hạn sau restore. Production gate không đạt nếu bất kỳ nhóm dữ liệu nào chưa
+có policy số hoặc không chứng minh được luồng purge/restore.
 
-Baseline hiện tại không định nghĩa trường dữ liệu có cấu trúc, collection thành viên
-hoặc loại tài liệu bắt buộc riêng cho trẻ em/người chưa thành niên. Vì vậy Dossier
-không trích xuất hoặc lập chỉ mục một tập trường dữ liệu trẻ em. Thông tin này vẫn có
-thể xuất hiện trong binary của giấy tờ hộ gia đình nếu một checklist được phê duyệt
-yêu cầu loại tài liệu đó; khi ấy data inventory của document template phải liệt kê
-chính xác trường có thể xuất hiện, mục đích và retention trước khi bật thu thập. Form
-Data Contract, checklist, notice/consent và đánh giá Privacy phải được cập nhật theo
-change control; không suy diễn danh sách trường từ tên tài liệu.
+Baseline hiện tại không định nghĩa trường dữ liệu, collection hoặc loại tài liệu
+nghiệp vụ bắt buộc riêng cho trẻ em/người chưa thành niên. Do đó phạm vi này được
+xác định là **Không phát sinh/Không lưu**; Dossier không trích xuất, lập chỉ mục hoặc
+giữ file reference với mục đích thu thập riêng dữ liệu trẻ em. Nếu nghiệp vụ bổ sung
+phạm vi này, Form Data Contract, checklist, document template/data inventory,
+notice/consent và Privacy assessment phải được cập nhật, phê duyệt theo change
+control trước khi tiếp nhận dữ liệu thật; không suy diễn danh sách trường từ tên tài
+liệu.
 
 | **Loại dữ liệu** | **Phát sinh trong baseline** | **Lưu tại Dossier Core** | **Ranh giới** |
 | --- | :---: | :---: | --- |
-| Thông tin trẻ em/người chưa thành niên | **Không có trường cấu trúc trong baseline; có thể xuất hiện trong tài liệu nếu checklist được phê duyệt yêu cầu** | **Không trích xuất/lập chỉ mục; Core chỉ giữ opaque file reference của tài liệu dossier khi áp dụng** | Chưa có danh sách field authoritative; document template/data inventory phải được duyệt trước khi thu thập, File Service sở hữu binary. |
+| Thông tin trẻ em/người chưa thành niên | **Không phát sinh trong baseline** | **Không lưu** | Không có field, collection hoặc document template bắt buộc riêng; mọi bổ sung phải qua Form Data Contract, checklist, consent notice và Privacy assessment trước dữ liệu thật. |
 | Ảnh CCCD mặt trước/mặt sau của người nộp | **Có điều kiện** | **Không lưu byte ảnh/media reference** | Chỉ phát sinh khi checklist NOXH hiệu lực yêu cầu OCR/đối chiếu; `vhm-ocr-ekyc` sở hữu media lifecycle, Core chỉ lưu `ocrId`/status. |
 | Ảnh CCCD mặt trước/mặt sau của vợ/chồng | **Có điều kiện** | **Không lưu byte ảnh/media reference** | Chỉ phát sinh khi hồ sơ có vợ/chồng và checklist yêu cầu; `vhm-ocr-ekyc` sở hữu media lifecycle/retention, Core chỉ lưu `ocrId`/status. |
 | Ảnh chữ ký trong tài liệu hồ sơ | **Không thu thành trường riêng** | **Không** | Core không trích xuất, so khớp hoặc lập chỉ mục chữ ký; binary nếu có thuộc capability quản lý tài liệu tương ứng. |
@@ -1095,7 +1102,18 @@ mục đích, phải bỏ yêu cầu upload ảnh thay vì tiếp tục thu th�
 - Với `APPLICANT_CONSENT`, `decision` gồm `ACCEPTED`, `DECLINED` và `WITHDRAWN`; trạng thái hiện hành được suy ra từ quyết định hợp lệ mới nhất theo subject, purpose và notice version. Chỉ `ACCEPTED` còn hiệu lực mới cho phép tiếp tục xử lý dữ liệu trong hành trình trực tuyến. Với `THIRD_PARTY_ATTESTATION`, `decision=CONFIRMED`; hiệu lực phụ thuộc notice version và phạm vi chủ thể được xác nhận. Mọi evidence đều append-only.
 - Core kiểm tra consent tại OCR create, prepare-upload và submit. Thiếu consent, sai subject/purpose/version hoặc đã rút đều bị từ chối; BFF không được tự khai `consent=true` để vượt gate.
 - Xác nhận submit là một hành động riêng, chỉ thể hiện ý chí nộp hồ sơ và không thay thế consent.
-- Notice phải nêu riêng việc xử lý ảnh CCCD hai mặt cho mục đích chứng minh định danh, OCR/đối chiếu hồ sơ, các capability nhận dữ liệu và thời hạn lưu áp dụng; không dùng mô tả chung “xử lý hồ sơ” để mở rộng sang mục đích khác.
+- Notice phải nêu riêng việc xử lý ảnh CCCD hai mặt cho mục đích chứng minh định
+  danh bằng OCR có sử dụng AI, phương thức xử lý tự động, capability
+  `vhm-ocr-ekyc`, downstream sub-processor đang có hiệu lực (bao gồm FPT khi được
+  compliance attestation phê duyệt), quốc gia/region và thời hạn lưu áp dụng. Nội
+  dung provider/AI phải lấy theo ID/version attestation do OCR Owner và
+  Privacy/Legal công bố; TDD Dossier không tự xác nhận hoặc định nghĩa lại thông tin
+  phía sau capability. Không dùng mô tả chung “xử lý hồ sơ” để mở rộng sang mục đích
+  khác.
+- Khách hàng phải có lựa chọn không đồng ý việc xử lý CCCD bằng OCR/AI. Lựa chọn này
+  không được tích sẵn; khi `DECLINED`, Core không cấp prepare-upload, không tạo OCR
+  và không nhận submit của hành trình trực tuyến phụ thuộc OCR. UI phải nêu hệ quả và
+  phương thức thay thế thủ công nếu đã được Product/Privacy phê duyệt.
 
 #### Cam kết đối với dữ liệu vợ/chồng/thành viên hộ gia đình
 
@@ -1108,7 +1126,7 @@ mục đích, phải bỏ yêu cầu upload ảnh thay vì tiếp tục thu th�
 
 | **Điểm trong hành trình** | **Thành phần UI** | **Hành vi bắt buộc** |
 | --- | --- | --- |
-| Sau đăng nhập, trước upload đầu tiên | Tiêu đề notice, tóm tắt mục đích xử lý dữ liệu, liên kết “Xem chi tiết” và hai lựa chọn “Đồng ý và tiếp tục”/“Không đồng ý” | Không tích sẵn hoặc chọn mặc định. `ACCEPTED` được ghi thành công rồi mới mở upload; `DECLINED` dừng xử lý/upload trực tuyến và hiển thị hệ quả cùng kênh thay thế nếu đã được Product/Privacy phê duyệt. |
+| Sau đăng nhập, trước upload đầu tiên | Tiêu đề notice, tóm tắt mục đích xử lý dữ liệu; disclosure OCR/AI, capability và sub-processor theo attestation; liên kết “Xem chi tiết” và hai lựa chọn “Đồng ý xử lý bằng OCR/AI và tiếp tục”/“Không đồng ý” | Không tích sẵn hoặc chọn mặc định. `ACCEPTED` được ghi thành công rồi mới mở upload/OCR; `DECLINED` không cấp prepare-upload, không tạo OCR, dừng xử lý/upload trực tuyến phụ thuộc OCR và hiển thị hệ quả cùng kênh thay thế nếu đã được Product/Privacy phê duyệt. |
 | Trước khi nhập/upload dữ liệu vợ/chồng hoặc thành viên hộ gia đình | Nội dung nghĩa vụ và checkbox xác nhận riêng, chưa chọn | Chỉ mở trường dữ liệu/prepare-upload sau khi Core ghi nhận `THIRD_PARTY_ATTESTATION`; không gộp hoặc trình bày đây là consent trực tiếp của người liên quan. |
 | Màn hình rà soát trước submit | Trạng thái “Đã ghi nhận đồng ý”, notice version/liên kết xem lại và nút “Nộp hồ sơ” riêng | Core kiểm tra lại consent khi submit; không yêu cầu checkbox khác để suy diễn consent mới. |
 | Quản lý consent | Hành động “Rút lại đồng ý” và thông báo hậu quả | Sau xác nhận rút, ghi `WITHDRAWN`; chặn upload mới và submit cho đến khi có quyết định hợp lệ mới. |
@@ -1123,7 +1141,7 @@ Privacy/Legal sở hữu nội dung notice, purpose và chính sách retention; 
 | Redis | Nonce/replay, counter, cache/coordination | Mất nonce/replay chặn request BFF → Core khi security required; counter/cache chỉ làm suy giảm chức năng phụ trợ | Nền tảng phục hồi theo SLO/runbook; không bypass replay control; cache rebuild và assignment có manual path |
 | Kafka | Distribution của event đã commit | Downstream trễ; business data không mất do outbox | Relay replay từ outbox; topic retention theo policy Kafka đã được phê duyệt. |
 | Private File Store | Binary tài liệu hồ sơ và media OCR theo namespace/contract tương ứng | Upload/download hoặc xử lý OCR phụ thuộc media bị gián đoạn | File Service quản lý object; Dossier gọi File cho tài liệu hồ sơ, còn media OCR chỉ đi qua contract `vhm-ocr-ekyc` |
-| External OCR data boundary | `vhm-ocr-ekyc` Service Owner | Không được kích hoạt INT-04 với dữ liệu CCCD thật nếu thiếu compliance attestation hợp lệ | Phục hồi theo capability SLO/runbook; hành trình Dossier chuyển sang phương thức thủ công đã được phê duyệt |
+| External OCR data boundary | `vhm-ocr-ekyc` Service Owner | Không được kích hoạt `INT-04A` với dữ liệu CCCD thật nếu thiếu compliance attestation hợp lệ | Phục hồi theo capability SLO/runbook; hành trình Dossier chuyển sang phương thức thủ công đã được phê duyệt |
 
 ### 7.4.1 Compliance boundary cho dữ liệu OCR CCCD
 
@@ -1131,7 +1149,7 @@ Khai báo có thẩm quyền về downstream sub-processor, quốc gia/region x�
 trữ, cùng hồ sơ DPA/DPIA thuộc `vhm-ocr-ekyc` Service Owner và Privacy/Legal. Dossier
 không định nghĩa hoặc xác nhận thay các thông tin phía sau capability boundary.
 
-Trước khi kích hoạt INT-04 với dữ liệu CCCD thật, OCR owner phải cung cấp một
+Trước khi kích hoạt `INT-04A` với dữ liệu CCCD thật, OCR owner phải cung cấp một
 compliance attestation có version và được Privacy/Legal/ANBM phê duyệt, tối thiểu
 bao gồm:
 
@@ -1143,7 +1161,7 @@ bao gồm:
 
 Dossier release evidence chỉ tham chiếu ID/version của attestation đã phê duyệt,
 không sao chép nội dung pháp lý của capability. Khi attestation thiếu, hết hiệu lực
-hoặc không bao phủ đúng use case, INT-04 phải bị disable và không gửi media/CCCD ra
+hoặc không bao phủ đúng use case, `INT-04A` phải bị disable và không gửi media/CCCD ra
 capability; phương thức thủ công đã được Product/Privacy phê duyệt là fallback duy
 nhất.
 
@@ -1852,6 +1870,11 @@ reserve, số Core replica tối đa, pool min/max, acquire timeout, transaction
 ngưỡng saturation/alert. DBA và SRE xác nhận tổng pool của mọi replica không vượt
 connection budget của database.
 
+TDD không công bố một con số connection pool khi `maxConnections`, reserve, số
+replica và P99 giữ connection chưa được owner phê duyệt. Comment về pool chỉ được
+coi là đóng khi matrix chứa đủ các giá trị số trên và load test chứng minh pool wait,
+saturation cùng headroom đạt ngưỡng đã duyệt.
+
 ### 11.1.3 Dependency quota và backpressure
 
 Core phải tính demand riêng cho từng dependency thay vì đồng nhất Core throughput
@@ -1862,6 +1885,14 @@ với downstream throughput:
 - Rate limiter/bulkhead tại Core không được cấp vượt quota đã công bố. Phần vượt quota phải fast-fail với lỗi retryable/`Retry-After` hoặc vào bounded queue nếu use case cho phép; không block thread hay queue vô hạn.
 - Retry cũng tiêu thụ quota và chỉ được thực hiện trong remaining deadline theo NFR-T04.
 - Upload/download file binary đi trực tiếp Client ↔ Object Storage và không được tính như traffic binary qua Core; chỉ các call metadata/presign/validation mới tính vào File quota của Core.
+
+Ví dụ kiểm tra bottleneck theo comment thẩm định: nếu toàn bộ `400 req/s` của Core
+đều phát sinh đúng một File call và File quota là `50 req/s`, thì
+`excessRps = 350 req/s`. Core chỉ được chuyển tối đa `50 req/s` tới File; phần vượt
+không được block thread hoặc xếp hàng vô hạn mà phải fast-fail với lỗi
+retryable/`Retry-After`, hoặc vào bounded queue khi use case và queue capacity đã
+được phê duyệt. Đây là ví dụ kiểm tra công thức, không phải capacity baseline
+production.
 
 L3 matrix phải công bố quota, burst, concurrency, dependency call ratio, queue
 policy và overload response theo từng operation. Product cung cấp MAU/DAU, hồ
@@ -1981,7 +2012,7 @@ SLI bắt buộc: availability của read/mutation, successful submit/transition
 - Backup/restore, deployment rollback, secret rotation và backlog replay đã diễn tập.
 - OpenAPI/event/schema/pipeline version được đóng băng và contract test.
 - Privacy retention/deletion/export access được phê duyệt.
-- INT-04 chỉ được enable khi release evidence tham chiếu compliance attestation còn hiệu lực của `vhm-ocr-ekyc`, bao phủ đúng OCR CCCD hai mặt.
+- `INT-04A` chỉ được enable khi release evidence tham chiếu compliance attestation còn hiệu lực của `vhm-ocr-ekyc`, bao phủ đúng OCR CCCD hai mặt.
 - Mọi vấn đề Critical/High tại mục 16 đã đóng hoặc có risk acceptance hữu hạn, owner và expiry.
 
 # 15. Testing & Quality Strategy
@@ -2066,7 +2097,7 @@ Bằng chứng quality gate phải được lưu theo release, tối thiểu g�
 | AR-012 | Availability | Full E2E phụ thuộc File Service và nhiều enterprise dependency | Cao | Quota-aware admission, circuit breaker, bulkhead/bounded queue, timeout/degradation, synthetic probe và runbook. |
 | AR-013 | Privacy | Nội dung notice, purpose, retention hoặc cam kết đối với dữ liệu thành viên hộ gia đình chưa được Privacy/Legal phê duyệt có thể làm evidence không đủ cơ sở sử dụng | Nghiêm trọng | Version hóa nội dung đã phê duyệt; phân biệt consent của người nộp với third-party attestation và đạt E2E theo mục 7.3.3 trước dữ liệu thật. |
 | AR-015 | Availability/Security | Redis nonce/replay là dependency đồng bộ fail-closed; khi endpoint không sẵn sàng, request đã xác thực từ BFF vào Core bị chặn | Nghiêm trọng | Owner: Platform/SRE/ANBM + Backend. Đưa dependency vào platform HA/SLO/monitoring/runbook, kiểm thử outage/recovery và không bypass security. |
-| AR-016 | Privacy/Third-party processing | Chưa có authoritative evidence trong phạm vi Dossier chứng minh downstream sub-processor, processing/storage region và DPA/DPIA bao phủ đúng luồng OCR CCCD hai mặt | Nghiêm trọng | Owner: `vhm-ocr-ekyc` Service Owner + Privacy/Legal/ANBM. Đóng khi attestation có version/effective date, region/sub-processor và DPA/DPIA reference được phê duyệt; trước đó INT-04 bị disable với dữ liệu thật. |
+| AR-016 | Privacy/Third-party processing | Chưa có authoritative evidence trong phạm vi Dossier chứng minh downstream sub-processor, processing/storage region và DPA/DPIA bao phủ đúng luồng OCR CCCD hai mặt | Nghiêm trọng | Owner: `vhm-ocr-ekyc` Service Owner + Privacy/Legal/ANBM. Đóng khi attestation có version/effective date, region/sub-processor và DPA/DPIA reference được phê duyệt; trước đó `INT-04A` bị disable với dữ liệu thật. |
 | AR-017 | Workload identity | Basic Auth + HMAC dùng symmetric secrets tại BFF → Core; lộ credential của một caller cho phép giả mạo caller đó trong phạm vi secret còn hiệu lực | Cao | Credential và HMAC key độc lập, tách theo caller/environment/audience, lưu secret manager, ingress allowlist, timestamp/nonce/body hash, rotation/revoke và negative test. System Owner/ANBM sign-off risk trước production nếu chuẩn áp dụng yêu cầu mTLS hoặc signed JWT. |
 
 ## 16.2 Vấn đề thiết kế cần quyết định
@@ -2077,7 +2108,7 @@ Bằng chứng quality gate phải được lưu theo release, tối thiểu g�
 | Pipeline selection authoritative | BA/Kiến trúc/Backend | Một pipeline ID/version rõ ràng từ contract/config. |
 | Machine identity cho MARKET | Kiến trúc IAM/Backend | Client scope allowlist, audit và negative test. |
 | Contract Dossier Core ↔ `vhm-ocr-ekyc` cho CCCD hai mặt và apply result | OCR Team/Backend/Tích hợp | OpenAPI L3, opaque refs, IAM, status/result mapping và E2E ký duyệt; BFF chỉ map presentation contract của kênh. |
-| Compliance attestation của `vhm-ocr-ekyc` cho OCR CCCD hai mặt | OCR Service Owner/Privacy/Legal/ANBM | Công bố và phê duyệt sub-processor, processing/storage region, DPA/DPIA reference, retention/deletion; release evidence tham chiếu đúng version trước khi enable INT-04. |
+| Compliance attestation của `vhm-ocr-ekyc` cho OCR CCCD hai mặt | OCR Service Owner/Privacy/Legal/ANBM | Công bố và phê duyệt sub-processor, processing/storage region, DPA/DPIA reference, retention/deletion; release evidence tham chiếu đúng version trước khi enable `INT-04A`. Comment region/DPA/DPIA chỉ được đóng khi có giá trị và reference cụ thể, không đóng bằng một giá trị `TBD`. |
 | Data residency production của Dossier | Platform/SRE/ANBM | Platform SAD công bố country, cloud region/location label, backup/DR region và egress boundary; TDD/release evidence tham chiếu đúng version trước OAT. |
 | Ý nghĩa/ownership của `picId` so với stage reviewer | Product/BA/Backend | Use case và permission/audit rõ hoặc bỏ field. |
 | SLO, peak workload, RTO/RPO và capacity/cost | Product/Vận hành/DBA/FinOps | Baseline số được duyệt và load/DR đạt. |
@@ -2125,7 +2156,7 @@ Vấn đề mở không mặc nhiên được chấp nhận. Risk acceptance ph�
 | File ownership/upload-grant | File Team/ANBM | Attachment security |
 | Pipeline ID/version selection | BA/Kiến trúc | Cấu hình pipeline |
 | OCR OpenAPI/IAM/two-side CCCD/apply-result | OCR Team/Backend/Tích hợp | E2E OCR |
-| OCR compliance attestation cho CCCD hai mặt | OCR Service Owner/Privacy/Legal/ANBM | Enable INT-04 với dữ liệu thật |
+| OCR compliance attestation cho CCCD hai mặt | OCR Service Owner/Privacy/Legal/ANBM | Enable `INT-04A` với dữ liệu thật |
 | MARKET workload scope | IAM/Backend | Security approval |
 | Privacy retention/deletion/encryption và nội dung notice/purpose | Privacy/Pháp chế/ANBM/Product | Dữ liệu thật |
 | Platform Deployment & Data Residency SAD | Platform/SRE/ANBM | OAT và dữ liệu thật |
