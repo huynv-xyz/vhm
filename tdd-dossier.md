@@ -5,7 +5,7 @@
 | **Trường** | **Nội dung** |
 | --- | --- |
 | **Trạng thái** | **ĐANG THẨM ĐỊNH (UNDER REVIEW)** |
-| **Phiên bản & lịch sử thay đổi** | `v0.9.13` — 26/08/2026 — Đồng bộ nội dung với comment thẩm định: mã integration OCR, baseline dữ liệu trẻ em, disclosure OCR/AI và retention/purge semantics.<br>`v0.9.12` — 26/08/2026 — Rà soát trước Confluence: chuẩn hóa data ownership/DFD/deployment theo chuẩn L2, lựa chọn từ chối consent và cách diễn đạt tại các cổng production.<br>`v0.9.11` — 25/08/2026 — Làm rõ phạm vi NOXH tại capability `vhm-ocr-ekyc` chỉ gồm OCR CCCD.<br>`v0.9.10` — 25/08/2026 — Đồng bộ boundary theo OCR L2: BFF xử lý authentication/authorization ở biên kênh và chuyển contract; Core sở hữu business authorization, prepare-upload/create/poll/result integration và consent gate.<br>`v0.9.9` — 25/08/2026 — Chốt inbound rate-limit contract `429 + Retry-After` và capacity gate theo client/operation.<br>`v0.9.8` — 25/08/2026 — Làm rõ network-origin logging và correlation WAF/BFF/Core.<br>`v0.9.7` — 25/08/2026 — Chốt Basic Auth + HMAC cho BFF → Core, phạm vi credential một chiều và kiểm soát rủi ro shared secret.<br>`v0.9.6` — 25/08/2026 — Làm rõ tính cần thiết, giới hạn mục đích và ownership ảnh CCCD thuộc `vhm-ocr-ekyc`.<br>`v0.9.5` — 25/08/2026 — Làm rõ baseline không thu thập riêng dữ liệu trẻ em/người chưa thành niên.<br>`v0.9.4` — 25/08/2026 — Bổ sung nghĩa vụ và evidence của người nộp khi hồ sơ có dữ liệu vợ/chồng/thành viên hộ gia đình.<br>`v0.9.3` — 25/08/2026 — Chốt idempotency hai kênh, checklist do Core sở hữu, consent journey và ranh giới deployment ở mức L2.<br>`v0.9.2` — 25/08/2026 — Chuẩn hóa scope diagram, integration/DFD/sequence và reliability boundary.<br>`v0.9.1` — 25/08/2026 — Bổ sung ownership và consent gate tại bước upload/submit hồ sơ NOXH trực tuyến.<br>`v0.9.0` — 15/08/2026 — Thiết lập kiến trúc mục tiêu cho dịch vụ quản lý hồ sơ NOXH. |
+| **Phiên bản & lịch sử thay đổi** | `v0.9.13` — 26/08/2026 — Cập nhật TDD theo feedback thẩm định kiến trúc: chuẩn hóa scope, component, integration/DFD/sequence và deployment; chốt idempotency hai kênh, timeout/resilience, admission control, logging correlation, Basic Auth + HMAC và các risk liên quan; làm rõ OCR CCCD, consent/third-party attestation, dữ liệu trẻ em, data residency, retention và purge. |
 | **Chủ sở hữu tài liệu** | TBD |
 | **Chủ sở hữu hệ thống** | TBD |
 | **Hệ thống** | `vhm-dossier-core` — modular monolith quản lý hồ sơ và pipeline NOXH |
@@ -1186,31 +1186,29 @@ sequenceDiagram
     autonumber
     actor User as Khách hàng / Đại lý
     participant BFF as Market / Agent BFF
-    participant API as Dossier Core API
-    participant Domain as Dossier Domain
+    participant Core as Dossier Core
     participant DB as PostgreSQL dossier_db
 
     User->>BFF: Yêu cầu tạo hồ sơ
-    BFF->>API: Create DRAFT + signed actor context<br/>+ Idempotency-Key theo BR-02
-    API->>API: Xác thực actor, source và key
+    BFF->>Core: Create DRAFT + signed actor context<br/>+ Idempotency-Key theo BR-02
+    Core->>Core: Xác thực actor, source và key
     alt Thiếu Idempotency-Key
-        API-->>BFF: 10509
+        Core-->>BFF: 10509
     else Request hợp lệ
-        API->>DB: Advisory lock theo key
-        API->>DB: Tìm replay theo key + actor
+        Core->>DB: Advisory lock theo key
+        Core->>DB: Tìm replay theo key + actor
         alt Đã có kết quả cùng actor
-            DB-->>API: Dossier hiện hữu
-            API-->>BFF: Replay cùng dossierId/version
+            DB-->>Core: Dossier hiện hữu
+            Core-->>BFF: Replay cùng dossierId/version
         else Key đã thuộc actor khác
-            API-->>BFF: Từ chối xung đột key
+            Core-->>BFF: Từ chối xung đột key
         else Request mới
-            API->>Domain: Validate cấu trúc/schema/file/duplicate
-            Domain->>DB: BEGIN
-            Domain->>DB: Ghi DRAFT + pipeline + history<br/>+ checklist nếu đủ selector + outbox
-            Domain->>DB: Flush và COMMIT
-            DB-->>Domain: dossierId + version
-            Domain-->>API: DRAFT đã tạo
-            API-->>BFF: dossierId + version
+            Core->>Core: Validate cấu trúc/schema/file/duplicate
+            Core->>DB: BEGIN
+            Core->>DB: Ghi DRAFT + pipeline + history<br/>+ checklist nếu đủ selector + outbox
+            Core->>DB: Flush và COMMIT
+            DB-->>Core: dossierId + version
+            Core-->>BFF: dossierId + version
         end
     end
     BFF-->>User: Kết quả tạo hồ sơ
@@ -1227,8 +1225,7 @@ sequenceDiagram
     actor Customer as Khách hàng
     participant Landing as Market Landing Page
     participant BFF as Market BFF
-    participant API as Dossier Core API
-    participant Domain as Dossier Domain
+    participant Core as Dossier Core
     participant DB as PostgreSQL dossier_db
     participant OCR as vhm-ocr-ekyc
     participant File as File Management
@@ -1238,12 +1235,11 @@ sequenceDiagram
     Landing-->>Customer: Hiển thị notice<br/>không chọn sẵn quyết định
     Customer->>Landing: Chọn đồng ý hoặc không đồng ý
     Landing->>BFF: Ghi lựa chọn consent
-    BFF->>API: Basic + HMAC + signed actor<br/>dossier, purpose, notice version, decision
-    API->>Domain: Bind subject từ actor<br/>validate purpose/version
-    Domain->>DB: Lưu evidence bất biến<br/>subject từ actor, timestamp từ Core
-    DB-->>Domain: Consent state hiện hành
-    Domain-->>API: Đã ghi nhận
-    API-->>BFF: Consent state
+    BFF->>Core: Basic + HMAC + signed actor<br/>dossier, purpose, notice version, decision
+    Core->>Core: Bind subject từ actor<br/>validate purpose/version
+    Core->>DB: Lưu evidence bất biến<br/>subject từ actor, timestamp từ Core
+    DB-->>Core: Consent state hiện hành
+    Core-->>BFF: Consent state
     BFF-->>Landing: Chuyển response
 
     alt decision = DECLINED
@@ -1257,37 +1253,34 @@ sequenceDiagram
         Landing-->>Customer: Hiển thị nghĩa vụ<br/>checkbox xác nhận riêng chưa chọn
         Customer->>Landing: Xác nhận đã có consent hoặc ủy quyền cần thiết
         Landing->>BFF: Ghi THIRD_PARTY_ATTESTATION
-        BFF->>API: Signed actor + notice version<br/>+ subject scope version
-        API->>Domain: Bind người nộp từ actor<br/>validate notice và phạm vi
-        Domain->>DB: Lưu attestation evidence bất biến
-        DB-->>Domain: Attestation hợp lệ
-        Domain-->>API: Attestation state
-        API-->>BFF: Chuyển business response
+        BFF->>Core: Signed actor + notice version<br/>+ subject scope version
+        Core->>Core: Bind người nộp từ actor<br/>validate notice và phạm vi
+        Core->>DB: Lưu attestation evidence bất biến
+        DB-->>Core: Attestation hợp lệ
+        Core-->>BFF: Attestation state
         BFF-->>Landing: Chuyển response
       end
 
       Customer->>Landing: Chọn tài liệu để upload
       Landing->>BFF: Prepare-upload metadata
-      BFF->>API: Authenticated request + actor context
-      API->>Domain: Kiểm tra visibility + evidence hiện hành
-      Domain->>DB: Đọc dossier, consent và attestation bắt buộc
+      BFF->>Core: Authenticated request + actor context
+      Core->>Core: Kiểm tra visibility + evidence hiện hành
+      Core->>DB: Đọc dossier, consent và attestation bắt buộc
       alt Consent hoặc attestation bắt buộc không hợp lệ
-          Domain-->>API: Từ chối prepare-upload
-          API-->>BFF: Business error
+          Core-->>BFF: Business error
           BFF-->>Landing: Chuyển lỗi
           Landing-->>Customer: Yêu cầu hoàn tất xác nhận phù hợp
       else Evidence bắt buộc hợp lệ
           alt Media OCR
-              Domain->>OCR: Prepare-upload metadata + business context
+              Core->>OCR: Prepare-upload metadata + business context
               OCR->>File: Xin presigned access
               File-->>OCR: URL + signed headers + s3PathFile
-              OCR-->>Domain: Presigned response
+              OCR-->>Core: Presigned response
           else Tài liệu đính kèm dossier
-              Domain->>File: Yêu cầu upload reference theo dossier/actor
-              File-->>Domain: Opaque path + presigned URL ngắn hạn
+              Core->>File: Yêu cầu upload reference theo dossier/actor
+              File-->>Core: Opaque path + presigned URL ngắn hạn
           end
-          Domain-->>API: Presigned response
-          API-->>BFF: Chuyển response
+          Core-->>BFF: Presigned response
           BFF-->>Landing: Chuyển response
           Landing->>Store: PUT trực tiếp bằng presigned URL
           Store-->>Landing: Kết quả upload
@@ -1308,36 +1301,31 @@ sequenceDiagram
     autonumber
     actor User as Khách hàng / Đại lý
     participant BFF as Market / Agent BFF
-    participant API as Dossier Core API
-    participant Domain as Dossier Domain
+    participant Core as Dossier Core
     participant File as File Management
     participant DB as PostgreSQL dossier_db
 
     User->>BFF: Cập nhật hồ sơ + version
-    BFF->>API: Update snapshot + If-Match
-    API->>Domain: Kiểm tra visibility, state và version
-    Domain->>DB: Đọc dossier hiện hành
+    BFF->>Core: Update snapshot + If-Match
+    Core->>Core: Kiểm tra visibility, state và version
+    Core->>DB: Đọc dossier hiện hành
     alt Version không khớp
-        Domain-->>API: 11006
-        API-->>BFF: 11006
+        Core-->>BFF: 11006
     else DRAFT / ADD_INFO
-        Domain->>File: Xác minh file reference
-        File-->>Domain: Trạng thái tồn tại/hợp lệ
-        Domain->>Domain: Validate snapshot + duplicate<br/>giữ field do server sở hữu
-        Domain->>DB: Ghi snapshot + checklist + history + outbox
-        DB-->>Domain: Version mới
-        Domain-->>API: Hồ sơ đã cập nhật
-        API-->>BFF: Hồ sơ đã cập nhật
+        Core->>File: Xác minh file reference
+        File-->>Core: Trạng thái tồn tại/hợp lệ
+        Core->>Core: Validate snapshot + duplicate<br/>giữ field do server sở hữu
+        Core->>DB: Ghi snapshot + checklist + history + outbox
+        DB-->>Core: Version mới
+        Core-->>BFF: Hồ sơ đã cập nhật
     else SUBMITTED / UNDER_REVIEW
-        Domain->>Domain: Chỉ cho phép contact email/phone
+        Core->>Core: Chỉ cho phép contact email/phone
         alt Có field ngoài allowlist
-            Domain-->>API: Từ chối cập nhật
-            API-->>BFF: Business error
+            Core-->>BFF: Business error
         else Chỉ thay đổi contact
-            Domain->>DB: Ghi contact + history + outbox
-            DB-->>Domain: Version mới
-            Domain-->>API: Hồ sơ đã cập nhật
-            API-->>BFF: Hồ sơ đã cập nhật
+            Core->>DB: Ghi contact + history + outbox
+            DB-->>Core: Version mới
+            Core-->>BFF: Hồ sơ đã cập nhật
         end
     end
     BFF-->>User: Kết quả cập nhật
@@ -1350,30 +1338,26 @@ sequenceDiagram
     autonumber
     actor User as Khách hàng
     participant BFF as Market BFF
-    participant API as Dossier Core API
-    participant Domain as Dossier Domain
+    participant Core as Dossier Core
     participant Project as Market / Project
     participant DB as PostgreSQL dossier_db
 
     User->>BFF: Xác nhận nộp hồ sơ
-    BFF->>API: Command SUBMIT + signed actor context
-    API->>Domain: Authorize owner/action/state
-    Domain->>DB: Đọc DRAFT + consent + checklist
+    BFF->>Core: Command SUBMIT + signed actor context
+    Core->>Core: Authorize owner/action/state
+    Core->>DB: Đọc DRAFT + consent + checklist
     alt Consent không còn hợp lệ
-        Domain-->>API: Từ chối submit
-        API-->>BFF: Business error
+        Core-->>BFF: Business error
     else Checklist thiếu hoặc chưa COMPLETE
-        Domain-->>API: 11017 / 11018
-        API-->>BFF: 11017 / 11018
+        Core-->>BFF: 11017 / 11018
     else Guard hợp lệ
-        Domain->>Project: Lấy project/SAP context authoritative
-        Project-->>Domain: Project/SAP reference
-        Domain->>DB: BEGIN + khóa/kiểm tra duplicate active
-        Domain->>DB: Sinh mã lần đầu + transition Sales review<br/>+ history + assignment best effort + outbox
-        Domain->>DB: COMMIT
-        DB-->>Domain: Mã hồ sơ + state/version mới
-        Domain-->>API: Submit thành công
-        API-->>BFF: Mã hồ sơ + available actions
+        Core->>Project: Lấy project/SAP context authoritative
+        Project-->>Core: Project/SAP reference
+        Core->>DB: BEGIN + khóa/kiểm tra duplicate active
+        Core->>DB: Sinh mã lần đầu + transition Sales review<br/>+ history + assignment best effort + outbox
+        Core->>DB: COMMIT
+        DB-->>Core: Mã hồ sơ + state/version mới
+        Core-->>BFF: Mã hồ sơ + available actions
         BFF-->>User: Hồ sơ đã được nộp
     end
 ```
@@ -1385,22 +1369,20 @@ sequenceDiagram
     autonumber
     actor Reviewer as PKD / PTT / BO Reviewer
     participant BFF as Agent / BO BFF
-    participant API as Dossier Core API
-    participant Domain as Dossier Domain
+    participant Core as Dossier Core
     participant DB as PostgreSQL dossier_db
-    participant Scheduler as Reminder Scanner
+    participant Scheduler as Dossier Core Reminder Scanner
     participant Calendar as Market / TTOL
     participant Message as Message Delivery
 
     Reviewer->>BFF: Approve / Reject / Request revision
-    BFF->>API: Pipeline command + actor context
-    API->>Domain: Validate role, ownership, state, action
-    Domain->>DB: BEGIN + lock current state/version
-    Domain->>DB: Ghi transition + reviewer/unit/history<br/>+ notification intent + outbox
-    Domain->>DB: COMMIT
-    DB-->>Domain: State/version mới
-    Domain-->>API: Kết quả + available actions
-    API-->>BFF: Kết quả + available actions
+    BFF->>Core: Pipeline command + actor context
+    Core->>Core: Validate role, ownership, state, action
+    Core->>DB: BEGIN + lock current state/version
+    Core->>DB: Ghi transition + reviewer/unit/history<br/>+ notification intent + outbox
+    Core->>DB: COMMIT
+    DB-->>Core: State/version mới
+    Core-->>BFF: Kết quả + available actions
     BFF-->>Reviewer: Trạng thái mới
 
     loop Fixed-delay scan theo cycle
