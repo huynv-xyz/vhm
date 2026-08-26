@@ -190,7 +190,7 @@ Tài liệu này mô tả **kiến trúc mục tiêu L2**. Dossier được thi�
 | ARCH-13 | Core chỉ nhận dữ liệu người liên quan, cho phép upload và submit hồ sơ trực tuyến khi các evidence bắt buộc còn hiệu lực. |
 | ARCH-14 | BFF xử lý authentication/authorization theo kênh và presentation contract; Core thực hiện business authorization và gọi capability; Web PUT media trực tiếp vào private storage bằng presigned URL, byte media không đi qua BFF/Core. |
 | ARCH-15 | Dossier Core sở hữu checklist chuẩn có version và snapshot theo hồ sơ; dữ liệu `isRequired` từ client không có giá trị thẩm quyền. |
-| ARCH-16 | Outbound dependency phải có circuit breaker và bulkhead độc lập theo dependency/operation; circuit mở thì fail-fast hoặc dùng fallback đã được phê duyệt, không tiếp tục dồn request. |
+| ARCH-16 | <span class="annotation" data-annotation-id="efba7006-2c42-409b-ae5d-e3c7126769f0" data-annotation-type="inlineComment">Outbound dependency phải có circuit breaker và bulkhead độc lập</span> theo dependency/operation; circuit mở thì fail-fast hoặc dùng fallback đã được phê duyệt, không tiếp tục dồn request. |
 | ARCH-17 | Core persist OCR create intent trước outbound và xử lý outcome chưa rõ bằng stable idempotency key; sau khi có `ocrId`, Core polling `/ocr/result`, chỉ lưu status projection và không persist result payload. |
 
 ## 2.2 Sơ đồ kiến trúc ứng dụng
@@ -471,8 +471,7 @@ retryable error classes, circuit-breaker policy và owner. Giá trị được d
 end-to-end deadline, dependency SLO và latency P99; phải hoàn tất trước duyệt L3
 integration và được xác nhận bằng contract/load test trước OAT.
 
-L2 không tự đặt giá trị timeout tạm khi chưa có dependency SLO/latency evidence.
-Comment về timeout chỉ được coi là đóng khi Outbound Timeout & Resilience Matrix có
+L2 không tự đặt giá trị timeout tạm khi chưa có dependency SLO/latency evidence. <span class="annotation" data-annotation-id="51fedd42-a24a-4788-be8a-cb78ea897a37" data-annotation-type="inlineComment">Comment về timeout chỉ được coi là đóng</span> khi Outbound Timeout & Resilience Matrix có
 giá trị số cho tối thiểu File prepare/verify/download-presign và
 `vhm-ocr-ekyc` prepare-upload/create/status-result, kèm version và owner phê duyệt.
 
@@ -601,7 +600,7 @@ rate limiter cùng bulkhead theo NFR-T04 và mục 11.1.3.
 | --- | --- | --- |
 | File prepare/verify/download-presign cho tài liệu dossier | Fail-fast; không cấp upload/download reference và không attach path chưa xác minh | Người dùng thử lại sau; half-open probe có giới hạn, không bypass ownership/existence guard |
 | `vhm-ocr-ekyc` prepare-upload/create | Không cấp media upload mới hoặc tạo OCR; không làm thay đổi trạng thái hồ sơ | Người dùng thử lại sau hoặc nhập/kiểm tra thủ công nếu use case đã phê duyệt; không tự reject dossier |
-| `vhm-ocr-ekyc` `/ocr/result` | Tạm dừng poll/query result và giữ last-known status, không suy diễn thành `FAILED` | Tôn trọng `Retry-After`; tiếp tục poll sau khi circuit phục hồi, không tạo OCR trùng |
+| `vhm-ocr-ekyc/ocr/result` | Tạm dừng poll/query result và giữ last-known status, không suy diễn thành `FAILED` | Tôn trọng `Retry-After`; tiếp tục poll sau khi circuit phục hồi, không tạo OCR trùng |
 | Market/Project validation | Guard bắt buộc fail-fast; read-only chỉ được dùng cache còn hiệu lực theo freshness policy | Thử lại sau khi dependency phục hồi; không dùng dữ liệu stale để submit/cấp căn |
 | TTOL roster/calendar | Tạm dừng auto-assignment phụ thuộc TTOL | Chuyển manual assignment theo quyền; probe lại có giới hạn |
 | Message Delivery/Kafka relay | Dừng dispatch ra dependency; business transaction vẫn commit vào outbox | Giữ backlog bền vững, phát lại sau recovery và cảnh báo oldest age |
@@ -1055,7 +1054,7 @@ trạng thái, không bỏ sót dữ liệu phụ thuộc/reference/index và kh
 đã hết hạn sau restore. Production gate không đạt nếu bất kỳ nhóm dữ liệu nào chưa
 có policy số hoặc không chứng minh được luồng purge/restore.
 
-Baseline hiện tại không định nghĩa trường dữ liệu, collection hoặc loại tài liệu
+<span class="annotation" data-annotation-id="3e5f84a2-1954-4857-af9e-c3da69b97efa" data-annotation-type="inlineComment">Baseline hiện tại không định nghĩa trường dữ liệu</span>, collection hoặc loại tài liệu
 nghiệp vụ bắt buộc riêng cho trẻ em/người chưa thành niên. Do đó phạm vi này được
 xác định là **Không phát sinh/Không lưu**; Dossier không trích xuất, lập chỉ mục hoặc
 giữ file reference với mục đích thu thập riêng dữ liệu trẻ em. Nếu nghiệp vụ bổ sung
@@ -1071,7 +1070,7 @@ liệu.
 | Ảnh CCCD mặt trước/mặt sau của vợ/chồng | **Có điều kiện** | **Không lưu byte ảnh/media reference** | Chỉ phát sinh khi hồ sơ có vợ/chồng và checklist yêu cầu; `vhm-ocr-ekyc` sở hữu media lifecycle/retention, Core chỉ lưu `ocrId`/status. |
 | Ảnh chữ ký trong tài liệu hồ sơ | **Không thu thành trường riêng** | **Không** | Core không trích xuất, so khớp hoặc lập chỉ mục chữ ký; binary nếu có thuộc capability quản lý tài liệu tương ứng. |
 
-Việc hồ sơ đã có các trường định danh không làm ảnh CCCD trở thành dữ liệu trùng
+<span class="annotation" data-annotation-id="77acf67f-7d2b-40ae-840f-1a065110ecad" data-annotation-type="inlineComment">Việc hồ sơ đã có các trường định danh</span> không làm ảnh CCCD trở thành dữ liệu trùng
 lặp: các trường là dữ liệu khai báo/đã xác nhận, còn ảnh là đầu vào cho OCR và đối
 chiếu. Tuy nhiên, checklist chỉ được yêu cầu ảnh khi mục đích này còn hiệu lực;
 nếu Product/Privacy phê duyệt một nguồn định danh có thẩm quyền thay thế đạt cùng
@@ -1104,14 +1103,14 @@ mục đích, phải bỏ yêu cầu upload ảnh thay vì tiếp tục thu th�
   và không nhận submit của hành trình trực tuyến phụ thuộc OCR. UI phải nêu hệ quả và
   phương thức thay thế thủ công nếu đã được Product/Privacy phê duyệt.
 
-#### Cam kết đối với dữ liệu vợ/chồng/thành viên hộ gia đình
+#### <span class="annotation" data-annotation-id="18214d65-3e22-4d8b-8b15-f0b7dc43d57b" data-annotation-type="inlineComment">Cam kết đối với dữ liệu vợ/chồng/thành viên hộ gia đình</span>
 
 - Khi hồ sơ có dữ liệu của vợ/chồng hoặc thành viên hộ gia đình, Market phải hiển thị một xác nhận riêng, không tích sẵn, trước khi dữ liệu hoặc tài liệu của các chủ thể này được gửi khỏi trình duyệt.
 - Nội dung phải thể hiện rõ người nộp có trách nhiệm thông báo và có sự đồng ý/ủy quyền cần thiết của các chủ thể liên quan trước khi cung cấp dữ liệu. Copy nguyên tắc: “Tôi xác nhận đã thông báo đầy đủ và đã có sự đồng ý/ủy quyền cần thiết của vợ/chồng và các thành viên hộ gia đình có thông tin trong hồ sơ này trước khi cung cấp dữ liệu của họ lên hệ thống; tôi chịu trách nhiệm về việc cung cấp các dữ liệu đó.” Copy phát hành do Privacy/Legal phê duyệt và version hóa.
 - Core lưu xác nhận với `evidenceType=THIRD_PARTY_ATTESTATION`. Đây là bằng chứng về cam kết của người nộp, không phải bằng chứng Core đã trực tiếp thu consent từ vợ/chồng hoặc thành viên hộ gia đình; evidence không chứa CCCD hoặc dữ liệu định danh của họ.
 - Core từ chối mutation chứa dữ liệu người liên quan, OCR create, prepare-upload tài liệu tương ứng và submit nếu thiếu xác nhận hợp lệ. Khi danh sách/phạm vi chủ thể hoặc notice version thay đổi, xác nhận cũ không còn bao phủ phạm vi mới và người nộp phải xác nhận lại.
 
-#### Thiết kế UI bắt buộc
+#### <span class="annotation" data-annotation-id="8c965fdd-8134-449b-aa96-18e64512f2bb" data-annotation-type="inlineComment">Thiết kế UI bắt buộc</span>
 
 | **Điểm trong hành trình** | **Thành phần UI** | **Hành vi bắt buộc** |
 | --- | --- | --- |
@@ -1134,7 +1133,7 @@ Privacy/Legal sở hữu nội dung notice, purpose và chính sách retention; 
 
 ### 7.4.1 Compliance boundary cho dữ liệu OCR CCCD
 
-Khai báo có thẩm quyền về downstream sub-processor, quốc gia/region xử lý và lưu
+<span class="annotation" data-annotation-id="118a43b7-6591-4dbb-b096-935700717ad2" data-annotation-type="inlineComment">Khai báo có thẩm quyền về downstream sub-processor</span>, quốc gia/region xử lý và lưu
 trữ, cùng hồ sơ DPA/DPIA thuộc `vhm-ocr-ekyc` Service Owner và Privacy/Legal. Dossier
 không định nghĩa hoặc xác nhận thay các thông tin phía sau capability boundary.
 
@@ -1154,7 +1153,7 @@ hoặc không bao phủ đúng use case, `INT-04A` phải bị disable và khôn
 capability; phương thức thủ công đã được Product/Privacy phê duyệt là fallback duy
 nhất.
 
-### 7.4.2 Data residency của Dossier
+### 7.4.2 <span class="annotation" data-annotation-id="3bb7fe35-8af5-412c-b3c3-1148018cec42" data-annotation-type="inlineComment">Data residency của Dossier</span>
 
 Quốc gia, cloud region/location label và vùng backup/DR của PostgreSQL, log/audit,
 backup và tài liệu hồ sơ phía Vinhomes phải lấy từ Platform Deployment & Data
@@ -1390,7 +1389,7 @@ sequenceDiagram
 Reminder không tự động reject hồ sơ. Rule dùng các mốc 144/216 giờ và
 432/504 giờ, loại trừ ngày nghỉ; manual trigger chỉ dành cho `PKD/PKD_LEAD`.
 
-### 8.1.6 OCR create, outcome unknown và reconciliation
+### 8.1.6 <span class="annotation" data-annotation-id="0b889aaa-0ab3-4078-8a9f-cf8daf3628bd" data-annotation-type="inlineComment">OCR create, outcome unknown và reconciliation</span>
 
 ```mermaid
 sequenceDiagram
@@ -1505,7 +1504,7 @@ nhận caller khi đồng thời đạt credential, signature, timestamp/nonce, 
 caller allowlist; response lỗi không được tiết lộ secret hoặc giúp phân biệt phần
 credential nào hợp lệ.
 
-Baseline của trust boundary BFF → Core giữ `HTTPS + Basic Auth + HMAC`; mTLS và
+<span class="annotation" data-annotation-id="f9ebf90e-e86c-4c01-beba-91796b851c34" data-annotation-type="inlineComment">Baseline của trust boundary BFF → Core giữ</span> `HTTPS + Basic Auth + HMAC`; mTLS và
 JWT ký bất đối xứng không thuộc wire contract hiện tại. Mỗi caller Market/Agent và
 mỗi môi trường phải có Basic credential cùng HMAC signing key riêng, chỉ có hiệu
 lực cho audience/direction BFF → Dossier Core và không được tái sử dụng cho chiều
@@ -1516,7 +1515,7 @@ bất đối xứng.
 
 ## 9.2 Authorization & Access Control
 
-Authorization áp dụng defense in depth:
+<span class="annotation" data-annotation-id="9f2d11ed-a798-4d93-ad95-8b105ab91c9c" data-annotation-type="inlineComment">Authorization áp dụng defense in depth</span>:
 
 | **Lớp** | **Kiểm soát** |
 | --- | --- |
@@ -1573,7 +1572,7 @@ ID, actor subject dạng opaque, dossier ID, action, kết quả, duration, erro
 `peer_ip` do trusted ingress/transport quan sát. Vì Core chỉ nhận request từ BFF,
 `peer_ip` là địa chỉ peer nội bộ và không được biểu diễn như IP gốc của khách hàng.
 
-WAF/edge hoặc BFF là nguồn thẩm quyền của `origin_ip`. Thành phần này phải loại bỏ
+<span class="annotation" data-annotation-id="828987d9-ccd9-4ba0-9166-143c0566f08c" data-annotation-type="inlineComment">WAF/edge hoặc BFF là nguồn thẩm quyền của</span> `origin_ip`. Thành phần này phải loại bỏ
 header network-origin do client tự gửi, ghi origin đã quan sát và truyền cùng
 `X_TRACE_ID` xuyên suốt để điều tra viên correlate WAF/edge → BFF → Core.
 Core không tin trực tiếp `X-Forwarded-For` hoặc trường IP do request nghiệp vụ tự
@@ -1812,7 +1811,7 @@ load/soak test. Capacity plan phải tách ít nhất:
 | Report/download | Rows/file size/concurrency | Memory, temp storage, File/Syncfusion latency. |
 | OCR CCCD | Request/minute và polling rate | Core phải backoff theo `Retry-After`; quota/worker thuộc capacity `vhm-ocr-ekyc`. |
 
-### 11.1.1 Inbound admission control
+### 11.1.1 <span class="annotation" data-annotation-id="bb8bc007-9b29-41c2-b671-fb5ae84b5a6c" data-annotation-type="inlineComment">Inbound admission control</span>
 
 Rate-limit tại boundary Market/Agent BFF → Core được cấu hình theo
 `client_id + operation/endpoint class`, tách ít nhất mutation, read/search,
@@ -1857,7 +1856,7 @@ với downstream throughput:
 - Retry cũng tiêu thụ quota và chỉ được thực hiện trong remaining deadline theo NFR-T04.
 - Upload/download file binary đi trực tiếp Client ↔ Object Storage và không được tính như traffic binary qua Core; chỉ các call metadata/presign/validation mới tính vào File quota của Core.
 
-Ví dụ kiểm tra bottleneck theo comment thẩm định: nếu toàn bộ `400 req/s` của Core
+<span class="annotation" data-annotation-id="4ee4f5aa-b321-49d9-a89d-98d7d8b17a1a" data-annotation-type="inlineComment">Ví dụ kiểm tra bottleneck theo comment thẩm định</span>: nếu toàn bộ `400 req/s` của Core
 đều phát sinh đúng một File call và File quota là `50 req/s`, thì
 `excessRps = 350 req/s`. Core chỉ được chuyển tối đa `50 req/s` tới File; phần vượt
 không được block thread hoặc xếp hàng vô hạn mà phải fast-fail với lỗi
