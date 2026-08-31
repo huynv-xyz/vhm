@@ -1,11 +1,11 @@
-> **TÀI LIỆU NỘI BỘ** — Tài liệu thiết kế kiến trúc L2 phục vụ thẩm định. Tài liệu mô tả capability, boundary, interface, data flow, control và quality gate; không quy định ngôn ngữ hoặc application framework.
+> **TÀI LIỆU NỘI BỘ** — Tài liệu thiết kế kiến trúc L2 phục vụ thẩm định. Tài liệu mô tả capability, boundary, interface, data flow, control và quality gate; không quy định ngôn ngữ hoặc thư viện ứng dụng.
 
 # L2 - AP-AUTHZ - Edge Gateway & Authorization Platform
 
 | **Trường** | **Nội dung** |
 | --- | --- |
 | **Trạng thái** | **ĐANG THẨM ĐỊNH (UNDER REVIEW)** |
-| **Phiên bản & Lịch sử thay đổi** | `v1.5` — 31/08/2026 — Chuẩn hóa theo template L2 Architecture Review Workspace; loại bỏ code và phụ thuộc ngôn ngữ triển khai |
+| **Phiên bản & Lịch sử thay đổi** | `v1.6` — 31/08/2026 — Bổ sung DDD boundary, SPIFFE/SPIRE workload identity, SRE operating model và kiểm tra tương thích Mermaid |
 | **Chủ sở hữu tài liệu** | Security Platform + Application Platform |
 | **Chủ sở hữu hệ thống** | Security Platform (Authorization) · Application Platform (Edge) · Platform/SRE (Workload Trust) |
 | **Hệ thống** | `ap-authz` — Edge Gateway & Authorization Platform |
@@ -40,10 +40,12 @@ Kiến trúc đề xuất tách trách nhiệm:
 | DR-02 | Versioned authorization contract, signed policy artifact và mandatory PEP coverage | Phê duyệt làm guardrail |
 | DR-03 | PoC policy engine và local/near-workload PDP topology | Phê duyệt phạm vi/tiêu chí PoC; chưa phê duyệt sản phẩm production |
 | DR-04 | Migration theo action bằng shadow → canary → enforce | Phê duyệt phương pháp chuyển đổi |
+| DR-05 | DDD bounded-context ownership, SPIFFE workload identity contract và SRE action-level governance | Phê duyệt làm baseline; **không đưa SPIRE vào baseline deployment hiện tại**, chỉ kích hoạt theo adoption gate mục 9.1.1 |
 
 ### Chưa đề nghị phê duyệt production
 
 - Policy engine và PDP topology cuối cùng.
+- SPIRE deployment/federation topology; không thuộc baseline hiện tại và chỉ mở khi workload-identity conformance chứng minh cần thiết.
 - Security floor; đây chỉ là candidate emergency-revocation mechanism cần PoC.
 - Audit durability mode, degraded window và quota của từng action.
 - Numeric production baseline cho workload, SLO, capacity, RTO/RPO, multi-region và cost.
@@ -52,7 +54,7 @@ Kiến trúc đề xuất tách trách nhiệm:
 
 | **Risk** | **Nội dung chặn** | **Điều kiện đóng** |
 | --- | --- | --- |
-| AR-001 — Delegation | IAM/token exchange/sender binding chưa chốt | Delegation Profile v1 + replay/wrong-caller E2E |
+| AR-001/AR-013 — Identity & Delegation | Workload authority/conformance và IAM sender binding chưa được chứng minh | Workload Identity + Delegation Profile và negative E2E |
 | AR-002 — PEP bypass | Route/handler/consumer có thể thiếu enforcement | Full coverage inventory + default-deny conformance |
 | AR-003/AR-004 — Revocation & signing | Cache/LKG/rollback và signer recovery chưa được chứng minh | Revocation PoC/ADR + compromised-key drill |
 | AR-008 — Audit availability | Durable audit có thể gây outage/availability attack | Action-level business approval + quota/full-spool test |
@@ -75,7 +77,7 @@ Kiến trúc đề xuất tách trách nhiệm:
 | **Chuyển trạng thái** | **Điều kiện đầu vào** |
 | --- | --- |
 | `DRAFT → UNDER REVIEW` | Scope, component, trust boundary, requirement, diagram, ADR, risk và open issue có định danh |
-| `UNDER REVIEW → APPROVED` | Named owner/reviewer; delegation, PEP coverage, revocation decision, audit action matrix và critical risks đã đóng hoặc có điều kiện phê duyệt rõ |
+| `UNDER REVIEW → APPROVED` | Named owner/reviewer; workload identity, delegation, PEP coverage, revocation decision, audit action matrix và critical risks đã đóng hoặc có điều kiện phê duyệt rõ |
 | `APPROVED → POC BASELINE` | Contract/vocabulary v1, engine shortlist, benchmark plan và pilot action được duyệt |
 | `POC BASELINE → IMPLEMENTATION BASELINE` | L3 artefacts, threat model, performance/chaos evidence, migration và runbook hoàn tất |
 | `IMPLEMENTATION BASELINE → PRODUCTION` | Action-level checklist đạt và Security, Domain, SRE, Product/Business ký duyệt |
@@ -90,10 +92,10 @@ Kiến trúc đề xuất tách trách nhiệm:
 | PDP Engine & Topology Benchmark | `TBD` | Authorization + SRE | Mục 5, 11, 12 | Trước production selection |
 | PEP Coverage & Conformance Specification | `TBD` | Authorization + Domains | Mục 2.4, 6.3, 15 | Trước enforce |
 | Emergency Revocation PoC & ADR | `TBD` | IAM + Security + SRE | Mục 7.5, 12.3, 16 | Trước high-risk action |
-| Workload Flow Inventory & Trust Baseline | `TBD` | Platform/SRE | Mục 9.2, 10.4 | Trước strict enforcement |
+| SPIFFE Trust Domain, Workload Identity & Flow Profile | `TBD` | Platform/SRE + Security | Mục 9.1, 10.4 | Trước strict enforcement |
 | Decision Audit & Retention Contract | `TBD` | SecOps + Privacy | Mục 8.3, 9.4, 13 | Trước dữ liệu thật |
 | Action-level Audit Durability Matrix | `TBD` | Product + Security/Legal + SRE | Mục 12.4 | Trước enforce từng action |
-| Capacity & Resilience Matrix | `TBD` | SRE + Product | Mục 4, 11, 12 | Trước OAT |
+| SRE Service Level, Error Budget & Capacity Matrix | `TBD` | SRE + Product + System Owners | Mục 4, 11–14 | Trước OAT |
 | BFF Migration Matrix & Rollback Plan | `TBD` | Platform + Domains | Mục 10.5 | Trước cutover |
 | Dashboard, Alert, On-call & DR Pack | `TBD` | SRE + System Owners | Mục 13, 14 | Trước production |
 
@@ -219,6 +221,9 @@ Authorization nằm trên request path của nhiều domain. Lỗi có thể gâ
 | ARCH-10 | Approved emergency revoke override positive cache/LKG/rollback |
 | ARCH-11 | Fail-open chỉ cho public/low-risk exception có owner/expiry |
 | ARCH-12 | Migration `DENY→ALLOW` là privilege expansion và chặn rollout |
+| ARCH-13 | Authorization Platform là một bounded context; không sở hữu business invariant hoặc domain data model |
+| ARCH-14 | Workload principal dùng SPIFFE-compatible identity; không suy luận identity từ IP, namespace hoặc header |
+| ARCH-15 | Reliability được quản trị bằng user-facing SLO và error budget theo action class |
 
 ## 2.2 Sơ đồ kiến trúc ứng dụng
 
@@ -228,7 +233,8 @@ Authorization nằm trên request path của nhiều domain. Lỗi có thể gâ
 flowchart LR
     U[User / Machine Client] -->|TLS + credential| E[Edge Gateway]
     I[IAM / IdP] -->|Token / keys / delegation| E
-    E -->|Authenticated request| W[Workload Trust Layer]
+    E -->|Authenticated request| W[Workload Trust Layer<br/>mTLS + caller policy]
+    WI[Workload Identity Authority<br/>SPIFFE profile] -.->|SVID + trust bundle| W
     W --> S[Domain Services<br/>Service PEP]
     S --> P[Local / Near-workload PDP]
     S --> D[(Domain Data / Fact Authority)]
@@ -257,6 +263,9 @@ flowchart TB
       S --> X[Domain Invariant / Response]
     end
 
+    IA[Workload Identity Authority<br/>SPIFFE profile<br/>SPIRE only if gate fails] -.-> W
+    IA -.-> S
+
     O -.-> P
     P -.-> O
     E -.-> A[Audit Relay]
@@ -269,6 +278,7 @@ flowchart TB
 | **Component** | **Trách nhiệm** | **Dữ liệu quản lý** | **Giao tiếp ngoài component** |
 | --- | --- | --- | --- |
 | Edge Gateway | External AuthN, hygiene, traffic control, route/coarse PEP | Route/action registry, trusted request context | IAM, workload trust, audit |
+| Workload Identity Authority | Node/workload attestation, SVID issuance/rotation, trust-bundle lifecycle | Registration entry, SPIFFE ID, SVID/bundle status | Nodes/agents, workloads, peer trust domains |
 | Workload Trust | Mutual authentication, caller/destination policy | Workload principal/trust bundle | Edge, domain workloads |
 | Service PEP | Resolve facts, build canonical request, enforce decision/obligation | Request-scoped verified context | Domain data, PDP, audit |
 | PDP | Deterministic policy evaluation | Active policy/revocation state | Service/Edge PEP, rollout status |
@@ -281,6 +291,7 @@ flowchart TB
 | **Ranh giới** | **Mức tin cậy đầu vào** | **Kiểm soát bắt buộc** | **Tiêu chí phê duyệt** |
 | --- | --- | --- | --- |
 | Internet → Edge | Không tin cậy | TLS, credential validation, header/path hygiene, rate limit | Negative external E2E |
+| Identity authority → Workload | Chỉ tin sau attestation và bundle verification | Short-lived SVID, key isolation, bundle rotation, issuer pin | Spoof/expiry/rotation/compromise tests |
 | Edge → Workload | Chỉ tin sau workload authentication | Mutual authentication, caller allowlist, bounded delegation | Wrong-caller/plaintext tests |
 | Service → PDP | Chỉ trusted local/authenticated channel | Input limits, schema/capability version, deadline | Contract/timeout tests |
 | PEP → Fact authority | Fact chỉ tin theo registered source | Provenance, freshness, least data | Stale/forged fact tests |
@@ -314,6 +325,36 @@ flowchart TB
 
 Network policy không chứng minh service PEP đã thực thi. Production cần cả network coverage và application-path coverage, nhưng L2 không quy định framework thực hiện.
 
+## 2.5 Domain-Driven Design Boundary Model
+
+DDD được áp dụng để giữ đúng quyền sở hữu dữ liệu và ngăn Authorization Platform trở thành “domain service dùng chung”. Tài liệu chỉ dùng các pattern DDD cần cho bài toán này: **Bounded Context**, **Context Map**, **Anti-Corruption Layer** và **Aggregate invariant**.
+
+```mermaid
+flowchart LR
+    IAM["IAM Context<br/>Actor and delegation"] -->|Verified identity facts| AUTH["Authorization Context<br/>Contract, policy and decision"]
+    WID["Workload Identity Context<br/>Attestation, SVID and trust bundle"] -->|Verified caller SPIFFE ID| AUTH
+    DOM["Domain Bounded Context<br/>Resource, invariant and transaction"] --> MAP["Anti-Corruption Layer<br/>Canonical fact mapping"]
+    MAP -->|Trusted resource facts| AUTH
+    AUTH -->|Decision and obligations| DOM
+    DOM -->|Decision and final outcome| AUD["Audit Context<br/>Evidence and retention"]
+```
+
+| **Bounded Context** | **Sở hữu** | **Không sở hữu** | **Hợp đồng tích hợp** |
+| --- | --- | --- | --- |
+| IAM | Actor credential, delegation, entitlement lifecycle | Workload SVID, resource state và business invariant | Verified actor/delegation facts |
+| Workload Identity | Node/workload attestation, SPIFFE ID, SVID và trust bundle lifecycle | Actor entitlement, business action và resource state | Verified caller identity |
+| Authorization | Canonical request/decision contract, action vocabulary governance, policy lifecycle, shared guardrail | Domain record, transaction và business response | Versioned authorization contract |
+| Domain (`Agent`, `Market`, `Broker`, ...) | Resource truth, action semantics, tenant relationship, aggregate invariant, transaction và response | Cơ chế ký/phân phối shared policy | Anti-Corruption Layer ánh xạ domain fact sang canonical contract |
+| Audit/SecOps | Evidence schema, retention, access, reconciliation | Business decision hoặc authorization policy | Decision/outcome audit contract |
+
+Quy tắc thiết kế cho team domain:
+
+- Mỗi action canonical phải có một Domain Owner định nghĩa ý nghĩa, resource type, fact authority và invariant.
+- Anti-Corruption Layer chỉ ánh xạ fact đã xác minh; không sao chép toàn bộ domain model vào policy input.
+- PDP quyết định theo policy; aggregate vẫn kiểm tra invariant trong transaction trước commit. `ALLOW` không phải lệnh bắt buộc domain thực hiện mutation.
+- Domain event đã commit chỉ mang sự kiện; deferred command có side effect phải authorize lại hoặc dùng explicit grant còn hiệu lực.
+- Thay đổi action/resource semantics là thay đổi contract có version, compatibility test và migration plan.
+
 # 3. Functional Requirements
 
 ## 3.1 Ma trận năng lực chức năng
@@ -322,7 +363,7 @@ Network policy không chứng minh service PEP đã thực thi. Production cần
 | --- | --- | --- | --- |
 | FR-01 | External AuthN | Validate issuer, audience, expiry, algorithm và key | Wrong issuer/audience/key đều bị từ chối |
 | FR-02 | Header/context hygiene | Strip identity/delegation header không tin cậy | External spoofing E2E thất bại |
-| FR-03 | Workload trust | Xác thực caller và destination | Plaintext/wrong caller bị deny |
+| FR-03 | Workload trust | SPIFFE-compatible caller identity, short-lived SVID và destination policy | Spoof/plaintext/wrong caller/expired SVID bị deny; rotation không gián đoạn |
 | FR-04 | Delegation | Actor/caller/audience/scope/TTL có provenance | Replay/wrong audience/caller tests |
 | FR-05 | Canonical contract | Request/decision/obligation có version | Schema/compatibility tests |
 | FR-06 | Resource authorization | Facts lấy server-side và có source/version | IDOR/cross-tenant negative tests |
@@ -335,6 +376,7 @@ Network policy không chứng minh service PEP đã thực thi. Production cần
 | FR-13 | Audit correlation | Evaluation nối final enforcement outcome | Reconciliation evidence |
 | FR-14 | Migration | Shadow/canary/rollback theo action | Không có unexplained privilege expansion |
 | FR-15 | Break-glass | MFA, four-eyes, scope, TTL, alert, retrospective | Exercise và audit report |
+| FR-16 | Bounded-context ownership | Action/fact/invariant có Domain Owner; mapping qua Anti-Corruption Layer | Context map + ownership/contract conformance |
 
 ## 3.2 Quy tắc authorization
 
@@ -372,12 +414,14 @@ Các target dưới đây là đề xuất cần workload model, PoC và owner p
 
 # 5. Technology Stack & Justification
 
-L2 chọn capability và tiêu chí; không khóa ngôn ngữ hoặc application framework.
+L2 chọn capability và tiêu chí; không khóa ngôn ngữ hoặc thư viện ứng dụng.
 
 | **Lĩnh vực** | **Giải pháp lựa chọn** | **Cơ sở lựa chọn** | **Đánh đổi/trạng thái** |
 | --- | --- | --- | --- |
 | Edge Gateway | Enterprise managed gateway/Envoy-compatible edge | TLS, routing, policy hook, HA, observability | Product `TBD` |
-| Workload trust | Mutual authentication và workload principal; Istio-compatible baseline | East-west identity và policy | `ĐỀ XUẤT` |
+| Workload identity model | SPIFFE ID + short-lived X.509-SVID + trust bundle | Canonical, attested workload principal độc lập hạ tầng | `BẮT BUỘC` ở mức contract |
+| Workload identity authority | Dùng platform issuer hiện có nếu đạt SPIFFE profile | Tránh thêm một identity control plane và vận hành hai authority | **SPIRE không thuộc baseline hiện tại; có adoption gate** |
+| Workload policy | Mutual authentication + default-deny caller/destination policy | East-west AuthN và AuthZ độc lập | Mesh/Istio là carrier tùy chọn, không là baseline bắt buộc |
 | Policy decision engine | Candidate OPA/Cedar hoặc tương đương | Deterministic evaluation, test, bundle/status support | `CẦN PoC` |
 | PDP topology | Local sidecar, node-local, embedded hoặc remote-regional | Trade-off latency, isolation, cost, operations | `CẦN PoC` |
 | Policy repository/pipeline | Version control + protected review + immutable build | Traceability và separation of duties | `BẮT BUỘC` |
@@ -395,12 +439,14 @@ L2 chọn capability và tiêu chí; không khóa ngôn ngữ hoặc application
 | ADR-002 | Hybrid platform guardrail + domain authorization | `ĐỀ XUẤT` | — | `TBD` |
 | ADR-003 | Distributed PDP cho synchronous hot path | `CẦN PoC` | — | `TBD` |
 | ADR-004 | Signed immutable policy artifact | `ĐỀ XUẤT` | — | `TBD` |
-| ADR-005 | Workload identity + default-deny caller policy | `ĐỀ XUẤT` | — | `TBD` |
+| ADR-005 | SPIFFE-compatible workload identity + default-deny caller policy; SPIRE conditional | `ĐỀ XUẤT CHỐT L2` | 31/08/2026 | Workload Identity Profile |
 | ADR-006 | Versioned authorization contract/vocabulary | `ĐỀ XUẤT` | — | `TBD` |
 | ADR-007 | Audience/caller-bound delegation | `ĐỀ XUẤT CÓ ĐIỀU KIỆN` | — | IAM Profile |
 | ADR-008 | Audit durability/failure mode theo action | `ĐỀ XUẤT CÓ ĐIỀU KIỆN` | — | Audit Matrix |
 | ADR-009 | Candidate security floor tách base policy | `CẦN PoC — CHƯA DUYỆT PRODUCTION` | — | Revocation PoC |
 | ADR-010 | Explicit grant cho cross-tenant/deferred authority | `ĐỀ XUẤT CÓ ĐIỀU KIỆN` | — | Grant Contract |
+| ADR-011 | DDD bounded-context ownership và Anti-Corruption Layer | `ĐỀ XUẤT` | — | Authorization Contract |
+| ADR-012 | SLO/error-budget gate theo action class | `ĐỀ XUẤT` | — | SRE Service Level Policy |
 
 ## 5.2 Trade-off Analysis
 
@@ -408,10 +454,23 @@ L2 chọn capability và tiêu chí; không khóa ngôn ngữ hoặc application
 | --- | --- | --- | --- | --- |
 | ADR-001 | Nơi đặt business authorization | Gateway tập trung: dễ thấy nhưng cần domain data/blast radius lớn | Domain PEP: gần truth/transaction nhưng cần coverage | Chọn domain PEP; Edge chỉ coarse |
 | ADR-003 | PDP placement | Local: latency thấp, fleet complexity cao | Remote: vận hành tập trung, network dependency | Benchmark theo policy/input/failure thật |
-| ADR-005 | Workload control | Chỉ network identity | Identity + destination/caller policy | Chọn cả AuthN và AuthZ workload |
+| ADR-005 | Workload identity authority | SPIRE quản lý attestation/SVID/bundle | Platform issuer hiện có đáp ứng SPIFFE profile | Chọn theo conformance; không chạy hai authority song song cho cùng workload |
 | ADR-008 | Audit failure | Fail-close bảo vệ evidence nhưng giảm availability | Continue bảo vệ availability nhưng có compliance gap | Product/Security/SRE quyết định theo action |
 | ADR-009 | Emergency revoke | Security floor có strong ordering/extra subsystem | Introspection/invalidation/emergency bundle đơn giản hơn nhưng trade-off latency | PoC trước khi chọn |
 | ADR-010 | Cross-tenant | Broad admin role đơn giản nhưng blast radius lớn | Explicit grant phức tạp hơn nhưng auditable | Chọn explicit grant |
+
+## 5.3 Framework/Pattern Applicability
+
+Chỉ các framework/pattern có vai trò trực tiếp sau được đưa vào baseline thiết kế:
+
+| **Framework/pattern** | **Áp dụng cụ thể** | **Không áp đặt** |
+| --- | --- | --- |
+| SPIFFE | Định danh workload, trust domain, SVID, trust bundle và federation contract | Không bắt buộc một service mesh hoặc một runtime cụ thể |
+| SPIRE | Production implementation khi platform hiện tại không chứng minh được node/workload attestation, short-lived SVID rotation hoặc federation | Không dựng SPIRE chỉ để “đúng framework”; không chạy song song hai issuer cho cùng identity scope |
+| Domain-Driven Design | Bounded Context, Context Map, Anti-Corruption Layer và aggregate invariant như mục 2.5 | Không đưa toàn bộ domain model vào central policy; không quy định cách tổ chức mã nguồn |
+| SRE | User-facing SLI/SLO, error budget, burn-rate alert, readiness và game day như mục 13.6–14 | Không biến component metric thành cam kết business; không quy định sản phẩm monitoring |
+
+Ngôn ngữ lập trình, application framework, SDK và cấu trúc mã nguồn nằm ngoài quyết định L2.
 
 # 6. Integration Architecture
 
@@ -449,7 +508,7 @@ Contract không mang toàn bộ token, request body hoặc domain record. Chỉ 
 | Schema version | Phiên bản decision contract | Incompatible → deny/not-ready |
 | Decision ID | Một lần evaluation | Correlate với transaction/outcome |
 | Decision | `ALLOW`, `DENY`, `INDETERMINATE` | Chỉ `ALLOW` hợp lệ mới tiếp tục |
-| Reason code | Machine-readable reason | Map sang client response an toàn |
+| Reason identifier | Mã lý do có semantic thống nhất | Map sang client response an toàn |
 | Policy digest | Chính xác policy revision | Audit/reproduce/rollout |
 | Revocation digest/generation | Approved revocation state | Cache/rollback guard |
 | Obligations | Mask, row limit, step-up, constraint | Unknown/conflict/failure → deny |
@@ -481,7 +540,7 @@ sequenceDiagram
     participant P as PDP B
 
     A->>STS: Exchange actor credential for audience B
-    STS->>STS: Authenticate A; bind caller, scope, audience, TTL
+    STS->>STS: Authenticate A and bind caller, scope, audience, TTL
     STS-->>A: Sender-bound delegated artifact
     A->>M: Authenticated workload call + delegation
     M->>B: Verified caller A
@@ -639,7 +698,7 @@ sequenceDiagram
     alt Compatible
         P-->>R: Active N+1
     else Incompatible or stale
-        P-->>S: Alert; affected action deny/not-ready
+        P-->>S: Alert and set affected action deny/not-ready
     end
 ```
 
@@ -687,7 +746,7 @@ sequenceDiagram
     participant A as Audit
 
     U->>E: Read resource + access token
-    E->>E: Strip untrusted headers; validate token
+    E->>E: Strip untrusted headers and validate token
     E->>M: Authenticated call + bounded delegation
     M->>S: Verified actor/caller context
     S->>D: Resolve resource/facts
@@ -711,7 +770,7 @@ sequenceDiagram
     participant O as Audit Outbox
 
     U->>S: Execute mutation
-    S->>D: Begin; lock/read version 42
+    S->>D: Begin and lock/read version 42
     D-->>S: Tenant, state, risk facts
     S->>P: Actor + caller + action + resource version
     P-->>S: ALLOW/DENY + obligations
@@ -752,9 +811,53 @@ sequenceDiagram
 - Pin issuer, audience, token class và algorithm.
 - Unknown key/wrong audience bị từ chối.
 - Edge strip identity/delegation header từ untrusted boundary.
-- Workload identity không lấy từ caller-supplied field.
+- Workload identity dùng SPIFFE-compatible principal và không lấy từ caller-supplied field.
 - Delegation có caller binding, exact audience, TTL và replay control.
 - Raw credential không xuất hiện trong logs/metrics.
+
+### 9.1.1 SPIFFE/SPIRE Workload Identity Model
+
+SPIFFE là identity contract của data plane. SPIRE là một phương án triển khai contract đó, không phải dependency bắt buộc nếu workload platform hiện có vượt qua cùng bộ conformance test.
+
+> **Quyết định L2:** Không triển khai SPIRE trong baseline hiện tại. Ưu tiên workload identity authority sẵn có nếu đạt SPIFFE conformance. Nếu không có authority được phê duyệt hoặc một control bắt buộc không đạt, lựa chọn mặc định là SPIRE; không tự xây issuer riêng.
+
+| **Thành phần** | **Baseline thiết kế** | **Quy tắc kiểm soát** |
+| --- | --- | --- |
+| Trust domain | Một trust domain cho mỗi environment/security administrative boundary | Không dùng namespace làm trust root; federation chỉ giữa các authority độc lập đã phê duyệt |
+| SPIFFE ID | `spiffe://<trust-domain>/<bounded-context>/<workload>` | Đại diện workload logic; không chứa Pod/node/instance ID, actor ID, role hoặc tenant |
+| SVID | X.509-SVID ngắn hạn là mặc định cho mTLS | Tự động rotate trước expiry; private key không được phân phối như application secret |
+| JWT-SVID | Chỉ dùng khi kênh không thể dùng X.509 mTLS | Exact audience, TTL ngắn, replay risk được threat-model và phê duyệt riêng |
+| Attestation | Identity authority xác minh node và workload trước khi cấp SVID | Namespace/service account label chỉ là selector trong attestation, không tự nó là identity |
+| Trust bundle | Phân phối và rotate qua workload identity control plane | Unknown/expired issuer hoặc stale bundle ngoài approved overlap → connection fail-close |
+| Authorization binding | PEP/PDP dùng SPIFFE ID đã xác minh làm `caller` | Không authorize bằng source IP, DNS name, namespace hoặc header đơn lẻ |
+| Actor delegation | Actor credential/delegation tách khỏi workload SVID | SVID chứng minh caller; delegation chứng minh caller được hành động thay actor trong scope/audience/TTL |
+| Federation | Chỉ bật cho luồng giữa hai trust domain độc lập có flow inventory | Pin trust domain, destination, action; deny transitive trust mặc định |
+
+SPIRE adoption gate:
+
+| **Control cần chứng minh trên platform hiện tại** | **Đạt** | **Không đạt** |
+| --- | --- | --- |
+| Stable SPIFFE ID và trust-domain naming | Giữ platform issuer | Kích hoạt SPIRE design |
+| Node + workload attestation chống giả mạo identity | Giữ platform issuer | Kích hoạt SPIRE design |
+| Short-lived X.509-SVID và rotation không restart workload | Giữ platform issuer | Kích hoạt SPIRE design |
+| Trust-bundle rotation, overlap và compromise recovery | Giữ platform issuer | Kích hoạt SPIRE design |
+| Multi-AZ availability và measured issuance/rotation SLO | Giữ platform issuer | Kích hoạt SPIRE design |
+| Federation chuẩn hóa nếu có nhiều independent trust domains | Giữ platform issuer nếu đáp ứng | Kích hoạt SPIRE federation design |
+
+Platform/SRE phải ghi evidence trong Workload Identity Profile. Chỉ cần **một control bắt buộc không đạt** là mở ADR triển khai SPIRE trong identity scope bị ảnh hưởng. Không cho cùng một workload nhận hai authority production song song; migration chỉ cho trust-bundle overlap có thời hạn, telemetry và rollback rõ.
+
+Ví dụ tên logic phục vụ review contract: `spiffe://prod.vhm/market/order-api` và `spiffe://prod.vhm/platform/edge-gateway`. Tên trust domain thực tế phải theo enterprise naming standard trong L3 profile.
+
+### 9.1.2 Identity-to-Authorization Flow
+
+| **Bước** | **Authority** | **Output đáng tin cậy** | **Failure behavior** |
+| --- | --- | --- | --- |
+| 1. Attest workload | Workload identity authority | SPIFFE ID + short-lived SVID | Không cấp identity |
+| 2. Authenticate hop | mTLS verifier/trust layer | Verified caller SPIFFE ID | Dừng connection |
+| 3. Validate actor/delegation | IAM profile + Service PEP | Actor, audience, scope, binding, TTL | Deny request |
+| 4. Resolve domain facts | Domain authority | Resource/tenant/version/provenance | Deny hoặc controlled unavailable theo action |
+| 5. Evaluate policy | PDP | Decision + obligations + policy digest | Fail-close trừ exception đã phê duyệt |
+| 6. Enforce and audit | Service PEP + Domain | Final outcome gắn caller, actor và decision | Theo action-level audit mode |
 
 ## 9.2 Authorization & Access Control
 
@@ -852,6 +955,8 @@ flowchart TB
     end
 
     CP[Authorization Control Plane<br/>Multi-AZ] --> PR
+    WI[Workload Identity Authority<br/>SPIFFE profile<br/>SPIRE only if gate fails] -.-> W1
+    WI -.-> W2
     K[KMS/HSM] --> CP
     I[IAM / STS / Key Service] --> E1
     I --> E2
@@ -1095,6 +1200,49 @@ Explicit policy deny không tính platform error. `INDETERMINATE`, dependency un
 - Explain/support view redact PII và policy internals.
 - Restore không làm dữ liệu hết retention tái xuất hiện ngoài policy.
 
+## 13.6 SRE Operating Model
+
+SRE được áp dụng tại **action level** vì người dùng trải nghiệm một business action xuyên qua Edge, workload trust, PEP, PDP, fact provider và domain transaction. SLO của từng component chỉ hỗ trợ chẩn đoán, không thay thế action SLO.
+
+| **SRE practice** | **Áp dụng cho Authorization Platform** | **Quy tắc vận hành** |
+| --- | --- | --- |
+| User-facing SLI/SLO | Availability và latency đo từ valid action attempt đến final outcome | Domain Owner + Product duyệt action class; SRE duyệt cách đo |
+| Error budget | Rolling 30-day budget theo action class | Explicit policy deny/business conflict không tiêu budget; platform error, timeout, stale security state và obligation failure có tiêu budget |
+| Burn-rate alert | Fast-burn và slow-burn multi-window từ action SLO | Fast burn page on-call; slow burn tạo incident/ticket và chặn rollout có rủi ro |
+| Release protection | Theo dõi error budget cùng policy/runtime rollout | Hết budget: dừng normal feature/policy expansion; chỉ security emergency change được Incident Commander cho phép, có canary và retrospective |
+| Dependency budget | Phân bổ latency/error budget cho Edge, trust, fact, PDP, domain và audit-local path | Không để từng component dùng hết toàn bộ end-to-end budget |
+| Capacity & saturation | Theo concurrency, queue age, policy size, fact miss và audit spool | Test 2× approved peak và one-AZ loss trước production |
+| Toil reduction | Tự động inventory drift, certificate expiry, bundle parity, rollback và evidence collection | Repeated manual action phải vào automation backlog có owner |
+| Game day | Revoke, signer compromise, stale bundle, PDP outage, audit full/noisy tenant, AZ/region loss | Chạy trước production và định kỳ theo criticality; failure tạo blocker có hạn đóng |
+
+### 13.6.1 Error Budget Policy
+
+- Mỗi action chỉ có một user-facing SLO owner và một nguồn đo canonical; dashboard component không được tự công bố SLO khác.
+- Budget được phân đoạn theo action class và environment, không theo tenant ID trong metric label. Tenant impact được điều tra bằng tokenized evidence có kiểm soát.
+- Privilege-expansion mismatch, cross-tenant allow hoặc stale emergency revocation là security event; không chờ error budget cạn mới hành động.
+- Khi budget còn nhưng burn tăng, rollout controller tự pause cohort mới. Khi budget cạn, Product + Domain + SRE phải duyệt khôi phục normal rollout.
+- Security emergency change được ưu tiên giảm exposure nhưng vẫn phải có named Incident Commander, bounded scope, verification, audit và retrospective.
+
+Baseline cảnh báo cho cửa sổ SLO 30 ngày:
+
+| **Mức** | **Điều kiện burn-rate** | **Hành động** |
+| --- | --- | --- |
+| Fast burn | ≥ 14.4× đồng thời trong cửa sổ 1 giờ và 5 phút | Page on-call, pause rollout, mở incident |
+| Sustained burn | ≥ 6× đồng thời trong cửa sổ 6 giờ và 30 phút | Page/on-call response trong ca trực, pause rollout |
+| Slow burn | ≥ 1× đồng thời trong cửa sổ 3 ngày và 6 giờ | Ticket có deadline, review capacity/dependency và release plan |
+
+Ngưỡng trên là baseline vận hành; thay đổi phải qua SRE Service Level Policy và không được làm yếu security-event alert.
+
+### 13.6.2 Ownership
+
+| **Phạm vi** | **Accountable** | **Responsible** |
+| --- | --- | --- |
+| Action SLO và business failure semantics | Product + Domain Owner | Domain Team + SRE |
+| PDP/policy distribution SLI | Security Platform | Authorization Team |
+| Workload identity/trust SLI | Platform/SRE | Trust Platform Team |
+| Audit durability/delivery SLI | SecOps + approved Business Owner | Audit Platform + Domain Team |
+| Error-budget enforcement và incident process | System Owner | SRE/on-call |
+
 # 14. Operational Readiness
 
 ## 14.1 RTO & RPO
@@ -1125,11 +1273,13 @@ Explicit policy deny không tính platform error. `INDETERMINATE`, dependency un
 | --- | --- | --- |
 | Ownership | System owner, on-call và escalation named | RACI/on-call roster |
 | Identity | IAM/delegation profile approved | Contract + negative E2E |
+| Workload identity | SPIFFE profile, attestation, rotation, bundle/federation behavior approved | Conformance + expiry/rotation/failure drill |
 | Coverage | Route/handler/consumer/job/response no-bypass | 100% inventory report |
 | Policy | Test/sign/provenance/rollback/revoke | Release evidence |
 | Capacity | Workload model, 2× peak, one-AZ | Load/soak report |
 | Reliability | Chaos/DR/restore/revocation/audit-full | Drill reports |
 | Observability | Dashboard, alert, synthetic test | OAT evidence |
+| SRE governance | Action SLO, 30-day error budget, burn alert và rollout gate có owner | SRE Service Level Policy + alert exercise |
 | Privacy/Audit | Fields, retention, residency, action durability | Signed contracts/matrix |
 | Migration | Shadow/canary/rollback/decommission | Route action plan |
 
@@ -1156,6 +1306,7 @@ Explicit policy deny không tính platform error. `INDETERMINATE`, dependency un
 | Policy unit | Positive/negative/default deny | CI |
 | Property/security | Cross-tenant, cache fingerprint, deny-overrides | CI |
 | Integration | IAM/delegation, workload trust, PDP, fact, audit | Staging |
+| Workload identity conformance | SPIFFE ID, attestation, SVID/bundle rotation, expiry và federation deny cases | Staging/OAT |
 | Coverage | Route/handler/consumer/job/response | Staging/OAT |
 | Migration | Legacy/new comparison, cohort/rollback | Mỗi cutover |
 | Performance | 2× peak, one-AZ, worst input/bundle, cold start | OAT |
@@ -1213,6 +1364,8 @@ Explicit policy deny không tính platform error. `INDETERMINATE`, dependency un
 | AR-010 | Workload Coverage | Plaintext/direct ingress tạo bypass | Cao | Flow inventory + strict/default deny | Platform/SRE — Open |
 | AR-011 | Multi-region | Trust/revocation/audit drift/residency | Cao | Deployment SAD + DR approval | Platform/Security — Open |
 | AR-012 | Adoption | Complexity khiến team fork/bypass paved road | Trung bình | Standard capability, conformance, training | Authorization/Domains — Open |
+| AR-013 | Workload Identity | Dual issuer, broad federation hoặc stale trust bundle tạo identity confusion | Nghiêm trọng | SPIFFE profile + single-authority scope + rotation/federation drill | Platform/Security — Open |
+| AR-014 | Reliability Governance | Component SLO xanh nhưng business action lỗi hoặc rollout tiêu hết error budget | Cao | Action SLO + budget gate + burn-rate exercise | Product/Domain/SRE — Open |
 
 ### 16.1.1 Risk Acceptance
 
@@ -1237,7 +1390,7 @@ Risk acceptance phải ghi scope/action, owner, compensating control, approver, 
 | OI-07 | Audit field/retention/residency | High | SecOps + Privacy/Legal | Audit Contract |
 | OI-08 | Audit durability/window/quota/failure action theo action | Critical | Product + Security/Legal + SRE | Signed Action Matrix |
 | OI-09 | Workload/peak/SLO/RTO/RPO/cost | High | Product + SRE + FinOps | Approved baseline + evidence |
-| OI-10 | Multi-region trust/promotion authority | High | Platform + Security | Deployment SAD |
+| OI-10 | SPIFFE trust-domain/federation và multi-region promotion authority | High | Platform + Security | Workload Identity Profile + Deployment SAD |
 | OI-11 | BFF route classification/composition value | High | Platform + Domains | Migration Matrix |
 | OI-12 | Production on-call/incident authority | Critical | System Owners | Named roster/runbook |
 
@@ -1249,6 +1402,8 @@ Risk acceptance phải ghi scope/action, owner, compensating control, approver, 
 | --- | --- |
 | Actor | User/service/job chịu ngữ nghĩa của action |
 | Caller | Workload trực tiếp thực hiện hop |
+| Bounded Context | Ranh giới có model, ngôn ngữ và quyền sở hữu nhất quán |
+| Anti-Corruption Layer | Lớp ánh xạ domain fact sang authorization contract mà không làm rò rỉ domain model |
 | PEP | Điểm tạo input đáng tin cậy và thi hành decision/obligation |
 | PDP | Thành phần đánh giá policy |
 | Control plane | Author, test, sign, distribute và inventory policy |
@@ -1259,6 +1414,10 @@ Risk acceptance phải ghi scope/action, owner, compensating control, approver, 
 | Explicit grant | Artifact cho cross-tenant/deferred permission có scope/expiry |
 | Security floor | Candidate deny-only revocation artifact; chưa là production invariant |
 | Authorization transaction | Một business request/command có thể có nhiều decision |
+| SPIFFE ID | URI định danh workload logic trong một trust domain |
+| SVID | Credential ngắn hạn chứng minh workload sở hữu một SPIFFE ID |
+| Trust domain | Ranh giới authority/root of trust cho workload identity |
+| Error budget | Phần lỗi được phép trong cửa sổ SLO, dùng để điều khiển tốc độ thay đổi |
 
 ## B. References
 
@@ -1268,6 +1427,10 @@ Risk acceptance phải ghi scope/action, owner, compensating control, approver, 
 | OAuth 2.0 Token Exchange | [RFC 8693](https://www.rfc-editor.org/rfc/rfc8693.html) |
 | OAuth 2.0 mTLS | [RFC 8705](https://www.rfc-editor.org/rfc/rfc8705.html) |
 | OAuth 2.0 Security BCP | [RFC 9700](https://www.rfc-editor.org/rfc/rfc9700.html) |
+| SPIFFE Concepts | [SPIFFE Concepts](https://spiffe.io/docs/latest/spiffe-about/spiffe-concepts/) |
+| SPIRE Concepts | [SPIRE Concepts](https://spiffe.io/docs/latest/spire-about/spire-concepts/) |
+| Domain-Driven Design | [Domain Language — DDD Reference](https://www.domainlanguage.com/ddd/) |
+| Site Reliability Engineering | [Google SRE — Embracing Risk](https://sre.google/sre-book/embracing-risk/) |
 | Workload/Network Authorization Reference | [Istio Authorization Policy](https://istio.io/latest/docs/reference/config/security/authorization-policy/) |
 | External Authorization Reference | [Istio External Authorization](https://istio.io/latest/docs/tasks/security/authorization/authz-custom/) |
 | Candidate Policy Engine Reference | [Open Policy Agent](https://www.openpolicyagent.org/docs/) |
@@ -1279,14 +1442,15 @@ Risk acceptance phải ghi scope/action, owner, compensating control, approver, 
 | --- | --- | --- |
 | Named system owner/reviewer/on-call | Platform/Security/SRE | Approval |
 | IAM & Delegation Profile v1 | IAM/Security | S2S |
+| SPIFFE Trust Domain, Workload Identity & Flow Profile | Platform/Security | S2S/strict trust |
 | Authorization Contract + Vocabulary v1 | Authorization/Domains | Integration |
 | Route/handler/consumer inventory | Platform/Domains | Shadow/enforce |
 | Engine/topology benchmark và ADR | Authorization/SRE/Architecture | Production selection |
 | Emergency revocation decision/drill | IAM/Security/SRE | High-risk |
 | Action-level Audit Durability Matrix | Product/Security/Legal/SRE | Enforce |
-| Workload flow/default-deny baseline | Platform/SRE | Strict trust |
 | Audit/privacy/retention/residency contract | SecOps/Privacy/Legal | Dữ liệu thật |
 | Workload/SLO/capacity/cost baseline | Product/SRE/FinOps | OAT |
+| SRE Service Level & Error Budget Policy | Product/Domain/SRE | OAT/go-live |
 | RTO/RPO/backup/restore/multi-region SAD | Platform/SRE/Security | DR |
 | Migration Matrix & rollback plan | Platform/Domains | Cutover |
 | Dashboard/alert/runbook/on-call evidence | Owning teams | Go-live |
