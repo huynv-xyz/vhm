@@ -5,7 +5,7 @@
 | **Trường** | **Nội dung** |
 | --- | --- |
 | **Trạng thái** | **ĐANG THẨM ĐỊNH (UNDER REVIEW)** |
-| **Phiên bản & Lịch sử thay đổi** | `v1.7` — 31/08/2026 — Chốt Architecture Decision Authority, baseline ADR và chuẩn hóa trạng thái theo owner/evidence/gate |
+| **Phiên bản & Lịch sử thay đổi** | `v1.8` — 31/08/2026 — Bổ sung implementation delivery plan, pilot vertical slice, backlog và action onboarding gate |
 | **Chủ sở hữu tài liệu** | Security Platform + Application Platform |
 | **Chủ sở hữu hệ thống** | Security Platform (Authorization) · Application Platform (Edge) · Platform/SRE (Workload Trust) |
 | **Hệ thống** | `ap-authz` — Edge Gateway & Authorization Platform |
@@ -39,7 +39,7 @@ Kiến trúc đề xuất tách trách nhiệm:
 | DR-01 | Boundary Edge → workload trust → service PEP/PDP → domain | Phê duyệt làm target architecture L2 |
 | DR-02 | Versioned authorization contract, signed policy artifact và mandatory PEP coverage | Phê duyệt làm guardrail |
 | DR-03 | PoC policy engine và local/near-workload PDP topology | Phê duyệt phạm vi/tiêu chí PoC; chưa phê duyệt sản phẩm production |
-| DR-04 | Migration theo action bằng shadow → canary → enforce | Phê duyệt phương pháp chuyển đổi |
+| DR-04 | Migration theo action bằng shadow → canary → enforce; pilot `market.order.read` | Phê duyệt phương pháp chuyển đổi và pilot vertical slice |
 | DR-05 | DDD bounded-context ownership, SPIFFE workload identity contract và SRE action-level governance | Phê duyệt làm baseline; **không đưa SPIRE vào baseline deployment hiện tại**, chỉ kích hoạt theo adoption gate mục 9.1.1 |
 
 ### Chưa đề nghị phê duyệt production
@@ -97,6 +97,7 @@ Kiến trúc đề xuất tách trách nhiệm:
 | Action-level Audit Durability Matrix | `CHỜ PHÊ DUYỆT NGOÀI KIẾN TRÚC` | Product + Security/Legal + SRE | Mục 12.4 | Trước enforce từng action |
 | SRE Service Level, Error Budget & Capacity Matrix | `CHỜ ĐẦU VÀO` | SRE + Product + System Owners | Mục 4, 11–14 | Trước OAT |
 | BFF Migration Matrix & Rollback Plan | `CHỜ ĐẦU VÀO` | Platform + Domains | Mục 10.5 | Trước cutover |
+| Pilot Action Pack — `market.order.read` | `CHƯA KHỞI TẠO` | Market Domain + Authorization + Platform/SRE | Mục 14.5 | Trước pilot shadow |
 | Dashboard, Alert, On-call & DR Pack | `CHƯA KHỞI TẠO` | SRE + System Owners | Mục 13, 14 | Trước production |
 
 ## Quy ước trạng thái thiết kế
@@ -1305,6 +1306,109 @@ Ngưỡng trên là baseline vận hành; thay đổi phải qua SRE Service Lev
 | Audit mode theo action | Product/Business | Domain + SRE | Security, Legal/Privacy, SecOps |
 | Audit sink/privacy | SecOps/Privacy | Data Platform/SecOps | Product, Legal, SRE |
 | SLO/on-call | Platform + owning Domain | SRE/Service Team | Security |
+
+## 14.5 Implementation Delivery Plan
+
+### 14.5.1 Chiến lược triển khai
+
+Triển khai theo **vertical slice của một action**, không xây xong toàn bộ platform rồi mới tích hợp domain. Pilot mặc định là `market.order.read` thuộc class C1: đủ để chứng minh actor/caller, tenant/resource fact, policy decision, response obligation, audit và SLO nhưng không tạo business side effect.
+
+```mermaid
+flowchart LR
+    P0["P0 Mobilize<br/>Owner and inventory"] --> P1["P1 Baseline contracts<br/>Identity, action and audit"]
+    P1 --> P2["P2 Platform PoC<br/>PEP, PDP and policy lifecycle"]
+    P2 --> P3["P3 Pilot shadow<br/>market.order.read"]
+    P3 --> G{"Security, parity<br/>and SLO gate"}
+    G -->|Pass| P4["P4 Canary enforce<br/>1 to 100 percent"]
+    G -->|Fail| P3
+    P4 --> P5["P5 Expand by action<br/>C1 then C0"]
+    P5 --> P6["P6 Retire legacy<br/>after zero traffic"]
+```
+
+| **Phase** | **Thời lượng tham chiếu** | **Công việc chính** | **Deliverable bắt buộc** | **Exit criteria** |
+| --- | --- | --- | --- | --- |
+| P0 — Mobilize | 3–5 ngày làm việc | Chỉ định owner; inventory route/handler/caller/dependency; xác nhận pilot và environment | Named RACI, action inventory, pilot charter | 100% pilot path có owner và không còn direct ingress chưa biết |
+| P1 — Contract baseline | 1–2 tuần | Chốt SPIFFE profile, delegation, action/resource vocabulary, audit mode, SLI/SLO và error contract | Identity Profile, Authorization Contract v1, Audit Matrix row, SRE measurement plan | Lead Architect/Tech Lead baseline contract; control owners ký phần accountability |
+| P2 — Platform PoC | 2–3 tuần | Chứng minh identity, PEP/PDP topology, signed policy lifecycle, audit relay, telemetry và rollback | Benchmark, conformance report, threat-model evidence, runbook draft | Latency/capacity đạt target PoC; corrupt/stale/timeout cases fail đúng thiết kế |
+| P3 — Pilot shadow | 1–2 tuần hoặc đủ traffic đại diện | Legacy vẫn enforce; platform mới chỉ evaluate/audit; replay negative/security cases | Four-way parity report, SLO dashboard, audit reconciliation | Không có unexplained `DENY→ALLOW`; coverage 100%; rotation/rollback/revoke drill đạt |
+| P4 — Canary enforce | Theo traffic và error budget | Enforce theo cohort 1% → 5% → 25% → 50% → 100% | Canary evidence và decision log từng gate | Mỗi cohort qua observation window; SLO/error budget/security signal đạt |
+| P5 — Expand | Theo action backlog | Onboard C1 read/standard mutation trước; C0 sau | Action Pack cho từng action | Action-specific Definition of Done đạt |
+| P6 — Retire legacy | Sau zero-traffic window | Dừng legacy authorization path; revoke identity/secret/network access | Decommission evidence, rollback expiry, ownership transfer | Không còn traffic/dependency; audit và incident ownership đã chuyển |
+
+Thời lượng chỉ là planning baseline. Không bỏ exit criteria để giữ lịch.
+
+### 14.5.2 Workstream có thể chạy song song
+
+| **Workstream** | **Owner chính** | **Bắt đầu ngay** | **Phụ thuộc/điểm giao** |
+| --- | --- | --- | --- |
+| Identity & Trust | Platform/SRE + IAM | Conformance issuer hiện tại, trust-domain naming, SVID rotation, delegation profile | Nếu SPIFFE conformance fail thì mở SPIRE ADR; cung cấp verified caller cho PEP |
+| Authorization Platform | Authorization Team | Contract v1, PDP benchmark, policy lifecycle/signing/distribution | Nhận action/fact schema từ Domain; phát decision/obligation contract |
+| Domain Onboarding | Market Domain | Inventory `market.order.read`, resource/fact authority, invariant, response obligations | Không đưa domain DB vào Edge/PDP; mapping qua Anti-Corruption Layer |
+| Audit & Compliance | SecOps + Privacy + Product | Audit field classification, C1 durability approval, retention/reconciliation | Cung cấp action row trước shadow; full-spool behavior trước enforce |
+| SRE & Operations | SRE + System Owners | Workload baseline, SLI/SLO, dashboard, alert, capacity/chaos plan | Quan sát shadow/canary; có quyền pause rollout |
+| Security & Quality | Security + QA | Threat model, misuse cases, contract/coverage/security tests | Ký security gate trước canary và C0 onboarding |
+
+### 14.5.3 Pilot Action Pack — `market.order.read`
+
+| **Hạng mục** | **Pilot baseline** |
+| --- | --- |
+| Actor | Authenticated market user/agent từ IAM |
+| Caller | Edge và Market workload có SPIFFE-compatible identity |
+| Action/resource | `market.order.read` trên order ID canonical |
+| Fact authority | Market Domain trả tenant, owner/relationship, state, resource version và provenance |
+| Decision | Same-tenant/resource policy; explicit deny thắng allow; missing fact deny |
+| Obligation | Response field/row filtering phải được PEP xác nhận đã áp dụng |
+| Audit | `DEGRADED_BOUNDED` 15 phút đang chờ Business/Security/Legal/SRE nhận risk |
+| Rollout | Shadow toàn traffic đại diện; canary theo tenant/request cohort có rollback tức thời |
+| Không nằm trong pilot | Cross-tenant grant, privileged mutation, security floor production và multi-region active/active |
+
+Pilot thành công khi đồng thời đạt:
+
+- 100% route, handler, caller và response path của action có enforcement coverage.
+- Không có unexplained `legacy DENY → new ALLOW`; mọi mismatch còn lại có classification và owner.
+- P95/P99 authorization nằm trong action budget; one-AZ và dependency failure không vượt error budget.
+- Workload identity rotate không gián đoạn; wrong caller, expired SVID và spoofed header đều bị chặn.
+- Decision ID nối được final response outcome; audit reconcile không mất hoặc nhân đôi evidence ngoài tolerance.
+- Rollback policy/runtime không khôi phục quyền đã revoke và hoàn tất trong observation window đã duyệt.
+
+### 14.5.4 Definition of Ready cho mỗi action
+
+Một action chỉ được vào shadow khi có đủ:
+
+1. Named Product/Domain Owner và action class C0/C1/C2.
+2. Canonical action/resource schema, tenant model và fact authority.
+3. Actor/caller/delegation mode cùng caller allowlist.
+4. Legacy behavior và expected positive/negative decision corpus.
+5. Obligation capability và response-leak test plan.
+6. Audit durability row, quota, failure behavior và control-owner approval.
+7. Workload/RPS/latency baseline, SLO và rollback trigger.
+8. Route/handler/consumer inventory không có đường bypass chưa xử lý.
+
+### 14.5.5 Definition of Done cho mỗi action
+
+Một action chỉ được đánh dấu production-enforced khi:
+
+1. Contract, policy, integration, negative-security, coverage, load và failure tests đạt.
+2. Shadow parity không còn privilege expansion chưa giải thích.
+3. Canary 100% giữ SLO/error budget và không có critical security signal.
+4. Audit decision/final outcome reconcile đạt action contract.
+5. Runbook, dashboard, alert, on-call và rollback đã exercise.
+6. Domain Owner, Security, SRE và control owner ký evidence tương ứng; Lead Architect/Tech Lead đóng architecture gate.
+
+### 14.5.6 Backlog khởi động
+
+| **Ưu tiên** | **Đầu việc đầu tiên** | **Owner** | **Kết quả cần bàn giao** |
+| ---: | --- | --- | --- |
+| 1 | Chỉ định tên người cho RACI và pilot | Lead Architect/Tech Lead | Named owner/on-call/escalation |
+| 2 | Inventory end-to-end `market.order.read` | Market + Platform | Route/handler/caller/fact/audit map |
+| 3 | Chạy SPIFFE conformance trên identity authority hiện tại | Platform/SRE + Security | Pass report hoặc SPIRE ADR trigger |
+| 4 | Chốt IAM & Delegation Profile v1 | IAM + Security | Issuer/audience/caller binding/TTL/replay contract |
+| 5 | Chốt Authorization Contract & Vocabulary v1 | Authorization + Market | Versioned actor/caller/action/resource/fact/decision contract |
+| 6 | Phê duyệt pilot audit row | Product + Security/Legal + SRE | Mode/window/quota/failure action được ký |
+| 7 | Chuẩn bị representative policy/input corpus | Authorization + Market + QA | Positive/negative/property/impact dataset |
+| 8 | Benchmark PDP topology và failure mode | Authorization + SRE | ADR-003 evidence |
+| 9 | Dựng shadow evidence path | Platform + Market + SecOps | Parity, audit reconciliation và SLO dashboard |
+| 10 | Tổ chức readiness review trước canary | Lead Architect/Tech Lead | Gate decision và signed action pack |
 
 # 15. Testing & Quality Strategy
 
