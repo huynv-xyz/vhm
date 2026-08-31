@@ -1,889 +1,1625 @@
-# Technical Design Document: Edge Gateway & Authorization Platform
+> **TÀI LIỆU NỘI BỘ** — Tài liệu mô tả kiến trúc mục tiêu L2 của Edge Gateway và Authorization Platform. Không chia sẻ ra ngoài phạm vi chương trình khi chưa được phê duyệt.
 
-| Thuộc tính | Giá trị |
-|---|---|
-| Trạng thái | Proposed |
-| Cấp độ | Architect / Principal Engineer |
-| Phiên bản | 1.0 |
-| Ngày | 2026-08-31 |
-| Phạm vi | Thay thế các BFF lặp AuthN/AuthZ bằng Edge Gateway, Authorization Platform/PDP, policy-as-code, Istio/mTLS và business authorization tại domain service |
-| Chủ sở hữu đề xuất | Security Platform + Application Platform |
-| Đối tượng phê duyệt | Architecture Council, Security, SRE, đại diện các domain Agent/Market/Broker |
+# L2 - AP-AUTHZ - Edge Gateway & Authorization Platform
 
-## 1. Executive summary
+| **Trường** | **Nội dung** |
+| --- | --- |
+| **Trạng thái** | **ĐANG THẨM ĐỊNH (UNDER REVIEW)** |
+| **Phiên bản & lịch sử thay đổi** | `v1.1` — 31/08/2026 — Chuẩn hóa theo cấu trúc TDD L2; bổ sung governance gate, contract có version/provenance, delegation profile, revocation budget, PEP coverage, async semantics, sơ đồ thẩm định và production gate. |
+| **Chủ sở hữu tài liệu** | Security Platform + Application Platform |
+| **Chủ sở hữu hệ thống** | Security Platform (Authorization) · Application Platform (Edge) · Platform/SRE (Mesh) |
+| **Hệ thống** | Edge Gateway, Authorization Control Plane, PEP/PDP runtime và policy distribution |
+| **Hệ thống liên quan** | IAM/IdP, Kubernetes, Istio/Envoy, KMS/HSM, Audit/SIEM, `agent-api`, `market-api`, `core-broker-api` và các domain service |
+| **Đội ngũ/PIC** | Authorization: TBD · Gateway: TBD · IAM: TBD · Mesh/SRE: TBD · SecOps: TBD · Domain Agent/Market/Broker: TBD |
+| **Người rà soát/phê duyệt** | Architecture Council · Security Architecture/ANBM · SRE/Platform · IAM · Privacy/Legal · đại diện Agent/Market/Broker |
+| **Mốc thiết kế** | Kiến trúc mục tiêu phục vụ thẩm định giải pháp và làm đầu vào cho thiết kế L3/PoC |
+| **Phạm vi hệ thống** | North-south authentication/coarse authorization, east-west workload trust, policy lifecycle, distributed PDP, service PEP và decision audit |
+| **Tài liệu nguồn** | Inventory BFF/API, IAM token profile, network topology và policy hiện trạng: TBD |
+| **Lần rà soát gần nhất** | 31/08/2026 |
 
-Hệ thống hiện có nhiều BFF như `agent-api`, `market-api`, `core-broker-api`. Các BFF này lặp lại authentication, authorization, chuyển đổi claim, routing và một phần logic nghiệp vụ. Mô hình đó làm tăng chi phí thay đổi, tạo sai lệch policy, khó audit và buộc mỗi domain mới phải sinh thêm một lớp API trung gian.
+## Approval & Review Gates
 
-Thiết kế này đưa các năng lực dùng chung thành platform capability:
+| **Vai trò rà soát/phê duyệt** | **Phạm vi rà soát** | **Quyết định** | **Ngày xác nhận** |
+| --- | --- | --- | --- |
+| Architecture Council | Boundary Edge/mesh/PDP/domain, topology, migration và ADR | Chờ rà soát | — |
+| Security Architecture/ANBM | Identity propagation, delegation, tenant isolation, fail mode, supply chain và break-glass | Chờ rà soát | — |
+| IAM | Issuer/audience, token exchange, workload federation, revocation và key rotation | Chờ rà soát | — |
+| Platform/SRE | Istio, HA/DR, capacity, SLO, rollout, alert và runbook | Chờ rà soát | — |
+| Privacy/Legal/SecOps | Decision-log field, residency, retention, access và legal hold | Chờ rà soát | — |
+| Domain Agent/Market/Broker | Action/resource vocabulary, facts, invariant, migration parity và acceptance | Chờ rà soát | — |
+| QA/Performance | Contract, security, chaos, load, migration và bằng chứng quality gate | Chờ rà soát | — |
 
-- **Edge Gateway** xác thực token, bảo vệ perimeter, định tuyến, rate limit và áp dụng coarse-grained policy.
-- **Authorization Platform** quản lý policy-as-code, biên dịch/kiểm thử/phân phối policy và thu thập decision log.
-- **PDP cục bộ hoặc gần workload** đánh giá policy trên data path; không phụ thuộc bắt buộc vào một PDP từ xa cho mọi request.
-- **Istio + mTLS** cung cấp workload identity, mã hóa east-west traffic và policy mạng/service-to-service.
-- **Domain service** vẫn sở hữu business authorization gắn với dữ liệu và invariant của domain.
-- Mọi quyết định tuân theo mô hình chuẩn `Actor + Action + Resource + Context -> Decision`.
+## Governance Gates
 
-Mục tiêu không phải tạo một “gateway thông minh” mới. Gateway và platform chỉ xử lý concern dùng chung; quyền nghiệp vụ vẫn nằm gần domain model. Migration diễn ra từng endpoint, dùng shadow evaluation, so sánh quyết định và rollback độc lập.
+| **Chuyển trạng thái** | **Điều kiện đầu vào** |
+| --- | --- |
+| `DRAFT → UNDER REVIEW` | Scope, component, trust boundary, requirement, sơ đồ, ADR, risk và open issue có định danh. |
+| `UNDER REVIEW → APPROVED` | Có owner/reviewer đích danh; delegation profile, tenant model, PEP coverage, fail mode, audit-loss policy, SLO và risk nghiêm trọng đã được chốt. |
+| `APPROVED → POC BASELINE` | Engine/topology shortlist, benchmark plan, contract schema v1, signed-bundle flow và một pilot action đã được phê duyệt. |
+| `POC BASELINE → IMPLEMENTATION BASELINE` | L3 artefact, threat model, performance/chaos evidence, migration plan, runbook và production configuration có bằng chứng. |
+| `IMPLEMENTATION BASELINE → PRODUCTION ENFORCEMENT` | Action-level acceptance tại mục 14.3 đạt; Security, domain owner và SRE ký duyệt. |
 
-## 2. Bối cảnh và problem statement
+## L3 Deliverables
 
-### 2.1 Hiện trạng giả định
+L2 chốt nguyên tắc, ownership, invariant và ranh giới tích hợp. Các artefact dưới đây phải cụ thể hóa thiết kế trước cổng tương ứng; `TBD` trong L3 không được dùng để mặc nhiên chấp nhận rủi ro production.
 
-```text
-Clients
-  ├──> agent-api --------> Agent services
-  ├──> market-api -------> Market services
-  └──> core-broker-api --> Broker services
+| **Deliverable** | **Chủ sở hữu** | **Cổng sử dụng** | **Nguồn đặc tả L2** |
+| --- | --- | --- | --- |
+| IAM & Delegation Profile v1 | IAM + Security Platform | Trước PoC service-to-service | Mục 6.4 và 9.1 |
+| Authorization Contract JSON Schema/OpenAPI hoặc gRPC v1 | Authorization Team | Trước tích hợp PEP/PDP | Mục 6.2–6.3 |
+| Action/Resource Vocabulary v1 | Domain + API Governance | Trước viết policy pilot | Mục 2.3 và 7.1 |
+| Policy Repository, Test & Signing Standard | Security Platform | Trước publish bundle | Mục 7.2–7.4 |
+| PDP Topology & Engine Benchmark Report | Authorization Team + SRE | Trước PoC baseline | Mục 5, 10 và 11 |
+| PEP Coverage & Framework Conformance Specification | Authorization Team + Domain | Trước enforce | Mục 6.5 và 15 |
+| Bundle Distribution, Revocation & Security-floor Runbook | Security Platform + IAM + SRE | Trước high-risk pilot | Mục 7.6 và 12 |
+| Mesh Traffic Inventory & AuthorizationPolicy Baseline | Mesh Team | Trước `STRICT` | Mục 9.2 và 10.4 |
+| Decision Audit, Correlation & Retention Contract | SecOps + Privacy | Trước OAT | Mục 9.4 và 13 |
+| Runtime Capacity & Resilience Matrix | SRE + Gateway + Authorization | Trước OAT/load test | Mục 4, 11 và 12 |
+| BFF Migration Matrix & Route Rollback Plan | Application Platform + Domains | Trước cutover | Mục 10.5 |
+| Dashboard, Alert, On-call & DR Runbook Pack | SRE + owning team | Trước production | Mục 13–14 |
 
-Mỗi BFF thường tự thực hiện:
-- xác thực/parse JWT
-- ánh xạ role/permission
-- kiểm tra access theo tenant/đơn vị
-- routing và orchestration
-- audit/log theo cách riêng
-- đôi khi chứa business rules
-```
+## Quy ước trạng thái thiết kế
 
-### 2.2 Vấn đề
+| **Nhãn** | **Ý nghĩa** |
+| --- | --- |
+| `BẮT BUỘC` | Phải hoàn thành và có bằng chứng trước production. |
+| `ĐỀ XUẤT` | Baseline hoặc quyết định đang chờ phê duyệt/đo kiểm. |
+| `BÊN NGOÀI` | Do dependency quy định; cần owner, contract test và SLA. |
+| `TBD` | Chưa có quyết định hoặc bằng chứng; phải đóng tại governance gate được nêu. |
 
-1. **Code và policy bị nhân bản:** cùng một rule được cài lại ở nhiều BFF, framework và phiên bản khác nhau.
-2. **Không có semantic chuẩn:** `role`, `permission`, `scope`, resource ID và tenant context được hiểu khác nhau giữa các hệ thống.
-3. **Policy drift:** thay đổi quyền không được triển khai đồng bộ; khó biết policy nào đang có hiệu lực ở đâu.
-4. **Boundary sai:** BFF vừa làm security, routing, orchestration, vừa làm business authorization; ownership không rõ.
-5. **Khó audit:** không có decision ID và decision log thống nhất để trả lời ai đã truy cập gì, với policy/version nào.
-6. **Tăng latency và blast radius:** các tầng trung gian dư thừa, chuỗi gọi dài, scaling gắn với từng nhóm API.
-7. **East-west trust yếu:** service có thể tin header do upstream truyền vào mà không xác minh workload identity hoặc provenance.
-8. **Khó mở rộng tổ chức:** mỗi domain hoặc channel mới kéo theo một BFF mới và một bản sao security logic.
+Tài liệu này mô tả **kiến trúc mục tiêu L2**. Nó không tuyên bố một gateway, policy engine, topology PDP hoặc cơ chế token exchange cụ thể đã được mua, triển khai hay đạt SLO.
 
-### 2.3 Câu hỏi thiết kế
+# 1. Business Objectives & Scope
 
-Làm thế nào để chuẩn hóa AuthN/AuthZ cho nhiều domain mà không biến Edge Gateway hoặc PDP trung tâm thành bottleneck, single point of failure hay nơi chứa toàn bộ business logic?
+## 1.1 Business Context & Objectives
 
-## 3. Mục tiêu và tiêu chí thành công
+### Current Business Problem
 
-### 3.1 Mục tiêu
+Hệ thống hiện có nhiều BFF như `agent-api`, `market-api` và `core-broker-api`. Mỗi BFF thường tự parse token, ánh xạ role/scope, kiểm tra tenant, routing, audit và đôi khi chứa business rule. Cách tổ chức này tạo các vấn đề sau:
 
-- Một mô hình authorization thống nhất cho user, machine và workload.
-- Centralized policy lifecycle, distributed enforcement/evaluation.
-- Loại bỏ phần AuthN/AuthZ dùng chung khỏi các BFF cũ.
+- cùng một policy được cài lại ở nhiều framework và phiên bản;
+- `role`, `scope`, `action`, resource ID và tenant context không có semantic thống nhất;
+- policy rollout không đồng bộ, khó xác định policy thực tế đang có hiệu lực;
+- BFF vừa làm security, routing, composition và business authorization nên ownership không rõ;
+- không có decision chain thống nhất để trả lời ai/caller nào đã truy cập resource nào với policy nào;
+- chuỗi gọi dài và BFF thuần proxy làm tăng latency, chi phí và blast radius;
+- service có thể tin identity header do upstream truyền mà không kiểm chứng provenance;
+- mỗi domain/channel mới dễ kéo theo một BFF và một bản sao security logic mới.
+
+### Business Objectives
+
+- Chuẩn hóa mô hình `Actor + Caller + Action + Resource + Context → Decision` cho user, machine, workload và job.
+- Tập trung policy lifecycle nhưng phân tán enforcement/evaluation gần workload.
+- Loại bỏ shared AuthN/AuthZ khỏi BFF thuần proxy; giữ BFF có composition/channel value thật.
 - Enforce zero-trust cho north-south và east-west traffic.
-- Domain team tự chủ business authorization trong guardrail chung.
-- Policy thay đổi có review, test, provenance, version, rollback và audit.
-- Migration không big-bang, không làm gián đoạn client hiện hữu.
+- Giữ business invariant và resource truth tại domain service.
+- Mọi policy production có review, test, provenance, version, chữ ký, rollout và rollback.
+- Mọi authorization evaluation quan trọng có thể nối thành một decision chain, không log token/PII ngoài allowlist.
+- Migration theo route/action, có shadow parity, cohort, rollback và không đổi external contract trước khi cần thiết.
 
-### 3.2 Key results đề xuất
+## 1.2 In Scope
 
-- 100% external request đi qua Edge Gateway được xác thực và gắn request/trace identity.
-- 100% service-to-service traffic thuộc phạm vi migration dùng mTLS STRICT.
-- >= 95% shared authorization rule được loại khỏi BFF cũ sau migration.
-- 100% quyết định authorization quan trọng có `decision_id`, policy version và actor/resource metadata phù hợp chính sách dữ liệu.
-- Không có policy production được phát hành nếu chưa qua test và approval bắt buộc.
-- Giảm ít nhất 30% lead time khi thêm API/domain mới so với baseline.
+| **Capability** | **Phạm vi** | **Yêu cầu thiết kế** |
+| --- | --- | --- |
+| Edge authentication | TLS termination, JWT validation, header hygiene và route normalization | `BẮT BUỘC` |
+| Edge coarse authorization | Authenticated/public class, client, scope, tenant presence và route-to-action mapping | `BẮT BUỘC` |
+| Workload trust | Istio mTLS, workload identity và caller allowlist | `BẮT BUỘC` |
+| Delegation | User-on-behalf-of và system-call profile có audience, TTL, caller binding và provenance | `BẮT BUỘC` |
+| Authorization contract | Versioned actor/caller/action/resource/context, provenance, decision và obligation | `BẮT BUỘC` |
+| Policy lifecycle | Git, lint/test, approval, signing, registry, rollout, inventory và rollback | `BẮT BUỘC` |
+| Distributed evaluation | Local/nearby PDP cho hot path; remote PDP chỉ theo use case được duyệt | `ĐỀ XUẤT` |
+| Domain enforcement | PEP, resource fact, business invariant, field/row filtering và transactional guard | `BẮT BUỘC` |
+| Audit/observability | Evaluation log, enforcement outcome, correlation, SLI và security alert | `BẮT BUỘC` |
+| Migration | Shadow, comparison, cohort, BFF decomposition và decommission | `BẮT BUỘC` |
+| Break-glass/revocation | Security floor, kill switch, TTL, approval và retrospective | `BẮT BUỘC` |
 
-## 4. Non-goals
+## 1.3 Out of Scope
 
-- Không thay thế Identity Provider/IAM hiện có.
-- Không thiết kế lại toàn bộ domain model hoặc API contract trong một lần.
-- Không đưa business invariant vào Edge Gateway hoặc service mesh.
-- Không dùng network location như tín hiệu tin cậy duy nhất.
-- Không biến role thành mô hình duy nhất; RBAC chỉ là một input của ABAC/ReBAC khi cần.
-- Không xây một workflow/entitlement UI đầy đủ trong phase đầu.
-- Không bảo đảm exactly-once cho decision log; ưu tiên không ảnh hưởng request path và có khả năng đối soát.
-- Không loại bỏ BFF nào còn thực hiện composition/channel-specific transformation có giá trị; chỉ loại bỏ BFF thuần proxy/auth wrapper.
+- Thay thế Identity Provider/IAM hiện có trong một lần.
+- Thiết kế lại toàn bộ domain model hoặc external API contract.
+- Đưa ownership, trạng thái giao dịch, hạn mức hoặc business invariant vào Edge/mesh.
+- Dùng network location như tín hiệu tin cậy duy nhất.
+- Xây entitlement-management UI/workflow đầy đủ trong phase đầu.
+- Bảo đảm exactly-once cho decision log; yêu cầu là correlation, loss policy và khả năng đối soát theo risk class.
+- Xóa BFF còn composition, aggregation hoặc channel-specific transformation có giá trị.
+- Chọn chính thức gateway/PDP engine trước benchmark và Architecture Decision Gate.
 
-## 5. Design principles
+## 1.4 Assumptions, Constraints & Dependencies
 
-1. **Never trust, always verify:** user token, workload identity, transport và context đều được xác minh tại boundary phù hợp.
-2. **Centralize management, distribute enforcement:** policy lifecycle tập trung; PEP/PDP được đặt gần traffic để giảm latency và dependency.
-3. **Authentication không đồng nghĩa authorization:** token hợp lệ không tự động có quyền trên resource.
-4. **Policy chung ở platform, invariant ở domain:** platform quyết định quyền coarse/standard; service quyết định quyền phụ thuộc state và dữ liệu nghiệp vụ.
-5. **Default deny, least privilege:** thiếu identity, context hoặc policy hợp lệ mặc định từ chối.
-6. **No trusted identity headers from clients:** mọi header identity bên ngoài bị xóa; chỉ gateway/mesh được phép tạo metadata nội bộ đã ký hoặc được ràng buộc với mTLS identity.
-7. **Explicit action/resource vocabulary:** tránh kiểm tra URL hoặc role rải rác trong code.
-8. **Policy is code:** versioned, reviewed, tested, signed, promoted và rollback được.
-9. **Fail safely by risk class:** fail-close là mặc định; ngoại lệ fail-open phải được phê duyệt, time-bound và observable.
-10. **Compatibility before cleanup:** migrate theo strangler pattern, đo parity trước khi chuyển enforcement.
-11. **No synchronous audit dependency:** audit pipeline không được chặn request; deny/allow vẫn tạo local event buffer.
-12. **Bounded context:** PDP chỉ nhận thuộc tính tối thiểu, có nguồn gốc rõ ràng và giới hạn độ tươi.
+| **ID** | **Giả định/Ràng buộc** | **Trạng thái** | **Ảnh hưởng** |
+| --- | --- | --- | --- |
+| A-01 | Mọi external route trong scope chỉ được expose qua Edge được quản trị | `BẮT BUỘC` | Direct public load balancer/ingress vào domain service bị cấm. |
+| A-02 | IAM phát access token có issuer/audience rõ và hỗ trợ JWKS rotation | `BÊN NGOÀI` | Thiếu token profile chặn PoC AuthN. |
+| A-03 | Khả năng RFC 8693 token exchange/workload federation của IAM chưa xác nhận | `TBD` | Chặn chốt delegation profile; không được thay bằng raw identity header. |
+| A-04 | Kubernetes/Istio là nền tảng mục tiêu cho workload trong scope | `ĐỀ XUẤT` | Workload ngoài mesh cần exception và control tương đương. |
+| A-05 | Domain service là authority của resource state, ownership và relationship động | Quyết định kiến trúc | PDP chung không sao chép mọi domain database. |
+| A-06 | Policy engine phải deterministic, không gọi network tùy ý trong evaluation | `BẮT BUỘC` | Dynamic facts phải được PEP/provider nạp có provenance. |
+| A-07 | Decision/audit pipeline không là remote synchronous dependency của mọi request | Quyết định kiến trúc | Phải có durable local spool và loss policy theo risk. |
+| A-08 | Tenant isolation là platform guardrail; cross-tenant cần grant đích danh | `BẮT BUỘC` | Không dùng role `admin` chung để bỏ qua tenant. |
+| A-09 | Clocks của gateway, workload, PDP, IAM và collector được đồng bộ/giám sát | `BẮT BUỘC` | TTL, signature, replay và audit phụ thuộc clock-skew budget. |
+| A-10 | Policy/data residency và audit retention khác nhau theo region/domain | `TBD` | Chặn production data thật cho region chưa được phê duyệt. |
+| A-11 | Mỗi action có owner, resource schema, risk class và fail mode | `BẮT BUỘC` | Unknown/unregistered action mặc định deny. |
+| A-12 | Legacy behavior không mặc nhiên là đúng | `BẮT BUỘC` | Golden case chỉ lấy từ hành vi đã được Security/domain xác nhận. |
+| A-13 | Mesh identity không tự chứng minh end-user identity | Quyết định kiến trúc | Callee phải kiểm tra delegation artifact và caller identity riêng. |
+| A-14 | Multi-region active/active chưa được xác nhận | `TBD` | Cần chốt trust-domain federation, bundle rollout và audit residency. |
+| A-15 | Workload model, peak RPS, policy size và audit EPS chưa có evidence | `TBD` | SLO/capacity trong L2 là target đề xuất, chưa là baseline cam kết. |
 
-## 6. Architecture Decision Records
+## 1.5 Stakeholders & Personas
 
-### ADR-001 — Thin Edge Gateway, không phải business gateway
+| **Nhóm** | **Trách nhiệm/quyền** |
+| --- | --- |
+| End user/agent/operator | Thực hiện action trong tenant/resource được cấp; không tự khai role, tenant hoặc assurance. |
+| Machine client | Dùng client identity/scope riêng; không được suy diễn thành user. |
+| Domain service/team | Sở hữu resource facts, business invariant, response filtering và action vocabulary của domain. |
+| Application Platform | Sở hữu Edge routing, route registry, header hygiene và migration flags. |
+| Security Platform | Sở hữu contract, control plane, PDP/SDK, policy guardrail, signing và revocation. |
+| IAM team | Sở hữu issuer, credential lifecycle, token/delegation profile, MFA và revocation nguồn. |
+| Mesh/SRE | Sở hữu workload identity, mTLS, runtime topology, SLO, capacity, DR và on-call. |
+| SecOps | Sở hữu detection, SIEM, incident workflow và privileged audit access. |
+| Privacy/Legal | Phê duyệt decision-log field, retention, residency, legal hold và data-subject handling. |
+| Architecture Council | Phê duyệt boundary, ADR, exception và quyết định engine/topology. |
 
-- **Quyết định:** Edge xử lý TLS termination, OIDC/JWT validation, request normalization, WAF/rate limit, routing và coarse authorization. Không truy vấn database nghiệp vụ và không chứa invariant của domain.
-- **Lý do:** giữ latency và blast radius thấp; tránh tái tạo monolithic BFF.
-- **Hệ quả:** domain service phải có PEP/library hoặc sidecar integration chuẩn.
+## 1.6 Personal/Security Data Processing Summary
 
-### ADR-002 — Hybrid authorization: platform policy + domain authorization
+| **Dữ liệu** | **Mục đích** | **Vị trí xử lý** | **Kiểm soát yêu cầu** |
+| --- | --- | --- | --- |
+| Stable actor ID, actor type, tenant | Authorization và audit | PEP/PDP input, tokenized audit | Không log raw token; pseudonymize/tokenize theo domain. |
+| Role/scope/entitlement version | Coarse/fine authorization | Token/context/attribute provider | Có issuer/provenance/freshness; không tin request body/header client. |
+| Workload identity/delegation chain | Caller validation, confused-deputy control | Mesh, PEP/PDP, audit digest | Audience-bound, TTL ngắn, sender/caller-bound; chain giới hạn. |
+| Resource ID/type/tenant/attributes | Resource-level decision | Domain PEP/PDP | Tối thiểu hóa; ID tokenized trong audit khi cần. |
+| Device/network/authentication assurance | Step-up/risk policy | Edge/context provider | Chỉ dùng nguồn được đăng ký; TTL và purpose rõ. |
+| Decision, reason, policy digest, obligation | Audit, explain, incident | Local spool, collector, SIEM/DWH | Append-oriented, integrity, encryption, restricted access và retention. |
 
-- **Quyết định:** shared policy do Authorization Platform quản lý; kiểm tra ownership, trạng thái giao dịch, hạn mức và relationship động do domain service quyết định hoặc cung cấp facts.
-- **Lý do:** PDP chung không nên trở thành bản sao của mọi domain database.
-- **Hệ quả:** một request có thể cần hai bước: platform decision rồi domain invariant check; cả hai dùng chung decision context.
+## 1.7 System Criticality
 
-### ADR-003 — Distributed PDP trên hot path
+Đề xuất **Cấp 1 — nền tảng bảo mật trọng yếu, blast radius đa domain**. Phân loại chính thức, action-level SLO, RTO/RPO, audit-loss policy và residency phải được System Owner, Security Architecture, Privacy và SRE ký duyệt trước production enforcement.
 
-- **Quyết định:** PDP chạy sidecar/daemon/node-local hoặc embedded library tùy runtime; policy bundle được push/pull từ control plane. Remote centralized PDP chỉ dùng cho use case không nhạy latency hoặc policy cần graph/facts tập trung.
-- **Lý do:** giảm network hop và tránh single synchronous dependency.
-- **Hệ quả:** phải quản lý bundle freshness, compatibility và fleet rollout.
+# 2. Architecture Overview & Principles
 
-### ADR-004 — Policy-as-code với pipeline bắt buộc
+## 2.1 Nguyên tắc thiết kế
 
-- **Quyết định:** policy nằm trong Git, có schema, unit test, scenario test, static analysis, review bởi owner và Security, ký artifact trước khi phân phối.
-- **Lý do:** traceability và rollback tốt hơn chỉnh policy trực tiếp trên production UI.
-- **Hệ quả:** thay đổi khẩn cấp dùng break-glass workflow có TTL và hậu kiểm.
+| **Mã** | **Nguyên tắc** |
+| --- | --- |
+| ARCH-01 | Never trust, always verify tại từng trust boundary; token hợp lệ không đồng nghĩa có quyền trên resource. |
+| ARCH-02 | Centralize policy management, distribute enforcement/evaluation; control plane không nằm trên hot path bắt buộc. |
+| ARCH-03 | Edge mỏng: AuthN, hygiene, traffic control, routing và coarse policy; không truy vấn domain DB. |
+| ARCH-04 | Platform sở hữu shared guardrail; domain sở hữu business truth, invariant và response authorization. |
+| ARCH-05 | Default deny, least privilege; thiếu identity, policy, context, provenance hoặc obligation support thì deny. |
+| ARCH-06 | Không tin identity header từ client hoặc workload tùy ý; delegated identity phải là artifact xác minh được và caller-bound. |
+| ARCH-07 | Action/resource là vocabulary nghiệp vụ có version; unknown route/action mặc định deny. |
+| ARCH-08 | Policy là code: review, test, sign, promote, observe, rollback và audit theo immutable digest. |
+| ARCH-09 | Actor và caller là hai principal độc lập; `on_behalf_of` và `system` là hai delegation mode khác nhau. |
+| ARCH-10 | Policy input chỉ chứa thuộc tính tối thiểu có source, observed time, expiry và schema. |
+| ARCH-11 | Fail-close mặc định; fail-open chỉ cho public/low-risk exception có owner, TTL và alert. |
+| ARCH-12 | Mỗi exposed handler, async consumer và privileged job phải đi qua default-deny PEP coverage. |
+| ARCH-13 | Mỗi request có một `authorization_transaction_id`; mỗi evaluation có `decision_id`; service cuối ghi enforcement outcome. |
+| ARCH-14 | Security revocation floor không được rollback về policy cho phép quyền đã thu hồi. |
+| ARCH-15 | Migration theo strangler/shadow/cohort; parity không được hợp thức hóa privilege expansion. |
 
-### ADR-005 — Istio mTLS STRICT và workload identity
+## 2.2 Sơ đồ kiến trúc ứng dụng
 
-- **Quyết định:** mesh cấp workload identity, mã hóa east-west traffic; namespace đã migrate dùng `STRICT`, AuthorizationPolicy giới hạn service caller.
-- **Lý do:** user authorization không thay thế service authentication và network segmentation.
-- **Hệ quả:** rollout theo namespace/workload; cần kiểm kê traffic ngoài mesh và egress.
+### 2.2.1 Sơ đồ ngữ cảnh hệ thống
 
-### ADR-006 — Chuẩn hóa Actor–Action–Resource–Context
+```mermaid
+flowchart LR
+    classDef human fill:#FFF4E5,stroke:#B26A00,color:#3D2600
+    classDef inScope fill:#E6F4EA,stroke:#137333,stroke-width:2px,color:#0D3B1E
+    classDef external fill:#F3F4F6,stroke:#6B7280,stroke-width:1.5px,stroke-dasharray:5 5,color:#1F2937
+    classDef data fill:#E8F0FE,stroke:#1A73E8,color:#102A43
 
-- **Quyết định:** mọi PEP ánh xạ request sang một authorization contract chuẩn, độc lập transport/URL.
-- **Lý do:** policy có thể tái sử dụng và audit có nghĩa nghiệp vụ.
-- **Hệ quả:** vocabulary và ownership phải được governance chặt.
+    USER([User / Agent / Operator]):::human
+    CLIENT[Web · Mobile · Machine Client]:::external
+    IAM[IAM / IdP<br/>OIDC · OAuth · JWKS · MFA]:::external
 
-### ADR-007 — Không truyền token người dùng tùy tiện qua toàn bộ call chain
+    subgraph SCOPE[IN SCOPE — Edge & Authorization Platform]
+        direction LR
+        EDGE[Edge Gateway<br/>AuthN · Hygiene · Rate limit<br/>Route PEP]:::inScope
+        MESH[Istio Service Mesh<br/>mTLS · Workload policy]:::inScope
+        DOMAIN[Agent · Market · Broker Domains<br/>Service PEP + Business AuthZ]:::inScope
+        PDP[Distributed PDP<br/>Signed bundle + bounded facts]:::inScope
+        CONTROL[Authorization Control Plane<br/>Build · Sign · Distribute · Inventory]:::inScope
+    end
 
-- **Quyết định:** gateway xác thực external token. Nội bộ ưu tiên workload identity cộng delegated user context có audience, TTL và phạm vi hẹp; token exchange nếu IAM hỗ trợ. Không forward bearer token nguyên bản sang service không đúng audience.
-- **Lý do:** giảm replay và confused-deputy risk.
-- **Hệ quả:** cần chuẩn hóa delegation contract và SDK.
+    REPO[(Policy Git / CI)]:::data
+    AUDIT[(Audit / SIEM / DWH)]:::data
+    DATA[(Domain Data / Fact Providers)]:::data
 
-### ADR-008 — Decision log bất đồng bộ, chống rò rỉ dữ liệu
+    USER --> CLIENT
+    CLIENT -->|TLS + access token| EDGE
+    IAM -->|token + JWKS| EDGE
+    EDGE -->|mTLS + bounded delegation| MESH
+    MESH --> DOMAIN
+    DOMAIN -->|local evaluation| PDP
+    DATA -->|versioned facts| DOMAIN
+    REPO --> CONTROL
+    CONTROL -.->|signed immutable bundles| PDP
+    EDGE -.->|evaluation event| AUDIT
+    DOMAIN -.->|evaluation + enforcement outcome| AUDIT
+    PDP -.->|status / active digest| CONTROL
 
-- **Quyết định:** PEP/PDP phát audit event bất đồng bộ qua buffer/collector; redact/hash thuộc tính nhạy cảm, có retention và access control riêng.
-- **Lý do:** audit đầy đủ mà không đặt logging backend trên critical path.
-- **Hệ quả:** cần đo dropped events và cơ chế backpressure có giới hạn.
-
-## 7. Target architecture
-
-```text
-                          ┌──────────────────────────┐
-                          │ IAM / IdP                │
-                          │ OIDC, OAuth2, JWKS       │
-                          └────────────┬─────────────┘
-                                       │ access token
-                                       ▼
-┌──────────┐   TLS   ┌───────────────────────────────────────┐
-│ Clients  ├────────►│ Edge Gateway / Ingress               │
-└──────────┘         │ AuthN, WAF, rate limit, routing, PEP  │
-                     └──────────────────┬────────────────────┘
-                                        │ mTLS + bounded identity context
-                   ┌────────────────────┴────────────────────┐
-                   │           Istio Service Mesh            │
-                   │                                         │
-                   │  ┌────────────┐  ┌────────────┐          │
-                   │  │ Agent      │  │ Market     │  ┌───────┴──────┐
-                   │  │ Domain     │  │ Domain     │  │ Broker Domain│
-                   │  │ PEP + biz  │  │ PEP + biz  │  │ PEP + biz   │
-                   │  │ AuthZ      │  │ AuthZ      │  │ AuthZ        │
-                   │  └─────┬──────┘  └─────┬──────┘  └──────┬──────┘
-                   │        │ local/nearby PDP evaluation     │
-                   └────────┼─────────────────┼────────────────┘
-                            ▼                 ▼
-                     ┌───────────────────────────────┐
-                     │ Distributed PDP instances     │
-                     │ cached signed policy bundles │
-                     └───────────────┬───────────────┘
-                                     │ bundle/status/telemetry
-                                     ▼
-┌────────────────────────────────────────────────────────────────────┐
-│ Authorization Control Plane                                        │
-│ Policy repo -> CI/test -> compiler -> signer -> bundle registry     │
-│ Vocabulary/schema registry | rollout controller | policy inventory  │
-└───────────────────────────────┬────────────────────────────────────┘
-                                │ async decision events
-                                ▼
-                      ┌──────────────────────┐
-                      │ Audit / SIEM / DWH   │
-                      └──────────────────────┘
+    style SCOPE fill:#F5FBF6,stroke:#137333,stroke-width:2px
 ```
 
-### 7.1 Thành phần
+Khung xanh liền là phạm vi của platform. IAM, policy Git/CI, domain data và Audit/SIEM là dependency hoặc data authority bên ngoài ranh giới runtime của platform.
 
-| Thành phần | Trách nhiệm | Không chịu trách nhiệm |
-|---|---|---|
-| IAM/IdP | Danh tính, credential, MFA, token issuance, lifecycle | Quyền trên resource động của domain |
-| Edge Gateway | North-south PEP, token validation, routing, rate limit, request hygiene | Business workflow/DB lookup |
-| Istio | mTLS, workload identity, traffic policy, L4/L7 service allowlist | End-user business authorization |
-| Authorization Control Plane | Policy lifecycle, test, build, sign, distribute, inventory, rollout | Phục vụ bắt buộc mọi request runtime |
-| PDP | Evaluate input với policy bundle/facts cho phép | Sửa dữ liệu nghiệp vụ |
-| PEP/SDK | Chuẩn hóa input, gọi PDP, enforce decision, emit telemetry | Tự phát minh role/action |
-| Domain service | Resource lookup, ownership/relationship, invariant và field filtering | Parse external token theo cách riêng |
-| Audit pipeline | Lưu, tìm kiếm, cảnh báo, đối soát quyết định | Tham gia đồng bộ vào quyết định |
+### 2.2.2 Sơ đồ component — control plane và data plane
 
-## 8. Trust boundaries và threat assumptions
+```mermaid
+flowchart TB
+    classDef control fill:#E8F0FE,stroke:#1A73E8,color:#102A43
+    classDef runtime fill:#E6F4EA,stroke:#137333,color:#0D3B1E
+    classDef external fill:#F3F4F6,stroke:#6B7280,stroke-dasharray:5 5,color:#1F2937
+    classDef store fill:#FCE8E6,stroke:#C5221F,color:#4A1110
 
-### 8.1 Trust boundaries
+    subgraph CP[CONTROL PLANE — không nằm trên request hot path]
+        GIT[Policy Repository<br/>CODEOWNERS]:::control
+        CI[Schema · Lint · Tests<br/>Impact analysis]:::control
+        BUILD[Compiler / Builder]:::control
+        SIGN[Artifact Signer<br/>KMS/HSM]:::control
+        REG[(Bundle Registry)]:::store
+        ROLLOUT[Rollout Controller<br/>Inventory · Health gates]:::control
+        VOCAB[Vocabulary / Schema Registry]:::control
+        GIT --> CI --> BUILD --> SIGN --> REG --> ROLLOUT
+        VOCAB --> CI
+    end
 
-| Boundary | Từ -> đến | Kiểm soát bắt buộc |
-|---|---|---|
-| TB-1 Internet | Client -> Edge | TLS, WAF, DDoS/rate limit, token validation, xóa identity header không tin cậy |
-| TB-2 Edge-to-mesh | Gateway -> service | mTLS, gateway workload allowlist, audience/route binding |
-| TB-3 East-west | Service -> service | mTLS STRICT, workload authorization, egress control |
-| TB-4 Policy supply chain | Git/CI -> registry -> PDP | protected branch, approval, tests, artifact signing, digest verification |
-| TB-5 Context/data | Domain/data source -> PDP/PEP | schema validation, source identity, freshness/TTL, data minimization |
-| TB-6 Audit | Runtime -> collector/SIEM | encryption, integrity, buffering, restricted access, retention |
-| TB-7 Admin plane | Operator -> control plane | SSO/MFA, privileged role, four-eyes approval, immutable admin audit |
+    subgraph DP[DATA PLANE — request path]
+        EDGE[Edge PEP<br/>Route registry]:::runtime
+        ENVOY[Envoy / Istio PEP<br/>Workload allowlist]:::runtime
+        SDK[Service middleware / SDK PEP<br/>Default deny]:::runtime
+        PDP[Local sidecar / node-local PDP]:::runtime
+        BIZ[Domain invariant<br/>transaction / response filter]:::runtime
+        EDGE --> ENVOY --> SDK --> PDP --> BIZ
+    end
 
-### 8.2 Threats chính và mitigations
+    IAM[IAM / IdP]:::external --> EDGE
+    FACT[Domain Fact Provider]:::external --> SDK
+    ROLLOUT -.->|push/pull signed digest| PDP
+    PDP -.->|status / bundle age| ROLLOUT
+    EDGE -.-> COLLECTOR[Local audit collector / durable spool]:::external
+    SDK -.-> COLLECTOR
+    BIZ -.-> COLLECTOR
+```
 
-- **Forged identity header:** strip tại Edge; nội bộ chỉ chấp nhận metadata từ trusted proxy hoặc signed delegation token.
-- **JWT replay/confused deputy:** audience validation, short TTL, nonce/jti khi cần, token exchange và caller workload binding.
-- **Stale permission:** giới hạn bundle/context TTL; revoke path ưu tiên; high-risk action có fresh lookup.
-- **Policy tampering:** signed bundle, checksum, protected pipeline, separation of duties.
-- **PDP bypass:** network policy chỉ cho traffic qua PEP path; service SDK enforce ở handler; conformance test.
-- **Over-permissive wildcard:** linter cấm wildcard production không có exception/expiry.
-- **Cross-tenant access:** tenant là thuộc tính bắt buộc ở Actor và Resource; mismatch deny trước business logic.
-- **Decision-log leakage:** allowlist field, tokenization/hash, không log raw token hoặc payload.
+### 2.2.3 Phân định trách nhiệm
 
-## 9. Authentication model
+| **Component** | **Trách nhiệm** | **Không là authority của** |
+| --- | --- | --- |
+| IAM/IdP | Credential, user/client identity, MFA, token issuance/lifecycle | Dynamic resource authorization của domain |
+| Edge Gateway | North-south AuthN, header hygiene, route registry, traffic control, coarse PEP | Business workflow, resource lookup, field filtering |
+| Istio/Envoy | mTLS, workload identity, service/port/path-class allowlist | End-user business authorization |
+| Authorization Control Plane | Policy/schema lifecycle, build/sign/distribute, rollout, inventory | Runtime decision bắt buộc cho mọi request |
+| PDP | Deterministic evaluation trên signed bundle và bounded input | Sửa domain data hoặc tự lấy network facts |
+| PEP/SDK | Build/validate input, gọi PDP, enforce result/obligation, emit telemetry | Tự phát minh action/role hoặc bỏ qua unknown handler |
+| Domain service | Resource truth, ownership/relationship, invariant, transaction và response filtering | Parse external bearer token theo cách riêng |
+| Audit pipeline | Ingest, integrity, search, alert, retention và reconciliation | Quyết định synchronous trên request path |
 
-### 9.1 Human/client authentication
+### 2.2.4 Sơ đồ trust boundary
 
-- OIDC/OAuth 2.x access token do trusted issuer phát hành.
-- Gateway xác minh chữ ký, issuer, audience, expiry/not-before, thuật toán và key rotation qua JWKS cache.
-- Token chỉ chứa stable identity và coarse claims cần thiết; entitlement biến động nhanh không nên nhồi toàn bộ vào token.
-- External identity headers (`x-user-id`, `x-roles`, `x-tenant-id`, tương tự) bị loại bỏ trước khi tạo trusted context.
-- Với browser/BFF thật sự cần session handling, session boundary có thể giữ lại nhưng không sở hữu policy nghiệp vụ.
+```mermaid
+flowchart LR
+    classDef untrusted fill:#FCE8E6,stroke:#C5221F,color:#4A1110
+    classDef boundary fill:#FFF4E5,stroke:#B26A00,color:#3D2600
+    classDef trusted fill:#E6F4EA,stroke:#137333,color:#0D3B1E
+    classDef admin fill:#E8F0FE,stroke:#1A73E8,color:#102A43
 
-### 9.2 Workload authentication
+    INTERNET[Internet / Client<br/>UNTRUSTED]:::untrusted
+    EDGE[TB-1 Edge<br/>TLS · WAF · JWT · strip headers]:::boundary
+    GW[Gateway workload]:::trusted
+    MESH[TB-2/TB-3 Mesh<br/>mTLS · caller allowlist]:::boundary
+    APP[Domain workload<br/>PEP + invariant]:::trusted
+    FACTS[TB-5 Fact source<br/>schema · provenance · TTL]:::boundary
+    ADMIN[Operator]:::untrusted
+    ADMINPLANE[TB-7 Admin plane<br/>SSO/MFA · four-eyes]:::admin
+    SUPPLY[TB-4 Policy supply chain<br/>review · sign · verify]:::admin
+    AUDIT[TB-6 Audit boundary<br/>encrypt · integrity · access]:::admin
 
-- Mỗi workload có identity riêng do mesh/trust domain cấp, ví dụ SPIFFE-compatible identity.
-- mTLS xác thực cả hai chiều; certificate ngắn hạn và tự động rotate.
-- Không dùng shared API key giữa các service làm định danh chính.
-- Service account được tách theo workload và environment; không dùng chung mặc định theo namespace.
+    INTERNET --> EDGE --> GW --> MESH --> APP
+    FACTS --> APP
+    ADMIN --> ADMINPLANE --> SUPPLY
+    SUPPLY -.-> APP
+    APP -.-> AUDIT
+    EDGE -.-> AUDIT
+```
 
-### 9.3 Delegation
+### 2.2.5 Ma trận trust boundary
 
-Khi Service A gọi Service B thay mặt user, quyết định phải phân biệt:
+| **Boundary** | **Từ → đến** | **Kiểm soát bắt buộc** |
+| --- | --- | --- |
+| TB-1 Internet | Client → Edge | TLS, WAF/DDoS/rate limit, token validation, request limits, xóa identity header không tin cậy |
+| TB-2 Edge-to-mesh | Gateway → service | mTLS, gateway workload allowlist, route/action/audience binding, signed delegation |
+| TB-3 East-west | Service → service | mTLS `STRICT`, workload authorization, explicit delegation mode, controlled egress |
+| TB-4 Policy supply chain | Git/CI → registry → PDP | Protected branch, tests, approval, artifact signature, digest, provenance, security floor |
+| TB-5 Context/data | Domain/provider → PEP/PDP | Source identity, schema, observed time, expiry, version, minimization |
+| TB-6 Audit | Runtime → spool/collector/SIEM | Encryption, integrity, bounded backpressure, access, retention, loss policy |
+| TB-7 Admin plane | Operator → control plane | SSO/MFA, privileged role, four-eyes, short session, immutable admin audit |
 
-- `actor`: user/principal gốc;
-- `caller`: workload đang thực hiện lời gọi;
-- `delegation_chain`: chuỗi đã được xác minh, giới hạn độ dài;
-- `audience` và `scope`: dành riêng cho callee/action;
-- `request_id`/`trace_id`: liên kết audit.
+## 2.3 Mô hình quyết định authorization
 
-Callee chỉ allow khi **cả actor và caller** hợp lệ cho action. Không để caller dùng quyền hệ thống để vượt quyền user trừ workflow được khai báo rõ.
+### 2.3.1 Chuỗi quyết định và authority
 
-## 10. Authorization model
+```mermaid
+flowchart LR
+    R[Request] --> E{Edge coarse policy}
+    E -->|DENY| D1[Stop + audit]
+    E -->|ALLOW| M{Mesh caller policy}
+    M -->|DENY| D2[Stop + audit]
+    M -->|ALLOW| P{Platform/domain policy}
+    P -->|DENY / ERROR| D3[Stop + audit]
+    P -->|ALLOW + obligations| B{Business invariant<br/>inside domain transaction}
+    B -->|DENY / conflict| D4[Stop + audit]
+    B -->|PASS| O{Obligation enforcement<br/>mask · row limit · step-up}
+    O -->|Unsupported / failed| D5[Deny + audit]
+    O -->|Applied| A[Execute / return response<br/>record enforcement outcome]
+```
 
-### 10.1 Contract chuẩn
+Quyết định cuối là phép **AND** của mọi layer áp dụng. Không layer nào được dùng một `ALLOW` để override `DENY` của layer khác. `ALLOW` chỉ có hiệu lực khi PEP áp dụng được toàn bộ obligation bắt buộc và business invariant vẫn đúng tại thời điểm mutation/response.
+
+### 2.3.2 Invariant bắt buộc
+
+- `actor` và `caller` luôn được đánh giá riêng; caller có system privilege không được tự động vượt quyền actor.
+- Request không có `schema_version`, action không đăng ký, fact không có provenance hoặc policy bundle không hợp lệ đều deny.
+- Edge chỉ map route sang action/resource hint; domain service resolve resource identity và authority cuối.
+- Handler không khai báo action không được expose; CI/startup/conformance test phải phát hiện missing coverage.
+- Mutation phụ thuộc state phải check authorization-relevant state/version trong cùng transaction hoặc optimistic concurrency guard.
+- Response filtering là một enforcement step; trả dữ liệu trước khi obligation áp dụng được coi là authorization failure.
+- `trace_id` phục vụ quan sát, không phải security credential và không thay thế delegation integrity.
+
+### 2.3.3 Tenant model
+
+- Request có `active_tenant_id` do trusted identity/session context xác định; không lấy từ body làm authority.
+- Resource có `tenant_id` do domain resolve. Mặc định `active_tenant_id == resource.tenant_id`.
+- Actor có thể thuộc nhiều tenant nhưng mỗi request chỉ có một active tenant, trừ workflow cross-tenant được đăng ký.
+- Cross-tenant `ALLOW` cần explicit grant có `grant_id`, grantor/authority, actor/caller, action, resource scope, source, expiry và audit; role chung như `admin` không đủ.
+- Platform tenant guardrail kiểm tra default isolation và cấu trúc grant; domain kiểm tra relationship/business condition. Domain policy không được tạo đường bypass ngoài grant contract.
+
+## 2.4 Vòng đời policy và rollout
+
+```mermaid
+stateDiagram-v2
+    [*] --> DRAFT
+    DRAFT --> REVIEW: PR + schema/lint/tests
+    REVIEW --> REJECTED: review hoặc test fail
+    REJECTED --> DRAFT: sửa đổi
+    REVIEW --> SIGNED: owner + Security approve
+    SIGNED --> CANARY: publish immutable digest
+    CANARY --> PAUSED: health/parity gate fail
+    PAUSED --> CANARY: remediation + approval
+    CANARY --> ACTIVE: progressive promotion
+    ACTIVE --> SUPERSEDED: digest mới active
+    ACTIVE --> REVOKED: security revocation
+    SUPERSEDED --> ARCHIVED: retention window
+    REVOKED --> ARCHIVED: incident closure
+```
+
+Rollback chỉ được về digest còn nằm trên hoặc cao hơn **security floor** hiện hành. Policy `REVOKED` không thể trở lại `ACTIVE` bằng route flag hoặc last-known-good fallback.
+
+# 3. Functional Requirements
+
+## 3.1 Ma trận năng lực chức năng
+
+| **ID** | **Năng lực/yêu cầu** | **Thiết kế** | **Mức bắt buộc** |
+| --- | --- | --- | --- |
+| FR-01 | External authentication | Edge validate issuer, audience, signature, algorithm, `exp/nbf`, key state và token class | `BẮT BUỘC` |
+| FR-02 | Header/request hygiene | Strip identity/delegation header từ untrusted source; giới hạn size/depth/header count | `BẮT BUỘC` |
+| FR-03 | Route authorization | Mọi exposed route map tới public class hoặc versioned action; unknown route deny | `BẮT BUỘC` |
+| FR-04 | Workload authorization | mTLS identity + caller allowlist cho service/port/path class | `BẮT BUỘC` |
+| FR-05 | Delegated call | Callee verify actor, caller, delegation mode, audience, TTL, chain và sender binding | `BẮT BUỘC` |
+| FR-06 | Fine-grained decision | Domain PEP resolve resource facts rồi evaluate actor/caller/action/resource/context | `BẮT BUỘC` |
+| FR-07 | Business invariant | Ownership/state/limit check gần domain data, trong transaction khi mutation | `BẮT BUỘC` |
+| FR-08 | Obligation | Versioned typed obligation; unsupported/conflict/application failure đều deny | `BẮT BUỘC` |
+| FR-09 | Policy lifecycle | Git review/test/sign/publish/canary/promote/rollback theo digest | `BẮT BUỘC` |
+| FR-10 | Distributed bundle | PDP verify signature/schema/security floor và activate atomic | `BẮT BUỘC` |
+| FR-11 | Evaluation audit | Mỗi PEP phát decision event; final service phát enforcement outcome | `BẮT BUỘC` |
+| FR-12 | Emergency revoke | Kill switch/security floor theo action/resource/tenant/caller, có TTL và four-eyes | `BẮT BUỘC` |
+| FR-13 | Shadow migration | Dual evaluate, classify mismatch, cohort gate và rollback route/digest | `BẮT BUỘC` |
+| FR-14 | Async authorization | Phân biệt committed event với deferred command; provenance, replay và authorization semantics rõ | `BẮT BUỘC` |
+| FR-15 | Explain/support | Reason code ổn định, policy digest và safe explain cho operator được ủy quyền | `ĐỀ XUẤT` |
+| FR-16 | Inventory | Biết action/route nào dùng policy/schema/digest/PEP version nào | `BẮT BUỘC` |
+
+## 3.2 Quy tắc authorization
+
+| **ID** | **Quy tắc** |
+| --- | --- |
+| AZR-01 | Authentication thành công không tạo implicit authorization. |
+| AZR-02 | `DENY`, `INDETERMINATE`, input/schema error và unknown obligation đều không được thực thi business action. |
+| AZR-03 | Không forward external bearer token sang service không đúng audience. |
+| AZR-04 | Chỉ STS/IAM hoặc issuer nội bộ được phê duyệt mới được mint delegation artifact; application không tự ký actor header. |
+| AZR-05 | `on_behalf_of` yêu cầu actor và caller cùng hợp lệ; `system` không được gắn actor giả để mở rộng quyền. |
+| AZR-06 | Tenant mismatch mặc định deny; cross-tenant chỉ qua explicit grant contract. |
+| AZR-07 | Policy không gọi network trong evaluation; fact động phải được cung cấp có provenance/freshness. |
+| AZR-08 | Decision-cache key phải chứa mọi input ảnh hưởng quyết định và policy digest; high-risk mutation không cache `ALLOW`. |
+| AZR-09 | Security floor/revocation override mọi bundle cũ, cache và rollback. |
+| AZR-10 | Legacy `ALLOW`/new `DENY` cần phân tích; legacy `DENY`/new `ALLOW` là privilege expansion và chặn rollout. |
+| AZR-11 | Business event đã commit không bị “hủy lịch sử” do actor mất quyền sau đó; deferred command có side effect phải theo semantics mục 8.4. |
+| AZR-12 | Client-facing response không tiết lộ resource existence nếu policy yêu cầu concealment; audit vẫn giữ reason nội bộ. |
+| AZR-13 | Public/fail-open action phải có registry entry, owner, expiry, data classification và alert riêng. |
+| AZR-14 | Mọi break-glass grant có MFA mạnh, ticket, scope, TTL, alert tức thời và retrospective. |
+
+# 4. Non-Functional Requirements
+
+Các con số dưới đây là **target đề xuất** để thẩm định bằng workload model, benchmark và risk review. Chúng chưa là production baseline cho đến khi có owner và evidence.
+
+| **ID** | **Nhóm** | **Target/Yêu cầu** | **Cổng** |
+| --- | --- | --- | --- |
+| NFR-01 | End-to-end availability | SLO theo action/risk class phải được chốt; không suy diễn từ riêng Edge/PDP | `TBD` trước OAT |
+| NFR-02 | Edge availability | `>= 99.99%/tháng` cho critical path | `ĐỀ XUẤT` |
+| NFR-03 | Local evaluation | P95 `<= 5 ms`, P99 `<= 10 ms` với policy/fact đã ở local memory | `ĐỀ XUẤT` |
+| NFR-04 | Edge overhead | P95 `<= 15 ms` cho AuthN + coarse AuthZ | `ĐỀ XUẤT` |
+| NFR-05 | Remote PDP | P95 `<= 30 ms` nội vùng; timeout/deadline explicit | `ĐỀ XUẤT` |
+| NFR-06 | Policy propagation | P95 `<= 2 phút` standard; activation atomic và 100% signature/schema verify | `ĐỀ XUẤT` |
+| NFR-07 | Emergency revocation | Critical security floor tới 100% healthy in-scope PDP `<= 30 giây`; quá hạn workload không ready/deny | `ĐỀ XUẤT` |
+| NFR-08 | Audit delivery | `>= 99.99%` event trong 5 phút; loss behavior theo risk tại mục 12.4 | `ĐỀ XUẤT` |
+| NFR-09 | Capacity | Qua load test `>= 2x` approved peak và mất một AZ vẫn giữ action SLO | `ĐỀ XUẤT` |
+| NFR-10 | Data isolation | Không có cross-tenant `ALLOW` ngoài explicit approved grant | `BẮT BUỘC` |
+| NFR-11 | Scalability | Không coordination per request; scale ngang Edge/PDP/collector | `BẮT BUỘC` |
+| NFR-12 | Compatibility | Contract/policy/bundle có version; hỗ trợ rolling upgrade N/N-1 theo matrix được duyệt | `BẮT BUỘC` |
+| NFR-13 | Recoverability | Control-plane metadata RPO `<= 15 phút`, RTO `<= 60 phút`; data-plane LKG theo risk/floor | `ĐỀ XUẤT` |
+| NFR-14 | Security | Key trong KMS/HSM, workload least privilege, signed artifact, no raw token/PII in telemetry | `BẮT BUỘC` |
+
+## 4.1 Ngân sách deadline và timeout
+
+- End-to-end deadline được phân bổ theo thứ tự `dependency/PDP < domain service < Edge < client` để layer ngoài còn thời gian kết thúc có kiểm soát.
+- PEP không retry một mutation. Remote PDP chỉ retry khi request evaluation idempotent, còn deadline và error class được phê duyệt.
+- Mỗi integration có connect timeout, response timeout, total budget, max attempt, backoff, circuit breaker và owner trong `Runtime Capacity & Resilience Matrix`.
+- Không bắt đầu context lookup/evaluation nếu remaining deadline nhỏ hơn budget tối thiểu; trả error nội bộ được PEP map fail-close.
+- Latency SLO của local PDP không bao gồm domain fact lookup, nhưng **action-level SLO phải bao gồm toàn bộ Edge, mesh, lookup, evaluation, invariant và response obligation**.
+
+## 4.2 Compatibility và rollout budget
+
+- Contract envelope có `schema_version`; PEP/PDP công bố `supported_schema_versions` trong status.
+- Bundle manifest khai báo `min_pep_version`, `min_pdp_version`, vocabulary/schema digest và security-floor generation.
+- Breaking change cần dual-read/dual-evaluate và compatibility test trước promotion; không dựa vào rollout đồng thời tuyệt đối.
+- Gateway và domain có thể chạy policy digest khác nhau trong canary, nhưng mỗi digest phải tương thích contract và security floor; decision chain ghi rõ từng digest.
+
+# 5. Technology Stack & Justification
+
+| **Công nghệ/nhóm công nghệ** | **Vai trò** | **Cơ sở lựa chọn/hệ quả** | **Trạng thái** |
+| --- | --- | --- | --- |
+| Enterprise Edge Gateway | TLS/WAF/rate limit/routing/JWT/coarse PEP | Phải hỗ trợ declarative route registry, HA, observability và integration external authorization | `TBD` theo platform standard |
+| Kubernetes + Istio/Envoy | Workload identity, mTLS, traffic/workload policy và optional `ext_authz` | Phù hợp distributed enforcement; cần inventory traffic ngoài mesh và version support matrix | `ĐỀ XUẤT` |
+| OPA/Rego | Candidate PDP/policy language cho local evaluation | Hệ sinh thái bundle/test/Kubernetes tốt; phải benchmark policy thật và usability | `ĐỀ XUẤT`, chưa chốt |
+| Cedar hoặc engine tương đương | Candidate cho typed policy/authorization | Đánh giá song song nếu type safety hoặc relationship semantics phù hợp hơn | `TBD` qua PoC |
+| Git + CI/CD | Policy-as-code, review, test và promotion | Traceability và separation of duties | `BẮT BUỘC` |
+| KMS/HSM + artifact signer | Ký bundle/security-floor manifest, rotation và revoke key | Tách build khỏi signing authority | `BẮT BUỘC` |
+| Object store/OCI-compatible registry/CDN | Phân phối immutable bundle theo region | Scale ngang, cache theo digest; registry không nằm synchronous trên request path | `ĐỀ XUẤT` |
+| OpenTelemetry | Trace, metric và correlation | Chuẩn hóa telemetry; security field vẫn theo allowlist | `ĐỀ XUẤT` |
+| Durable local spool + collector + SIEM/DWH | Decision/enforcement audit | Không đặt remote audit backend trên hot path; phải chốt loss policy | `BẮT BUỘC` |
+| SPIFFE-compatible workload identity | Canonical workload principal | Tránh service API key dùng chung; cần trust-domain/federation design | `ĐỀ XUẤT` |
+
+## 5.1 Cổng lựa chọn policy engine và topology
+
+PoC phải dùng policy, input distribution và failure case đại diện cho Agent/Market/Broker; không benchmark bằng rule demo. Báo cáo tối thiểu gồm:
+
+- semantic fit cho RBAC, ABAC, explicit cross-tenant grant và relationship lookup;
+- p50/p95/p99, cold start, memory/CPU theo rule count, bundle size và input size;
+- deterministic evaluation, typed/schema validation, explainability và test tooling;
+- signed bundle, atomic activation, status/decision-log integration và revocation floor;
+- sidecar, node-local, embedded và remote-regional trade-off;
+- multi-language SDK, upgrade N/N-1, operational skill, license và lock-in;
+- behavior khi corrupt/stale bundle, policy compile error, PDP crash và network partition.
+
+Architecture Council chỉ chốt engine/topology sau khi Security, SRE và hai domain pilot ký benchmark report.
+
+## 5.2 ADR Log
+
+ADR chi tiết nằm tại Phụ lục D. Các quyết định nền tảng đã đề xuất: Edge mỏng; hybrid platform/domain authorization; distributed PDP cho hot path; policy-as-code; mTLS/workload identity; versioned authorization contract; không forward bearer token sai audience; decision audit bất đồng bộ có durable spool; security floor tách khỏi base bundle.
+
+# 6. Integration Architecture
+
+## 6.1 Danh mục component và giao diện tích hợp
+
+### 6.1.1 Danh sách component
+
+| **ID** | **Component** | **Phạm vi** | **Trách nhiệm trong tích hợp** | **Authority/dữ liệu chính** |
+| --- | --- | --- | --- | --- |
+| CMP-01 | Client/Web/Mobile/Machine | Bên ngoài | Gửi request và external access token | Không là authority của role, tenant, action hoặc resource fact |
+| CMP-02 | IAM/IdP/STS | Bên ngoài | Token, MFA, JWKS, token exchange/delegation và credential revoke | Identity/token authority theo profile được duyệt |
+| CMP-03 | Edge Gateway | **IN SCOPE** | AuthN, sanitization, route registry, coarse PEP, create transaction correlation | Authority của verified edge context, không của domain resource |
+| CMP-04 | Istio/Envoy | **IN SCOPE** | mTLS identity, caller policy, trusted metadata và optional external-authz hook | Authority của observed workload peer tại mesh boundary |
+| CMP-05 | Service PEP/SDK | **IN SCOPE** | Resolve action/resource/facts, validate contract, call PDP, enforce obligations | Authority của enforcement result tại handler |
+| CMP-06 | Distributed PDP | **IN SCOPE** | Evaluate deterministic policy trên local bundle/input | Authority của policy evaluation, không của business mutation |
+| CMP-07 | Domain service/fact provider | Bên ngoài platform | Resource state, ownership, relationship, transaction và response filter | Domain source of truth |
+| CMP-08 | Authorization Control Plane | **IN SCOPE** | Schema/policy build, sign, distribute, inventory, rollout, revoke | Authority của approved policy artifact và security floor |
+| CMP-09 | KMS/HSM | Shared platform | Signing key custody, rotation, disable/recovery | Key authority |
+| CMP-10 | Audit collector/SIEM/DWH | Shared platform | Ingest, protect, search, alert, retention và reconcile | Audit record authority theo retention policy |
+
+### 6.1.2 Danh mục giao diện tích hợp
+
+| **ID** | **Tích hợp** | **Hướng/kiểu** | **Mục đích** | **Security/failure policy** |
+| --- | --- | --- | --- | --- |
+| INT-01 | Client → Edge | HTTPS sync | External API request | TLS, JWT profile, WAF/limit; invalid token `401`, không tạo trusted header |
+| INT-02 | Edge → IAM/JWKS | HTTPS/cache | Key discovery/refresh | Pinned issuer/TLS; unknown key deny; LKG key chỉ trong safety window |
+| INT-03 | Edge/service → STS | HTTPS sync | Audience-scoped token exchange | Strong client auth; deadline; failure deny delegated call |
+| INT-04 | Gateway/service → mesh workload | mTLS sync | Trusted east-west request | `STRICT`, caller allowlist, destination/audience binding |
+| INT-05 | PEP → local PDP | UDS hoặc authenticated local channel | Authorization evaluation | No unauthenticated node TCP; timeout nhỏ; unavailable fail-close |
+| INT-06 | PEP → domain fact source | In-process/HTTPS sync | Resource/relationship/context facts | Schema, source identity, version, TTL; unavailable theo risk matrix |
+| INT-07 | Control plane → registry/PDP | Async push/pull | Signed bundle/security floor | Signature/digest/floor verification; atomic activation; LKG constraints |
+| INT-08 | PEP/PDP → local spool/collector | Local async/durable enqueue | Evaluation/enforcement event | Bounded encrypted spool; full/loss behavior theo action risk |
+| INT-09 | Runtime → status/inventory | Async/metrics | Active digest, version, age, health | Không chứa actor/resource ID; alert fleet drift |
+| INT-10 | Operator → admin plane | HTTPS/admin | Review, promote, revoke, break-glass | SSO/MFA, RBAC, four-eyes, session TTL, immutable audit |
+
+## 6.2 Authorization contract v1
+
+Contract dưới đây là **canonical decision input sau khi PEP đã xác minh credential/delegation và lấy fact từ authority**. Raw access token hoặc raw delegation artifact không được đưa vào policy input/log.
 
 ```json
 {
+  "schema_version": "authz-request.v1",
+  "authorization_transaction_id": "azt_01J...",
   "actor": {
     "type": "user",
-    "id": "usr_123",
-    "tenant_id": "tenant_a",
+    "subject": "usr_123",
+    "issuer": "https://idp.example",
+    "active_tenant_id": "tenant_a",
     "roles": ["broker_operator"],
-    "assurance_level": "mfa"
+    "entitlement_version": "ent_9842",
+    "authentication": {
+      "auth_time": "2026-08-31T09:58:00Z",
+      "acr": "urn:example:loa:2",
+      "amr": ["pwd", "otp"]
+    },
+    "credential": {
+      "class": "access_token",
+      "id_hash": "sha256:...",
+      "verified_at": "2026-08-31T09:59:50Z",
+      "expires_at": "2026-08-31T10:04:50Z"
+    }
+  },
+  "caller": {
+    "workload_id": "spiffe://prod.example/ns/broker/sa/broker-service",
+    "trust_domain": "prod.example",
+    "environment": "prod"
+  },
+  "delegation": {
+    "mode": "on_behalf_of",
+    "issuer": "https://sts.example",
+    "audience": "broker-order-service",
+    "scopes": ["broker.order.approve"],
+    "token_id_hash": "sha256:...",
+    "issued_at": "2026-08-31T09:59:50Z",
+    "expires_at": "2026-08-31T10:01:50Z",
+    "sender_binding": {
+      "type": "mtls_or_workload_pop",
+      "key_thumbprint": "sha256:..."
+    },
+    "chain_digest": "sha256:...",
+    "hop_count": 1
   },
   "action": "broker.order.approve",
   "resource": {
     "type": "broker_order",
     "id": "ord_789",
     "tenant_id": "tenant_a",
-    "attributes": {"risk_tier": "high", "owner_id": "usr_456"}
+    "version": "42",
+    "attributes": {
+      "risk_tier": "high",
+      "owner_id": "usr_456",
+      "state": "PENDING_APPROVAL"
+    }
   },
   "context": {
-    "caller": "spiffe://prod.example/ns/broker/sa/broker-service",
     "channel": "web",
-    "environment": "prod",
     "request_time": "2026-08-31T10:00:00Z",
-    "trace_id": "...",
-    "authn_age_seconds": 120
-  }
+    "request_method_class": "WRITE",
+    "device_risk": "low"
+  },
+  "attribute_provenance": [
+    {
+      "paths": ["resource.attributes.risk_tier", "resource.attributes.state"],
+      "source": "spiffe://prod.example/ns/broker/sa/broker-service",
+      "source_version": "order:42",
+      "observed_at": "2026-08-31T10:00:00Z",
+      "expires_at": "2026-08-31T10:00:30Z"
+    }
+  ]
 }
 ```
 
-Output tối thiểu:
+### 6.2.1 Contract invariant
+
+- `schema_version` và `authorization_transaction_id` bắt buộc; ID được Edge/first trusted PEP tạo lại, không tin giá trị client.
+- `actor` có thể là user, service hoặc job. `system` mode dùng actor type service/job; không nhét user giả vào system call.
+- `caller.workload_id` lấy từ authenticated mesh peer/trusted proxy metadata, không lấy từ arbitrary header.
+- `request_time` lấy từ PEP clock; `auth_time` lấy từ verified credential; cả hai chịu clock-skew policy.
+- `roles/scopes` chỉ là input có provenance, không là quyền cuối.
+- Credential metadata là kết quả verify, không chứa raw token; decision/cache validity không được vượt credential expiry.
+- Resource ID/tenant/version do domain resolve. Hint từ Edge/client không có authority cho fine-grained decision.
+- Mọi attribute ảnh hưởng decision phải có schema và provenance trực tiếp hoặc được contract đánh dấu là claim từ verified issuer.
+- Unknown field bị reject hoặc ignore theo schema evolution rule đã công bố; security-sensitive field không được silently default.
+
+## 6.3 Decision, obligation và error contract
+
+### 6.3.1 Decision output
 
 ```json
 {
+  "schema_version": "authz-decision.v1",
+  "authorization_transaction_id": "azt_01J...",
+  "decision_id": "dec_01J...",
   "decision": "ALLOW",
-  "decision_id": "dec_...",
-  "policy_id": "broker-order-approval",
-  "policy_version": "sha256:...",
   "reason_code": "ALLOW_APPROVER_SAME_TENANT",
-  "obligations": {
-    "mask_fields": ["customer.tax_id"],
-    "max_rows": 100
-  }
+  "policy": {
+    "bundle_digest": "sha256:...",
+    "security_floor_generation": 17,
+    "matched_rule_ids": ["broker-order-approval.v3"]
+  },
+  "obligations": [
+    {
+      "type": "field_mask.v1",
+      "parameters": {"paths": ["customer.tax_id"]}
+    },
+    {
+      "type": "row_limit.v1",
+      "parameters": {"maximum": 100}
+    }
+  ],
+  "evaluated_at": "2026-08-31T10:00:00Z",
+  "valid_until": "2026-08-31T10:00:30Z",
+  "cache": {"cacheable": false}
 }
 ```
 
-### 10.2 Semantics
+### 6.3.2 Error/enforcement mapping
 
-- **Actor:** user, service, device hoặc job đã xác thực; không đồng nhất actor với caller.
-- **Action:** động từ nghiệp vụ có namespace, ví dụ `market.quote.read`; không dùng trực tiếp `GET /v1/...` làm action.
-- **Resource:** loại, ID, tenant và thuộc tính tối thiểu cần quyết định.
-- **Context:** environment, channel, workload caller, assurance, time, network/device risk và delegation.
-- **Decision:** `ALLOW` hoặc `DENY`; `INDETERMINATE/ERROR` được PEP ánh xạ theo fail policy, mặc định deny.
-- **Obligation:** yêu cầu bắt buộc sau allow như masking, row limit, step-up auth. PEP không hiểu obligation thì phải deny.
+| **Kết quả nội bộ** | **Enforcement** | **Client mapping** | **Audit** |
+| --- | --- | --- | --- |
+| AuthN invalid/expired/wrong audience | Không evaluate business policy | `401` theo API contract | AuthN reason, không log token |
+| Explicit `DENY` | Không thực thi | `403` hoặc `404` concealment theo action | Decision ID + stable reason |
+| `STEP_UP_REQUIRED` | Không thực thi cho đến khi authn mới đạt | Challenge/error theo channel contract | Required/current assurance |
+| Input/schema/provenance invalid | Fail-close | Generic `403` hoặc `5xx` theo ownership lỗi; không lộ chi tiết | `INDETERMINATE_INPUT` |
+| PDP/context unavailable/timeout | Fail-close; chỉ low-risk exception dùng fallback | Thường `503`; không giả thành policy deny | `ENFORCEMENT_UNAVAILABLE` |
+| Unknown/conflicting obligation | Fail-close | Generic `5xx` | Obligation type/version, không chứa payload nhạy cảm |
+| Business invariant conflict | Không mutation | Domain `409/422/403` theo contract | Domain reason + transaction/version |
 
-### 10.3 Phân lớp quyết định
+Transport status và authorization semantic là hai chiều khác nhau: outage phải chặn action nhưng không được ghi sai thành explicit policy `DENY`, để vận hành và audit phân biệt được sự cố với từ chối quyền.
 
-1. **Edge coarse policy:** route/action có yêu cầu authenticated, tenant, scope và client class phù hợp không?
-2. **Mesh workload policy:** caller workload có được gọi callee/port/path class này không?
-3. **Platform/domain policy:** actor có quyền action trên resource class/instance không?
-4. **Business invariant:** state hiện tại có cho phép thao tác không, ví dụ order đã settled thì không thể sửa.
-5. **Response authorization:** field/row filtering nếu policy trả obligation hoặc domain yêu cầu.
+### 6.3.3 Obligation rules
 
-Quyết định cuối cùng là phép AND của mọi enforcement layer áp dụng. Một layer allow không thể override deny ở layer khác.
+- Obligation là typed contract có version và owner; PEP khai báo capability set trong inventory/status.
+- Edge chỉ enforce obligation thuộc perimeter như step-up/challenge; domain service enforce field/row/transaction obligation.
+- Nhiều evaluation trả obligation phải được union/compose theo registry. Conflict, unknown type hoặc apply không thành công đều deny.
+- Service ghi `obligations_applied` trong enforcement outcome; decision `ALLOW` đơn lẻ không chứng minh response đã được lọc.
+- Policy không được trả free-form executable expression cho PEP.
+- `valid_until` không được muộn hơn expiry sớm nhất của credential, delegation, fact, policy/floor freshness và action cache policy.
 
-## 11. Policy model và policy-as-code lifecycle
+## 6.4 Delegation Profile v1
 
-### 11.1 Cấu trúc repository đề xuất
+### 6.4.1 Quyết định cần chốt
+
+Phương án ưu tiên là OAuth 2.0 Token Exchange cho token mới có audience đúng callee, kết hợp sender-constrained token hoặc binding tương đương với authenticated workload. Nếu IAM không hỗ trợ, Security Platform phải cung cấp STS nội bộ đạt cùng invariant; **raw/signed identity header do từng application tự tạo không phải phương án hợp lệ**.
+
+| **Thuộc tính** | **Yêu cầu tối thiểu** |
+| --- | --- |
+| Issuer | IAM/STS allowlist theo environment; application workload không là issuer tùy ý |
+| Subject/actor | Stable subject + issuer; phân biệt impersonation và delegation |
+| Caller/actor chain | `act`/equivalent hoặc verified chain digest; giới hạn hop; không cho cycle |
+| Audience/resource | Exact callee/service resource; wildcard audience bị cấm production |
+| Scope/action | Hẹp bằng hoặc hẹp hơn incoming grant; không tự tăng quyền qua hop |
+| Lifetime | Ngắn, không dài hơn credential nguồn; giá trị số theo risk ở L3 |
+| Replay | `jti`/equivalent, sender binding; high-risk có replay detection theo profile |
+| Sender binding | Xác minh tại trusted mesh/PEP boundary với mTLS key/workload proof |
+| Revocation | User/client disable, token/grant revoke và security floor phải đạt end-to-end SLA |
+| Logging | Chỉ log digest/metadata allowlist; không log artifact/token raw |
+
+### 6.4.2 Delegation modes
+
+| **Mode** | **Khi dùng** | **Decision rule** |
+| --- | --- | --- |
+| `on_behalf_of` | Service thực hiện action thay mặt user | Actor **và** caller đều phải được phép; token audience đúng callee |
+| `system` | Scheduler, controller hoặc integration thực hiện nhiệm vụ hệ thống | Service/job principal và purpose riêng; không mang user giả; scope/resource allowlist |
+| `approved_deferred_grant` | Command trì hoãn cần giữ một approval có hiệu lực qua thời gian | Grant immutable, action/resource-bound, expiry, approver/policy version và revoke semantics được duyệt |
+
+## 6.5 PEP coverage và chống bypass
+
+| **Execution path** | **Enforcement point** | **Coverage guard** |
+| --- | --- | --- |
+| External HTTP/gRPC route | Edge route PEP | Route registry default deny; CI diff giữa route config và vocabulary; explicit public allowlist |
+| Domain HTTP/gRPC handler | Framework middleware/interceptor + handler declaration | Startup fail hoặc handler không reachable nếu thiếu action metadata; conformance test toàn bộ router |
+| East-west network call | Istio AuthorizationPolicy/Envoy | Namespace/workload default deny; caller/service/port allowlist; không có direct plaintext path |
+| Resource-level action | Domain PEP + local PDP | Resource/fact resolved server-side; SDK cannot be optional helper call trong handler |
+| Async command consumer | Consumer middleware | Schema/provenance/replay validation và authorization mode bắt buộc trước side effect |
+| Scheduled/admin job | Job identity + job-action registry | Dedicated service account, scope, change control và audit |
+| Response/field access | Domain response authorization layer | Serialization/query path có mandatory obligation hook; E2E data-leak tests |
+
+NetworkPolicy không thể chứng minh in-process SDK đã được gọi. Vì vậy production gate cần cả default-deny network path **và** framework-level coverage inventory; một handler gọi SDK thủ công theo convention là chưa đủ.
+
+## 6.6 PEP ↔ PDP local channel
+
+- Sidecar mặc định dùng loopback/Unix Domain Socket chỉ accessible trong pod; node-local dùng mTLS hoặc workload-authenticated UDS namespace.
+- PDP không tin caller-supplied workload ID; channel identity được runtime/agent xác nhận.
+- Request/response có size, depth, evaluation deadline và concurrency limit.
+- PEP và PDP trao đổi schema/capability version; incompatible version làm workload not-ready hoặc deny, không silently downgrade.
+- Remote PDP cần service identity, regional routing, circuit breaker, bulkhead và riêng error budget; chỉ dùng qua Architecture Decision Record.
+
+# 7. Policy, Data & Freshness Architecture
+
+## 7.1 Sở hữu artefact và dữ liệu authorization
+
+| **Artefact/dữ liệu** | **Authority** | **Consumer** | **Version/freshness** |
+| --- | --- | --- | --- |
+| Action/resource vocabulary | API Governance + Domain owner | Edge, PEP, policy/test | Immutable version/digest |
+| Platform guardrail | Security Architecture/Platform | Mọi PDP | Signed bundle + security floor |
+| Domain policy | Domain owner + Security cho high risk | Domain PDP | Signed bundle digest |
+| Resource facts | Domain service | Domain PEP/PDP | Resource version + observed/expiry |
+| Actor entitlement | IAM/entitlement authority | Edge/domain PEP | Entitlement version + revoke signal |
+| Workload identity | Mesh trust domain | Envoy/PEP | Short-lived cert + trust bundle |
+| Cross-tenant grant | Approved grant authority | Platform/domain policy | Grant ID/version/expiry/revoke |
+| Decision/evaluation record | PEP/PDP | Audit/SIEM | Decision ID + bundle/floor digest |
+| Enforcement outcome | Final service/PEP | Audit/SIEM | Transaction ID + obligations applied |
+
+## 7.2 Policy repository structure
 
 ```text
 policies/
   vocabulary/
     actions.yaml
     resources.yaml
-    context.schema.json
+    authorization-request.schema.json
+    authorization-decision.schema.json
+    obligations.schema.json
   platform/
     tenant-isolation/
     workload-baseline/
+    security-floor/
   domains/
     agent/
     market/
     broker/
   tests/
     conformance/
+    negative/
     regression/
-  bundles/
-    manifest.yaml
+    property/
+  manifests/
+    bundle-manifest.schema.json
 ```
 
-Ngôn ngữ policy có thể là Rego/OPA, Cedar hoặc engine tương đương, nhưng phải hỗ trợ deterministic evaluation, test automation, bundle/version và explainability đủ dùng. Phase đầu khuyến nghị **OPA/Rego** nếu hệ sinh thái Kubernetes/Istio và năng lực đội ngũ phù hợp; quyết định engine cuối cùng cần benchmark bằng policy thật.
+Policy authoring bắt buộc default deny, explicit action/resource, no network call, no secret/raw PII, bounded constructs và test deny/cross-tenant/stale/privilege escalation cho high-risk rule. Exception có owner, ticket, reason và expiry.
 
-### 11.2 Quy tắc authoring
+## 7.3 Policy supply-chain pipeline
 
-- Mặc định deny; allow phải explicit.
-- Action/resource phải tồn tại trong vocabulary registry.
-- Tenant isolation là guardrail bắt buộc, domain policy không được override.
-- Policy không gọi network tùy ý trong lúc evaluate.
-- Policy không chứa secret hoặc PII thô.
-- Rule high-risk cần test deny, cross-tenant, stale context và privilege escalation.
-- Exception phải có owner, ticket, reason và expiry.
+```mermaid
+flowchart LR
+    PR[Pull request] --> SCHEMA[Schema + vocabulary]
+    SCHEMA --> LINT[Lint + static analysis]
+    LINT --> TEST[Unit · negative · property]
+    TEST --> IMPACT[Anonymized impact replay]
+    IMPACT --> APPROVE[Domain owner + Security]
+    APPROVE --> BUILD[Reproducible build]
+    BUILD --> SIGN[KMS/HSM sign]
+    SIGN --> REG[(Immutable registry)]
+    REG --> CANARY[Canary distribution]
+    CANARY --> GATE{Health · parity · floor}
+    GATE -->|pass| PROMOTE[Progressive promote]
+    GATE -->|fail| PAUSE[Pause / rollback-safe digest]
+```
 
-### 11.3 Pipeline
+CI phải pin dependency, tạo SBOM/provenance cho compiler/builder và tách quyền author, approver, signer/promoter đối với high-risk policy.
+
+## 7.4 Bundle manifest và activation
+
+```yaml
+manifest_version: authz-bundle.v1
+bundle_digest: sha256:...
+created_at: 2026-08-31T10:00:00Z
+environment: prod
+domains: [platform, broker]
+vocabulary_digest: sha256:...
+request_schema: authz-request.v1
+decision_schema: authz-decision.v1
+min_pep_capability: pep-contract.v1
+min_pdp_capability: pdp-runtime.v1
+security_floor_generation: 17
+supersedes: sha256:...
+signature:
+  key_id: kms://authz-prod/bundle-signing/7
+  algorithm: approved-by-security
+```
+
+- PDP tải artifact vào vùng staging, verify signature/digest/schema/version/security floor rồi mới atomic swap.
+- Bundle không tương thích không được activate; instance giữ LKG chỉ khi LKG còn đạt freshness và security floor.
+- Status tối thiểu: desired/active digest, floor generation, loaded time, last successful sync, supported schema/PEP/PDP version và failure reason.
+- Artifact được promote theo digest giữa environment; không rebuild binary/policy khi promote.
+
+## 7.5 Attribute provenance và context provider
+
+- Provider registry khai báo owner, workload identity, schema, supported attributes, freshness, residency, error semantics và data classification.
+- PEP không cho client ghi đè server-resolved resource/tenant/state; conflict giữa hint và authority bị audit và deny khi security-relevant.
+- Attribute được lấy theo batch/bounded query; policy engine không tự gọi provider.
+- High-risk state được đọc trong transaction hoặc theo resource version/optimistic guard để hạn chế TOCTOU.
+- Relationship graph tập trung chỉ được dùng khi có ownership, consistency, latency, residency và revoke SLA được phê duyệt; nếu không, relationship check ở domain.
+
+## 7.6 Cache, freshness và revocation
+
+### 7.6.1 Các lớp cache
+
+| **Cache** | **Key/authority chính** | **Nguyên tắc** |
+| --- | --- | --- |
+| JWKS/trust bundle | Issuer, key ID, trust domain | Proactive refresh; unknown key deny; giữ key cũ chỉ trong rotation safety window |
+| Base policy bundle | Immutable digest | Atomic activation, LKG có max age và phải đạt security floor |
+| Security floor/revocation set | Monotonic generation + signed digest | Kiểm tra trước positive cache; stale quá SLA thì critical/high action deny |
+| Attribute/entitlement | Subject/resource + source version | TTL theo authority/risk; invalidation event khi khả thi |
+| Decision | Full canonical input fingerprint + bundle/floor digest | Chỉ deterministic decision; `ALLOW` high-risk mutation mặc định không cache |
+
+Decision-cache key tối thiểu:
 
 ```text
-Pull request
- -> schema/lint
- -> unit + negative tests
- -> scenario/regression tests
- -> impact analysis trên decision samples đã ẩn danh
- -> owner + security approval
- -> compile/build immutable bundle
- -> sign + publish
- -> canary distribution
- -> health/parity gate
- -> progressive rollout
- -> promote hoặc rollback digest
+schema_version
++ actor(issuer, subject, active_tenant, entitlement_version, assurance, credential_id_hash, credential_expiry)
++ caller(workload_id, delegation_mode, delegation_jti/digest)
++ action
++ resource(type, id, tenant, version)
++ all relevant context/fact values and source versions
++ base_bundle_digest
++ security_floor_generation
 ```
 
-### 11.4 Policy versioning
+Nếu không chứng minh được input fingerprint bao phủ mọi thuộc tính ảnh hưởng quyết định thì không cache. `DENY` dùng TTL ngắn để không kéo dài quyền vừa được cấp; response client thống nhất để hạn chế enumeration.
 
-- Bundle được định danh bằng immutable digest; semantic label chỉ là alias.
-- PDP báo `active_digest`, `loaded_at`, `last_successful_sync`.
-- PEP ghi digest vào decision log và metric.
-- Breaking schema change cần dual-read/dual-evaluate trong thời gian tương thích.
-- Control plane duy trì N phiên bản gần nhất và nút rollback một bước có kiểm soát.
+### 7.6.2 Freshness classes đề xuất
 
-## 12. Request flows
+Base bundle, revocation floor, credential, attribute và decision cache có freshness độc lập; không dùng một TTL chung để mô tả tất cả.
 
-### 12.1 External read request
+| **Risk class** | **Ví dụ** | **Security floor max age** | **Dynamic fact/entitlement** | **Decision `ALLOW`** | **Quá hạn** |
+| --- | --- | ---: | --- | --- | --- |
+| Critical | Payout, admin grant, approval cuối | `<= 30s` target | Fresh lookup hoặc `<= 60s` theo action | Không cache mutation | Deny/not-ready |
+| High | Order/customer mutation | `<= 30s` target | `<= 5m` hoặc transactional fact | Không cache mutation | Deny |
+| Standard | Read business data | `<= 2m` target | `<= 30m` theo source | TTL ngắn được duyệt | Mặc định deny; exception đích danh |
+| Public/low-risk | Public catalog | Theo registry | Nhiều giờ nếu không sensitive | Có thể cache | Explicit fail-open được duyệt |
 
-```text
-1. Client -> Edge: token + request
-2. Edge: validate token, strip untrusted headers, map route -> action/resource hint
-3. Edge PEP/PDP: coarse decision
-4. Edge -> Domain Service: mTLS + verified bounded identity/delegation context
-5. Service: load resource facts cần thiết
-6. Service PEP/PDP: fine-grained decision
-7. Service: enforce business invariant và obligations (field/row filtering)
-8. Response -> Edge -> Client
-9. Mỗi PEP phát decision event bất đồng bộ cùng trace_id
+Giá trị cuối cùng phải nằm trong `Runtime Capacity & Resilience Matrix` và được Security/domain owner phê duyệt. Token lifetime, delegation lifetime và provider TTL không được dài hơn revoke objective của action nếu không có invalidation/security-floor control bù trừ.
+
+### 7.6.3 End-to-end revocation flow
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant SRC as IAM / Grant / Security authority
+    participant RC as Revocation Controller
+    participant REG as Signed Floor Registry
+    participant PDP as PDP Fleet
+    participant PEP as PEP
+    participant SRE as SRE/SecOps
+
+    SRC->>RC: Revoke subject/grant/action/key
+    RC->>RC: Validate authority + create monotonic generation
+    RC->>REG: Sign and publish security-floor delta/snapshot
+    REG-->>PDP: Push/poll generation N+1
+    PDP->>PDP: Verify + atomic activate before positive cache
+    PDP-->>RC: Report active generation
+    RC->>RC: Compare fleet convergence to SLA
+    alt PDP healthy and current
+        PEP->>PDP: Evaluate with generation N+1
+        PDP-->>PEP: DENY_REVOKED or normal decision
+    else PDP stale beyond action budget
+        PDP-->>PEP: INDETERMINATE_STALE_FLOOR
+        PEP->>PEP: Fail-close / mark workload not-ready
+        RC-->>SRE: Page on convergence breach
+    end
 ```
 
-### 12.2 Mutating/high-risk request
+L3 phải đo **effective revocation window** từ thời điểm authority commit revoke đến khi mọi healthy enforcement point chặn quyền, bao gồm detection, signing, distribution, activation, positive cache bypass và clock skew. Chỉ đo bundle download latency là chưa đủ.
 
-- Yêu cầu idempotency key khi phù hợp.
-- High-risk policy có thể yêu cầu MFA mới, device assurance hoặc fresh entitlement lookup.
-- Authorization và mutation phải hạn chế TOCTOU: kiểm tra state/version ngay trong transaction hoặc optimistic concurrency control.
-- Decision ALLOW không được cache qua thay đổi state nếu invariant phụ thuộc state.
+# 8. Request & Event Flow Diagrams
 
-### 12.3 Service-to-service request
+## 8.1 External authenticated read
 
-```text
-Service A --mTLS--> Service B
-  mesh kiểm tra workload A được gọi B
-  B xác minh delegation context/audience
-  B đánh giá actor + caller + action + resource
-  B enforce domain invariant
+```mermaid
+sequenceDiagram
+    autonumber
+    actor C as Client
+    participant E as Edge Gateway
+    participant I as IAM/JWKS
+    participant M as Istio/Envoy
+    participant S as Domain Service + PEP
+    participant F as Domain Fact Source
+    participant P as Local PDP
+    participant A as Audit Spool
+
+    C->>E: TLS request + access token
+    E->>E: Strip untrusted headers and create authz_transaction_id
+    E->>I: JWKS refresh only on cache policy
+    E->>E: Validate token + route/action coarse policy
+    E-->>A: Edge evaluation event
+    E->>M: mTLS + audience-bound delegation
+    M->>M: Verify gateway workload and destination policy
+    M->>S: Request + verified bounded context
+    S->>S: Resolve canonical action/resource
+    S->>F: Load minimal resource facts/version
+    F-->>S: Facts + provenance/freshness
+    S->>P: authz-request.v1
+    P-->>S: ALLOW/DENY + obligations + digest/floor
+    S->>S: Apply invariant and response obligations
+    S-->>A: Evaluation + enforcement outcome
+    S-->>E: Filtered response
+    E-->>C: Response
 ```
 
-### 12.4 Async/event flow
-
-- Producer ghi actor/caller/delegation metadata tối thiểu vào event envelope đã ký hoặc provenance được broker bảo đảm.
-- Consumer authorization kiểm tra quyền tại thời điểm consume nếu hành động có side effect; không mặc định tái sử dụng ALLOW cũ vô thời hạn.
-- Retry giữ correlation ID nhưng tạo decision ID mới.
-- Dead-letter access bị giới hạn và audit.
-
-## 13. Control plane và data plane
-
-### 13.1 Control plane
-
-Bao gồm policy repository, CI, compiler, signing, bundle registry, distribution controller, schema/vocabulary registry, inventory và admin API/UI. Control plane có thể tạm unavailable mà data plane vẫn phục vụ bằng last-known-good bundle trong giới hạn freshness.
-
-### 13.2 Data plane
-
-Bao gồm Gateway PEP, mesh enforcement, service PEP/SDK và PDP runtime. Không phụ thuộc synchronous vào Git, CI hoặc registry. Mỗi instance:
-
-- chỉ load bundle có chữ ký hợp lệ;
-- atomic swap bundle, không có trạng thái nửa cập nhật;
-- giữ last-known-good bundle;
-- expose readiness theo policy age và risk profile;
-- giới hạn input size/evaluation time;
-- không log secret/raw token.
-
-## 14. Deployment topology
-
-### 14.1 Môi trường
-
-- Control plane tách dev/staging/prod; artifact được promote theo digest, không rebuild giữa môi trường.
-- Policy data và audit data có residency phù hợp từng region.
-- Trust domain, issuer và signing key tách production/non-production.
-
-### 14.2 PDP placement
-
-| Mô hình | Dùng khi | Trade-off |
-|---|---|---|
-| Sidecar | Isolation cao, policy/domain riêng, latency thấp | Tốn tài nguyên và vận hành nhiều instance |
-| Node-local daemon | Nhiều workload đồng nhất, cần tối ưu resource | Blast radius theo node, cần auth channel local |
-| Embedded library | Runtime ổn định, cực nhạy latency | Coupling version/language, rollout khó hơn |
-| Remote regional PDP | Policy graph/context tập trung | Thêm network hop và dependency |
-
-Mặc định đề xuất: **sidecar hoặc node-local PDP cho synchronous hot path**, remote PDP chỉ cho bài toán relationship graph hoặc administration cần dữ liệu tập trung. Chọn topology sau benchmark latency/cost và threat model.
-
-### 14.3 Istio rollout
-
-1. Inventory traffic và service accounts.
-2. Bật telemetry, sau đó mTLS `PERMISSIVE` tạm thời.
-3. Sửa traffic plaintext/ngoài mesh.
-4. Chuyển namespace/workload sang `STRICT`.
-5. Thêm allowlist theo caller identity; bắt đầu audit/shadow trước enforce.
-6. Egress qua controlled gateway cho external dependency quan trọng.
-
-## 15. Scaling, high availability và disaster recovery
-
-### 15.1 Scaling
-
-- Edge scale ngang theo RPS/concurrency/CPU; không giữ session nếu không bắt buộc.
-- PDP stateless đối với request; policy bundle immutable trong memory.
-- Bundle registry/CDN/object store phân phối theo region; jitter polling và backoff tránh thundering herd.
-- Audit ingestion partition theo time/domain/tenant hash; producer buffer có giới hạn.
-- Benchmark policy theo p50/p95/p99, input size, số rule và bundle size trước production.
-
-### 15.2 HA
-
-- Edge và remote PDP chạy tối thiểu đa AZ, anti-affinity và PodDisruptionBudget.
-- Không có leader trên request path.
-- JWKS và policy bundle dùng last-known-good cache với expiry rõ.
-- Health check phân biệt process health, bundle health và dependency degradation.
-- Circuit breaker cho remote PDP/context provider; retry chỉ với request idempotent và budget nhỏ.
-
-### 15.3 DR
-
-- Policy Git và bundle registry có replication/backup; signing key trong KMS/HSM, có rotation/recovery runbook.
-- RPO control-plane metadata <= 15 phút; RTO <= 60 phút.
-- Data plane tiếp tục bằng last-known-good bundle theo risk-tier TTL.
-- Diễn tập mất region, expired JWKS, corrupt bundle và compromised signing key tối thiểu hai lần/năm.
-
-## 16. Caching và freshness
-
-### 16.1 Loại cache
-
-- **JWKS cache:** theo HTTP cache header, proactive refresh, giữ key cũ trong cửa sổ rotation hợp lý.
-- **Policy bundle cache:** immutable theo digest, atomic activation, last-known-good.
-- **Decision cache:** chỉ cho quyết định thuần deterministic với key đầy đủ.
-- **Attribute cache:** TTL theo nguồn dữ liệu và risk; có invalidation khi khả thi.
-
-### 16.2 Decision-cache key tối thiểu
-
-`actor_id + actor_entitlement_version + caller_id + action + resource_type + resource_id/version + tenant + relevant_context + policy_digest`
-
-Không cache ALLOW nếu bỏ sót thuộc tính ảnh hưởng quyết định. High-risk mutation mặc định không cache ALLOW. DENY cache TTL ngắn để tránh kéo dài quyền đã vừa được cấp; chống enumeration bằng response thống nhất.
-
-### 16.3 Freshness classes
-
-| Class | Ví dụ | Bundle/context stale tối đa | Hành vi quá hạn |
-|---|---|---:|---|
-| Critical | approve payout, admin grant | 1–5 phút | Fail-close |
-| High | mutate order/customer | 5–15 phút | Fail-close |
-| Standard | read business data | 30–60 phút | Theo policy, mặc định close |
-| Public/low-risk | public catalog | nhiều giờ | Có thể fail-open nếu explicit |
-
-Các giá trị cuối cùng phải được Security và domain owner phê duyệt dựa trên risk assessment.
-
-## 17. Failure semantics: fail-open và fail-close
-
-### 17.1 Mặc định
-
-- AuthN lỗi/không xác định: **fail-close**.
-- Không có policy, input sai schema, obligation không hiểu, chữ ký bundle sai: **fail-close**.
-- PDP timeout/crash: dùng local last-known-good nếu còn hợp lệ; nếu không, **fail-close**.
-- Audit sink lỗi: request vẫn chạy nếu local buffer còn capacity; cảnh báo và degrade theo runbook, không tự fail-open authorization.
-
-### 17.2 Ngoại lệ fail-open
-
-Chỉ cho endpoint public hoặc read-only low-risk đã được đăng ký. Mỗi exception cần:
-
-- owner và Security approval;
-- phạm vi action/resource cụ thể;
-- TTL/expiry;
-- metric/alert riêng;
-- response marker và audit reason;
-- quarterly review.
-
-Không fail-open cho cross-tenant access, privileged/admin action, secret/PII, money movement hoặc write/delete.
-
-### 17.3 Degraded-mode matrix
-
-| Sự cố | Hành vi |
-|---|---|
-| IdP unavailable, token còn hợp lệ và key cached | Tiếp tục đến hết token/key safety window |
-| JWKS key mới chưa tải được | Từ chối token dùng key chưa biết; không bỏ qua signature |
-| Control plane unavailable | Dùng last-known-good bundle còn trong freshness window |
-| Bundle mới lỗi | Không activate; giữ bundle cũ và alert |
-| Local PDP unavailable | Restart/fallback instance; mặc định deny |
-| Attribute provider unavailable | Dùng cache còn hạn; hết hạn thì deny trừ exception low-risk |
-| Audit backend unavailable | Buffer cục bộ có giới hạn, alert; không block request mặc định |
-
-## 18. Observability và audit
-
-### 18.1 Metrics
-
-- Request count/latency/error theo gateway, service và action class.
-- AuthN failure theo reason: expired, issuer, audience, signature, malformed.
-- AuthZ decision count theo allow/deny/error/reason code, policy digest và enforcement mode.
-- PDP evaluation p50/p95/p99, timeout, bundle load success/failure/age.
-- Cache hit/miss/eviction và stale use.
-- Shadow mismatch: legacy allow/new deny và legacy deny/new allow.
-- Audit buffer depth/drop count và ingestion lag.
-- mTLS coverage, plaintext attempt và denied workload call.
-
-Không gắn raw actor/resource ID vào metric label để tránh cardinality và rò rỉ; chi tiết nằm trong audit log có kiểm soát.
-
-### 18.2 Tracing
-
-- Propagate `trace_id`/`request_id`; mỗi authorization evaluation có `decision_id`.
-- Span ghi engine latency, policy digest, decision/reason code; không ghi raw token hoặc PII.
-- Cho phép nối Edge -> service -> PDP -> audit bằng ID, không bằng payload nhạy cảm.
-
-### 18.3 Decision audit schema tối thiểu
-
-- timestamp, decision_id, trace_id;
-- actor pseudonymous ID/type/tenant;
-- caller workload identity và delegation chain digest;
-- action, resource type và resource ID tokenized khi cần;
-- decision, reason code, obligations;
-- policy ID/digest, enforcement mode (`shadow|enforce`);
-- PEP/PDP identity, environment/region;
-- latency, cache status, context freshness;
-- break-glass/exception metadata.
-
-### 18.4 Audit controls
-
-- Append-oriented storage, integrity protection, encryption at rest/in transit.
-- RBAC riêng cho audit; truy cập audit cũng được audit.
-- Retention theo pháp lý và phân loại dữ liệu; delete/anonymize theo policy.
-- Alert cho privilege escalation, cross-tenant deny spike, break-glass, wildcard policy và shadow regression.
-
-## 19. Security controls
-
-- TLS hiện đại ở Edge; mTLS STRICT trong mesh sau migration.
-- Key/signing secret trong KMS/HSM; rotation và revocation runbook.
-- Supply-chain security: pinned dependencies, SBOM, image signing, admission policy.
-- Policy bundle ký số và xác minh digest trước activate.
-- Namespace/service-account least privilege, NetworkPolicy và controlled egress.
-- Token không xuất hiện trong log, trace, error hoặc downstream header không cần thiết.
-- Input validation và giới hạn kích thước/depth để chống policy-engine DoS.
-- Timeout/evaluation budget và circuit breaker.
-- Separation of duties giữa policy author, approver và production promoter cho high-risk policy.
-- Break-glass yêu cầu MFA mạnh, ticket, TTL, scope hẹp, alert tức thời và retrospective.
-- Penetration test tập trung bypass PEP, confused deputy, tenant isolation, cache poisoning và policy supply chain.
-
-## 20. SLO và NFR
-
-Các target dưới đây là baseline để validation qua load test và business criticality review.
-
-| Hạng mục | Target |
-|---|---|
-| Edge availability | >= 99.99%/tháng cho production critical path |
-| Local PDP availability | >= 99.99% theo workload SLI |
-| AuthZ evaluation latency | p95 <= 5 ms, p99 <= 10 ms cho local cached policy, không gồm domain data lookup |
-| Edge overhead do AuthN + coarse AuthZ | p95 <= 15 ms |
-| Remote PDP latency nếu dùng | p95 <= 30 ms nội vùng, timeout budget explicit |
-| Policy propagation | p95 <= 2 phút standard; emergency revoke <= 30 giây nếu hạ tầng hỗ trợ |
-| Bundle activation correctness | 100% bundle phải verify signature/schema; activation atomic |
-| Decision audit delivery | >= 99.99% trong 5 phút; dropped event = 0 mục tiêu |
-| mTLS coverage | 100% traffic in-scope sau migration |
-| Capacity | >= 2x peak dự báo, chịu mất một AZ mà vẫn giữ SLO |
-| Scalability | Không yêu cầu coordination per-request; scale ngang |
-| Data isolation | Không có cross-tenant ALLOW ngoài policy được phê duyệt |
-
-Error budget của Edge/PDP được quản lý cùng SRE. Policy rollout tự động dừng khi latency, error hoặc mismatch vượt threshold.
-
-## 21. Migration strategy
-
-### 21.1 Nguyên tắc migration
-
-- Strangler pattern theo route/action, không thay toàn bộ BFF cùng lúc.
-- Giữ external contract ổn định trước; tối ưu contract sau khi traffic đã chuyển an toàn.
-- Tách ba loại logic trong BFF: shared security, channel composition, business rule.
-- Chỉ shared security chuyển vào platform; business rule chuyển về domain; composition có giá trị được giữ thành Experience API/BFF mỏng.
-- Mọi cutover có rollback route và owner trực.
-
-### 21.2 Pha 0 — Discovery và baseline
-
-- Inventory endpoint, client, issuer/audience, role/scope, downstream, data classification và SLO của `agent-api`, `market-api`, `core-broker-api`.
-- Static/runtime analysis để lập authorization matrix hiện tại.
-- Ghi nhận baseline latency, availability, deny rate và incident.
-- Phân loại endpoint: public, read, write, privileged, cross-tenant-sensitive.
-- Xác định BFF nào là pure proxy, composition BFF hay chứa business logic.
-
-**Exit criteria:** 100% endpoint in-scope có owner, action/resource mapping và risk class.
-
-### 21.3 Pha 1 — Foundation
-
-- Triển khai Edge Gateway, trusted issuer config và header sanitization.
-- Thiết lập Istio identity/mTLS ở chế độ quan sát/permissive.
-- Xây policy repo, CI, signing, registry, PDP runtime, PEP SDK và audit schema.
-- Định nghĩa vocabulary ban đầu cho Agent/Market/Broker.
-- Viết conformance suite và golden decision cases từ hành vi legacy.
-
-**Exit criteria:** end-to-end non-production, signed bundle, audit nối được trace, chaos test cơ bản đạt.
-
-### 21.4 Pha 2 — Shadow evaluation
-
-Legacy BFF vẫn enforce. PEP mới evaluate cùng input nhưng không ảnh hưởng response:
-
-```text
-Request -> legacy decision (enforced)
-       \-> new PDP decision (shadow) -> comparison/audit
+## 8.2 High-risk mutation và TOCTOU guard
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor C as Operator
+    participant E as Edge
+    participant S as Broker Service
+    participant DB as Broker DB
+    participant P as Local PDP
+    participant A as Audit Spool
+
+    C->>E: Approve order + idempotency key + token
+    E->>E: AuthN, assurance and coarse policy
+    E->>S: mTLS + short-lived delegated context
+    S->>DB: BEGIN; lock/read order version 42
+    DB-->>S: State + tenant + owner + risk tier
+    S->>P: actor + caller + action + resource version + fresh facts
+    P-->>S: ALLOW + required assurance/obligations
+    alt state/version unchanged and obligations supported
+        S->>DB: Apply mutation with invariant + outbox
+        DB-->>S: COMMIT version 43
+        S-->>A: decision + enforcement=COMMITTED
+        S-->>E: Success
+        E-->>C: Success
+    else state changed / obligation failed
+        S->>DB: ROLLBACK
+        S-->>A: enforcement=NOT_EXECUTED + reason
+        S-->>E: Conflict/deny
+        E-->>C: Conflict/deny
+    end
 ```
 
-Phân loại mismatch:
+High-risk `ALLOW` không được cache qua state transition. Nếu database transaction dài, service phải re-check authorization-relevant version trước commit hoặc dùng invariant/optimistic condition trong câu lệnh mutation.
 
-- legacy ALLOW / new DENY: có thể thiếu mapping/context hoặc policy mới chặt hơn;
-- legacy DENY / new ALLOW: rủi ro privilege expansion, chặn rollout;
-- error/indeterminate: lỗi integration hoặc freshness.
+## 8.3 Service-to-service delegation
 
-**Exit criteria đề xuất:** tối thiểu 7–14 ngày hoặc đủ chu kỳ nghiệp vụ; 0 mismatch chưa giải thích ở action high-risk; >= 99.99% parity ở standard actions; PDP SLO đạt ở peak test.
+```mermaid
+sequenceDiagram
+    autonumber
+    participant A as Service A
+    participant STS as IAM / STS
+    participant M as Mesh / trusted PEP boundary
+    participant B as Service B + PEP
+    participant P as PDP B
 
-### 21.5 Pha 3 — Enforce theo cohort
-
-1. Internal/test clients.
-2. Read-only low-risk routes.
-3. Write routes theo tenant/client cohort 1% -> 5% -> 25% -> 50% -> 100%.
-4. Privileged/high-risk routes sau cùng.
-
-Mỗi bước có automated gate dựa trên deny delta, error, latency và business KPI. Rollback bằng route flag/policy digest, không cần redeploy toàn hệ thống.
-
-### 21.6 Pha 4 — Decompose BFF
-
-#### `agent-api`
-
-- Di chuyển token validation/coarse scopes lên Edge.
-- Chuyển agent ownership/hierarchy checks về Agent domain hoặc domain facts provider.
-- Giữ composition endpoint nếu phục vụ UX cụ thể; đổi tên/ownership rõ nếu cần.
-
-#### `market-api`
-
-- Chuyển public/read market routes trực tiếp qua Edge nếu không có composition.
-- Market entitlement/licensing là domain policy/fact; cache theo TTL phù hợp dữ liệu thị trường.
-- Tách public-data fail behavior khỏi licensed/private data.
-
-#### `core-broker-api`
-
-- Ưu tiên cuối do risk cao.
-- Approval, money movement, customer/portfolio access luôn fail-close.
-- Business state check nằm trong Broker domain transaction để tránh TOCTOU.
-- Yêu cầu step-up auth và audit đầy đủ cho privileged action.
-
-### 21.7 Pha 5 — Decommission
-
-- Ngừng route mới vào BFF cũ; theo dõi zero traffic qua ít nhất một retention window hợp lý.
-- Thu hồi client credential, service account, network policy và secret cũ.
-- Archive code/config/audit mapping theo retention; cập nhật runbook và dependency map.
-- Không xóa BFF còn composition value; chuyển nó thành thin Experience API với guardrail platform.
-
-## 22. Rollout, feature flags và rollback
-
-Mỗi action/route có trạng thái:
-
-```text
-OFF -> OBSERVE -> SHADOW -> ENFORCE_CANARY -> ENFORCE -> LEGACY_REMOVED
+    A->>STS: Exchange subject/actor token for audience B
+    STS->>STS: Authenticate A and constrain actor/scope/audience/TTL
+    STS-->>A: Sender-bound delegated token
+    A->>M: mTLS call to B + delegated token
+    M->>M: Verify workload A, destination and sender binding
+    M->>B: Verified caller + delegation claims
+    B->>B: Validate mode, audience, expiry, chain and resource
+    B->>P: actor + caller + action + resource + facts
+    P-->>B: Decision + obligations
+    B->>B: Enforce business invariant
 ```
 
-Guardrail:
+Mỗi hop cần audience đúng callee. Không forward nguyên external bearer token qua chuỗi và không cho Service A mint user context bằng application secret riêng.
 
-- Flag được scope theo environment, route, action, tenant/client cohort.
-- Không cho flag bật fail-open ngoài registry đã duyệt.
-- Promotion yêu cầu policy digest cố định và dashboard health.
-- Auto-pause khi new-allow/legacy-deny mismatch > 0 với critical action, hoặc deny/error/latency vượt threshold.
-- Rollback ưu tiên về last-known-good digest hoặc legacy enforcement; mọi rollback tạo audit event và incident review nếu production impact.
+## 8.4 Async/event authorization
 
-## 23. Testing strategy
+### 8.4.1 Phân loại message
 
-- **Policy unit tests:** allow/deny, boundary, missing attribute, wildcard, tenant isolation.
-- **Golden tests:** tái hiện quyết định legacy đã được xác nhận đúng.
-- **Property tests:** không actor nào vượt tenant; unknown action luôn deny; privilege monotonicity theo rule đã định.
-- **Contract tests:** PEP input/output, obligation compatibility, schema evolution.
-- **Integration tests:** gateway, token issuer/JWKS rotation, mesh identity, PDP, domain lookup.
-- **Replay tests:** traffic sample đã ẩn danh để impact analysis.
-- **Performance tests:** peak/2x peak, bundle lớn, cold start, cache miss.
-- **Chaos tests:** PDP crash, registry outage, stale/corrupt bundle, audit outage, AZ loss, clock skew.
-- **Security tests:** forged header, wrong audience, token replay, caller spoofing, confused deputy, cross-tenant IDOR, policy tampering.
-- **Migration tests:** shadow parity, cohort rollback và dual-version compatibility.
+| **Loại message** | **Ý nghĩa authorization** | **Consumer rule** |
+| --- | --- | --- |
+| Committed domain event | Sự kiện mô tả fact đã commit, không phải lệnh tái thực thi action gốc | Verify producer/provenance/schema/replay; authorize consumer workload và side effect mới; không “undo history” vì actor hiện đã mất quyền |
+| Deferred user command | Lệnh chưa thực thi business side effect | Re-authorize actor + caller tại consume time, trừ approved deferred grant còn hiệu lực |
+| System command/job | Lệnh của service/job principal | Check dedicated system action/resource scope và business invariant |
+| Notification/audit projection | Side effect dẫn xuất từ committed event | Consumer least privilege, tenant partitioning, idempotency và data-minimization |
 
-## 24. Governance và ownership
+### 8.4.2 Async sequence
 
-### 24.1 RACI tóm tắt
+```mermaid
+sequenceDiagram
+    autonumber
+    participant P as Producer Service
+    participant O as Transactional Outbox
+    participant B as Broker
+    participant C as Consumer + PEP
+    participant A as Authorization PDP
+    participant D as Consumer Domain DB
 
-| Năng lực | Accountable | Responsible | Consulted |
-|---|---|---|---|
-| IAM/token profile | Identity/Security | IAM team | Platform, domains |
+    P->>O: Commit business state + message envelope
+    O-->>B: Publish at-least-once
+    B-->>C: Deliver event/command
+    C->>C: Verify producer identity, schema, tenant, event_id and replay
+    alt Committed domain event
+        C->>A: Authorize consumer workload for derived side effect
+    else Deferred user command
+        C->>A: Re-authorize actor + caller or validate approved deferred grant
+    end
+    A-->>C: Decision + policy/floor digest
+    C->>D: Apply idempotent side effect + inbox/outbox
+    C-->>B: Acknowledge after durable commit
+```
+
+Message envelope tối thiểu có `message_schema_version`, `event_id/command_id`, producer workload, tenant, occurred/requested time, action/resource reference, `authorization_transaction_id`, actor/delegation snapshot tối thiểu hoặc deferred-grant reference, classification và integrity/provenance. Không nhúng bearer token, raw PII hoặc decision `ALLOW` vô thời hạn vào event.
+
+# 9. Security & Compliance Architecture
+
+## 9.1 Identity & Authentication
+
+### Human và machine client
+
+- Edge chỉ chấp nhận access token từ issuer/token class được allowlist; validate chữ ký, algorithm, issuer, audience/resource, `exp`, `nbf`, key state và clock skew.
+- ID token không được dùng thay access token cho API. Token không đúng audience không được “chấp nhận tạm” chỉ vì signature hợp lệ.
+- Entitlement biến động nhanh không nhồi toàn bộ vào token nếu lifetime vượt revoke objective; dùng entitlement version/fresh lookup/invalidation phù hợp risk.
+- External identity headers như `x-user-id`, `x-roles`, `x-tenant-id`, `x-actor-*`, `x-forwarded-client-cert` và delegation header phải bị xóa/ghi đè tại boundary được chỉ định.
+- Browser session/BFF có thể tồn tại cho presentation/session security, nhưng không là authority của business policy.
+
+### Workload identity
+
+- Mỗi workload/environment có service account và identity riêng; không dùng namespace default account hoặc shared API key làm định danh chính.
+- Certificate ngắn hạn, tự rotation; trust bundle, trust domain và federation có owner/runbook.
+- mTLS chứng minh workload peer, không chứng minh actor. Application chỉ nhận caller identity qua API/metadata do trusted mesh boundary cung cấp.
+- Workload ngoài mesh phải có inventory, exception TTL và control tương đương trước khi gọi service trong scope.
+
+## 9.2 Authorization & Access Control
+
+- Mesh namespace/workload sau migration dùng mTLS `STRICT` và default-deny authorization baseline; allow theo source principal, destination, port và path class tối thiểu.
+- Edge route registry và service handler registry phải đối soát tự động. Route public cũng cần explicit registry entry, data class và rate limit.
+- Fine-grained authorization đặt tại domain service/PEP sau khi resolve resource; Istio path policy không thay thế IDOR/ownership/state check.
+- PEP input được build từ verified claims và server-side facts; request body/query/header chỉ là hint cho field đã được schema cho phép.
+- Privileged/admin action yêu cầu assurance phù hợp, fresh authorization context và decision/enforcement audit.
+- Break-glass không sửa policy thường trực: grant riêng, MFA, ticket, scope hẹp, TTL, alert và retrospective.
+
+## 9.3 Secrets, Keys & Credential Management
+
+| **Tài sản** | **Vị trí/authority** | **Yêu cầu** |
+| --- | --- | --- |
+| IAM signing key/JWKS | IAM/HSM | Rotation overlap, compromise revoke, issuer pinning và unknown-key deny |
+| Bundle/floor signing key | KMS/HSM của Security Platform | Tách key/environment/purpose; signer identity; key ID trong manifest; recovery drill |
+| Mesh CA/workload key | Mesh CA/SDS | Key ngắn hạn, không export vào application, trust-domain policy |
+| STS client credential | Workload identity/secret manager | Per workload/audience, rotation/revoke, không hard-code |
+| Audit encryption/integrity key | Audit platform KMS | Access riêng, rotation không làm mất khả năng đọc theo retention |
+
+Compromised signing key là security incident: dừng promotion, revoke key, nâng trusted-key generation, phân phối security floor mới, xác minh fleet convergence và rebuild artifact bằng trusted provenance.
+
+## 9.4 Decision Audit, Privacy & Compliance
+
+### 9.4.1 Correlation model
+
+```mermaid
+flowchart LR
+    T[authorization_transaction_id<br/>một business request/command] --> E1[Edge decision_id]
+    T --> E2[Mesh authorization outcome]
+    T --> E3[Domain decision_id]
+    T --> E4[Business invariant outcome]
+    T --> E5[Obligations applied]
+    T --> E6[Final enforcement outcome]
+    T -.-> TR[trace_id / request_id<br/>observability only]
+```
+
+`authorization_transaction_id` nối chuỗi authorization; `decision_id` định danh từng evaluation; `trace_id` có thể được sampling và không là security evidence duy nhất. Final service ghi outcome `EXECUTED`, `NOT_EXECUTED`, `COMMITTED`, `RESPONSE_FILTERED` hoặc status chuẩn tương đương.
+
+### 9.4.2 Audit schema tối thiểu
+
+- event time, observed time, `authorization_transaction_id`, `decision_id`, trace/request ID;
+- actor pseudonymous ID/type/tenant, issuer/assurance/entitlement version;
+- caller workload identity và delegation mode/chain/token digest;
+- action, resource type, tenant và tokenized resource ID khi cần;
+- decision/error/enforcement outcome, stable reason, obligations returned/applied;
+- base bundle digest, security-floor generation, PEP/PDP identity/version;
+- context/fact freshness, cache state, latency, environment/region;
+- shadow/enforce mode, break-glass/exception/grant ID và data classification.
+
+Không log raw token, raw delegation artifact, request/response body hoặc PII ngoài field allowlist. Audit access dùng RBAC riêng và chính truy cập audit cũng phải được audit.
+
+### 9.4.3 Retention và integrity
+
+- Append-oriented storage, encryption in transit/at rest, integrity/tamper-evidence và time synchronization monitoring.
+- Retention/delete/anonymize/legal hold theo domain, region và pháp lý; restore không được làm dữ liệu hết hạn tái xuất hiện ngoài policy.
+- Decision explain dành cho support phải redact secret/PII và không tiết lộ rule internals cho caller không được ủy quyền.
+- Audit completeness được reconcile giữa request/enforcement counter, local spool sequence và collector acknowledgement.
+
+## 9.5 Mô hình mối đe dọa
+
+| **ID** | **Mối đe dọa** | **Kiểm soát chính** | **Bằng chứng bắt buộc** |
+| --- | --- | --- | --- |
+| TH-01 | Forged identity/delegation header | Edge/mesh sanitization, signed artifact, caller binding | Negative E2E từ Internet và workload không tin cậy |
+| TH-02 | Bearer replay/confused deputy | Exact audience, TTL ngắn, sender constraint, actor+caller policy | Token replay và wrong-caller tests |
+| TH-03 | PDP/handler bypass | Network default deny + mandatory middleware/registry | Full route/consumer conformance inventory |
+| TH-04 | Cross-tenant IDOR | Active tenant, resource tenant, explicit grant, property tests | Cross-tenant negative matrix |
+| TH-05 | Stale/revoked permission | Security floor, invalidation, freshness, positive-cache bypass | End-to-end revoke drill |
+| TH-06 | Policy tampering/supply-chain compromise | Protected Git, review, reproducible build, signer/KMS, verify digest | Signed provenance + corrupt bundle test |
+| TH-07 | Cache poisoning/key collision | Canonical typed key, source version, tenant/digest/floor | Property/fuzz tests |
+| TH-08 | Policy-engine DoS | Input/rule/bundle limits, deadline, concurrency/bulkhead | Load/fuzz/large-input test |
+| TH-09 | Audit leakage/tampering/loss | Minimize, encrypt, integrity, access, spool/reconcile | Privacy review + outage/full-spool test |
+| TH-10 | Break-glass abuse | MFA, four-eyes, TTL, scope, instant alert, retrospective | Quarterly exercise/report |
+| TH-11 | Stale mesh trust or rogue workload | Short cert, trust-domain policy, SA least privilege, default deny | Cert rotation/revoke and caller-spoof tests |
+| TH-12 | Obligation omitted | Typed capability, deny unknown, applied-outcome audit | Field/row leak E2E tests |
+
+# 10. Deployment & Infrastructure Topology
+
+## 10.1 Environments
+
+| **Môi trường** | **Mục đích** | **Isolation/yêu cầu** |
+| --- | --- | --- |
+| DEV | Authoring và component test | Non-prod issuer/key/trust domain; synthetic data |
+| STAGING | Contract, integration, migration rehearsal | Production-like topology/versions; no production credential |
+| PRE-PROD/OAT | Load, security, DR và operational acceptance | Capacity/resilience config dự kiến production |
+| PROD | Enforcement | Prod-only trust domain, key, registry, audit residency và four-eyes promotion |
+
+Policy artifact được promote theo immutable digest; không rebuild giữa STAGING/OAT/PROD. Environment-specific data/config nằm trong signed manifest hoặc approved configuration layer, không patch trực tiếp artifact production.
+
+## 10.2 Production runtime topology
+
+```mermaid
+flowchart TB
+    classDef az fill:#E8F0FE,stroke:#1A73E8,color:#102A43
+    classDef runtime fill:#E6F4EA,stroke:#137333,color:#0D3B1E
+    classDef control fill:#FFF4E5,stroke:#B26A00,color:#3D2600
+    classDef store fill:#F3F4F6,stroke:#6B7280,color:#1F2937
+
+    DNS[Global DNS / Traffic Manager] --> E1
+    DNS --> E2
+
+    subgraph R1[Production Region]
+      direction TB
+      subgraph AZ1[AZ-A]
+        E1[Edge replicas]:::runtime
+        W1[Domain pods<br/>PEP + local PDP]:::runtime
+        C1[Audit collector + spool]:::runtime
+        E1 --> W1 --> C1
+      end
+      subgraph AZ2[AZ-B]
+        E2[Edge replicas]:::runtime
+        W2[Domain pods<br/>PEP + local PDP]:::runtime
+        C2[Audit collector + spool]:::runtime
+        E2 --> W2 --> C2
+      end
+      REG[(Regional bundle cache)]:::store
+      SIEM[(Regional audit sink)]:::store
+      REG -.-> W1
+      REG -.-> W2
+      C1 -.-> SIEM
+      C2 -.-> SIEM
+    end
+
+    CP[Authorization Control Plane<br/>multi-AZ]:::control --> REG
+    KMS[KMS/HSM]:::control --> CP
+    IAM[IAM / STS / JWKS]:::control --> E1
+    IAM --> E2
+```
+
+Sơ đồ là logical topology. Số replica, region, autoscaling threshold, pod resources, audit disk quota và database/registry SLA phải được chốt trong L3 Capacity & Resilience Matrix.
+
+## 10.3 Deployment Strategy
+
+- Edge/PDP/PEP/collector dùng rolling hoặc canary deployment với N/N-1 compatibility và PodDisruptionBudget/anti-affinity.
+- Bundle rollout độc lập application rollout nhưng bị chặn bởi manifest compatibility và security floor.
+- Readiness tách process, dependency, contract compatibility, base-bundle age và floor age. Liveness không được restart loop chỉ vì control plane tạm unavailable.
+- Node-local PDP cần blast-radius/node drain plan; sidecar cần resource budget và startup ordering; embedded PDP cần coordinated SDK/application rollout.
+- Configuration production là versioned, reviewed, secret reference không inline và có drift detection.
+
+## 10.4 Infrastructure & Network Security
+
+### 10.4.1 Ma trận luồng mạng
+
+| **Nguồn** | **Đích** | **Port/protocol logic** | **Policy** |
+| --- | --- | --- | --- |
+| Internet/CDN/WAF | Edge | HTTPS | Chỉ public ingress; DDoS/WAF/rate limit |
+| Edge workload | Domain ingress/service | Istio mTLS | Gateway principal + route class allowlist |
+| Service A | Service B | Istio mTLS | Source principal/destination/action-class allowlist |
+| PEP | Local PDP | UDS/loopback authenticated | Pod/node scope; không expose cluster-wide mặc định |
+| PDP/runtime | Bundle registry/cache | HTTPS egress | Read-only, pinned trust, digest verify |
+| Runtime | Audit collector | Local/mTLS | Write-only identity, bounded flow |
+| Control plane | KMS/HSM/registry | Approved private endpoint | Least privilege, admin audit |
+| Operator | Admin plane | HTTPS via privileged access | SSO/MFA/four-eyes |
+
+### 10.4.2 Istio rollout
+
+1. Inventory mọi inbound/outbound, service account, port, protocol, health path và workload ngoài mesh.
+2. Bật telemetry; chạy `PERMISSIVE` có deadline migration, không coi là target state.
+3. Sửa plaintext, direct ingress và unknown caller; tạo negative tests.
+4. Chuyển workload/namespace sang `STRICT` và default-deny authorization baseline.
+5. Canary caller allowlist; theo dõi deny/error/business KPI trước promotion.
+6. Egress qua controlled policy/gateway cho external dependency cần thiết.
+7. Thu hồi exception/service account/credential cũ sau zero-traffic evidence.
+
+## 10.5 Migration Strategy
+
+### 10.5.1 Trạng thái route/action
+
+```mermaid
+stateDiagram-v2
+    [*] --> OFF
+    OFF --> OBSERVE: inventory + telemetry
+    OBSERVE --> SHADOW: contract + new PDP evaluate
+    SHADOW --> ENFORCE_CANARY: parity/risk gates pass
+    ENFORCE_CANARY --> SHADOW: rollback cohort
+    ENFORCE_CANARY --> ENFORCE: progressive cohorts pass
+    ENFORCE --> ENFORCE_CANARY: operational rollback
+    ENFORCE --> LEGACY_REMOVED: zero traffic + owner sign-off
+    LEGACY_REMOVED --> [*]
+```
+
+### 10.5.2 Pha và exit criteria
+
+| **Pha** | **Hoạt động** | **Exit criteria** |
+| --- | --- | --- |
+| 0 — Discovery | Inventory endpoint/client/issuer/audience/role/downstream/data/SLO; classify pure proxy/composition/business logic | 100% route in scope có owner, action/resource, risk, current decision source |
+| 1 — Foundation | Edge hygiene, mesh observe/permissive, contract, policy repo/signing, PDP/PEP, audit/correlation | E2E non-prod, signed bundle/floor, negative and chaos smoke pass |
+| 2 — Shadow | Legacy enforce; new policy evaluate cùng canonical facts, no response effect | Đủ business cycle; 0 unexplained high-risk mismatch; standard threshold + sample size được duyệt |
+| 3 — Cohort enforce | Internal → low-risk read → write 1/5/25/50/100% → privileged | Automated health, deny delta, privilege-expansion and KPI gates pass |
+| 4 — BFF decompose | Shared security → platform; invariant → domain; giữ Experience API có composition value | Mỗi route có rollback, owner và no-bypass evidence |
+| 5 — Decommission | Zero traffic window, revoke credential/SA/network/secret, archive mapping/runbook | Dependency map sạch và Security/SRE/domain sign-off |
+
+### 10.5.3 Domain order
+
+- `agent-api`: chuyển token/coarse scope lên Edge; ownership/hierarchy về Agent domain; giữ composition endpoint nếu có UX value.
+- `market-api`: pilot public/authenticated read không composition; licensing/entitlement là domain fact; tách public data khỏi licensed/private data.
+- `core-broker-api`: sau cùng; money movement, customer/portfolio, approval/admin luôn fail-close, fresh context và transactional invariant.
+
+### 10.5.4 Rollback guard
+
+- Rollback route, application và policy là ba cơ chế độc lập nhưng đều tạo audit/change event.
+- Không rollback về legacy/digest đã biết có privilege vulnerability hoặc thấp hơn security floor.
+- Security incident ưu tiên deny overlay/kill switch; availability incident có thể về LKG an toàn trong freshness window.
+- Legacy fallback có expiry/owner; không được trở thành trạng thái kéo dài không theo dõi.
+
+# 11. Cost & Capacity/Performance
+
+## 11.1 Workload model bắt buộc
+
+| **Input** | **Phân rã tối thiểu** |
+| --- | --- |
+| Request volume | Average/peak/2x peak RPS theo Edge, action class, tenant và region |
+| Concurrency | HTTP/gRPC, long request, async consumer và burst profile |
+| Policy | Rule count, evaluation branch, bundle size, number of domain bundles |
+| Input/facts | P50/P95 size, attribute count, cache hit/miss, provider latency |
+| Audit | Evaluation per request, event size, EPS, retention, replay/backlog |
+| Fleet | Pod/node/AZ count, sidecar/node-local density, rollout surge |
+| Failure | One-AZ loss, registry/IAM/audit outage, cold start and floor convergence |
+
+Không dùng một RPS tổng duy nhất. Critical mutation, standard read, public route và shadow dual-evaluation có cost/latency khác nhau.
+
+## 11.2 Capacity & Performance Rules
+
+- Edge và PDP scale ngang theo concurrency/RPS/CPU/evaluation latency; không dùng per-request global coordination.
+- Mỗi topology benchmark cold/warm cache, bundle activation, max input và worst approved policy; average-only test không đủ.
+- Capacity target `2x approved peak` và N-1 AZ phải được chứng minh bằng load/soak, không chỉ tính toán.
+- Context provider có bulkhead/quota riêng; cache miss storm không được làm cạn connection/thread pool domain.
+- Audit spool có disk/memory budget, high-water mark, admission/degradation behavior và drain-rate test.
+- Shadow traffic được tính vào compute, fact lookup và audit capacity; sampling chỉ khi Security/domain chấp thuận và không áp dụng cho high-risk case cần parity đầy đủ.
+
+## 11.3 Cost
+
+Cost model trước implementation baseline phải tách:
+
+- Edge request/WAF/rate-limit/license cost;
+- sidecar/node-local PDP CPU/memory và rollout surge;
+- control-plane CI/registry/KMS signing/egress;
+- audit ingestion, hot search, archive, retention và tokenization;
+- fact provider/cache/relationship graph nếu có;
+- multi-region HA/DR và engineering/on-call cost.
+
+FinOps/SRE so sánh sidecar, node-local, embedded và remote topology bằng cost trên một triệu evaluation và cost ở peak/N-1, không chỉ resource idle.
+
+# 12. Scalability & Reliability
+
+## 12.1 Scaling Strategy
+
+- Edge stateless trừ session capability được phê duyệt; session không là authorization authority.
+- Local PDP giữ immutable bundle trong memory; bundle distribution dùng jitter/backoff để tránh thundering herd.
+- Registry/cache phân vùng theo region; audit ingestion partition theo time/domain/tenant hash nhưng không đưa raw tenant/actor vào metric label.
+- Autoscaling dùng leading indicator như concurrency/queue/evaluation P95 bên cạnh CPU; scale-down bảo vệ in-flight request và audit spool.
+
+## 12.2 High Availability & Disaster Recovery
+
+- Edge/control plane/remote PDP/collector critical chạy đa AZ, anti-affinity và disruption budget; không có leader trên request path.
+- Control plane unavailable không làm dừng data plane nếu base bundle/floor còn hợp lệ.
+- Policy Git/registry/status metadata có backup/replication; signing key có recovery/revoke runbook không export private key tùy ý.
+- Diễn tập mất AZ/region, expired JWKS, corrupt bundle, stale floor, compromised signer và audit backlog tối thiểu hai lần/năm.
+- Multi-region chỉ enable sau khi chốt trust federation, issuer/key distribution, security-floor convergence, audit residency và conflict-free promotion authority.
+
+## 12.3 Failure Semantics
+
+| **Sự cố** | **Hành vi request** | **Readiness/operation** |
+| --- | --- | --- |
+| Token invalid/unknown key | Reject; không bỏ qua signature | Alert theo spike/issuer; refresh đúng cache policy |
+| IAM unavailable, token/key còn hợp lệ | Tiếp tục đến credential/key safety window | Alert/degrade; không kéo dài token |
+| Control plane/registry unavailable | Dùng LKG base bundle + current floor còn hạn | Alert bundle age; stop promotion |
+| Bundle mới corrupt/incompatible | Không activate, giữ safe digest | Mark desired≠active, page rollout owner |
+| Security floor stale | Critical/high deny hoặc workload not-ready | Page convergence; không dùng positive cache |
+| Local PDP crash/timeout | Fail-close; `503` thường phù hợp hơn giả policy deny | Restart/fail readiness; no silent bypass |
+| Remote PDP/context unavailable | Cache còn hạn theo risk; hết hạn deny trừ explicit low-risk exception | Circuit open, bulkhead, provider alert |
+| Domain DB conflict/state change | Không mutation, return domain conflict/deny | Audit not-executed with version |
+| Audit backend unavailable | Enqueue durable local spool | Alert lag; apply full-spool policy below |
+| Signing key compromised | Freeze promotion, revoke trust/key generation, distribute emergency floor | Security incident/runbook |
+
+## 12.4 Audit spool và loss policy
+
+Remote audit backend không nằm synchronous trên request path, nhưng local durable enqueue có thể là production invariant theo risk:
+
+| **Risk class** | **Khi local durable enqueue thành công** | **Khi spool full/corrupt/không ghi được** |
+| --- | --- | --- |
+| Critical/privileged | Cho phép tiếp tục sau decision/invariant | Mặc định fail-close trước side effect; exception cần Security/Legal sign-off |
+| High mutation | Cho phép và theo dõi lag | Policy `TBD` phải chốt trước production; mặc định fail-close |
+| Standard read | Cho phép; drain bất đồng bộ | Có thể tiếp tục trong time-bound degraded mode, counter loss + page + incident |
+| Public/low-risk | Best effort theo registry | Continue + telemetry theo exception |
+
+Spool phải mã hóa, có sequence/checkpoint, bounded quota, backpressure, restart recovery và reconciliation. “Dropped event = 0” chỉ là mục tiêu nếu full-spool behavior và durability đã được thiết kế/test; không được đồng thời tuyên bố non-blocking và bỏ ngỏ khi buffer đầy.
+
+## 12.5 Fail-open exception
+
+Chỉ endpoint public hoặc read-only low-risk được đăng ký mới có thể fail-open. Exception bắt buộc có action/resource, owner, Security approval, data class, fallback response, TTL/expiry, metric/alert và quarterly review. Không fail-open cho cross-tenant, admin, secret/PII, money movement, write/delete hoặc stale security floor của action critical/high.
+
+# 13. Observability & Monitoring
+
+## 13.1 Yêu cầu nền tảng
+
+- Metric, log, trace và audit dùng cùng environment/service/action-class/policy-digest semantics nhưng không dùng raw actor/resource ID làm label.
+- Edge tạo/ghi đè `authorization_transaction_id` tại trusted boundary; service propagate nó cùng trace context nhưng không dùng ID đó làm bằng chứng identity.
+- Dashboard tách explicit deny, input error, dependency unavailable, stale floor, business conflict và obligation failure.
+- Telemetry pipeline có data classification, field allowlist, sampling rule, retention và access owner.
+
+## 13.2 Chỉ số bắt buộc
+
+| **Nhóm** | **Metric/chiều phân rã** |
+| --- | --- |
+| Edge/AuthN | Request/latency/error; expired/issuer/audience/signature/malformed; route registry miss |
+| Authorization | Allow/deny/indeterminate/unavailable; action class; reason; enforce/shadow; policy digest/floor generation |
+| PDP | Evaluation p50/p95/p99, timeout, concurrency, input/bundle size, cold start, active/desired digest |
+| Freshness/cache | Bundle/floor/attribute age, cache hit/miss/eviction, stale use, invalidation lag |
+| Migration | Legacy allow/new deny, legacy deny/new allow, unknown/error, cohort and sample size |
+| Mesh | mTLS coverage, plaintext attempt, denied caller, trust/cert expiry |
+| Audit | Spool depth/bytes/oldest age, enqueue failure, drop count, collector ack lag, reconciliation gap |
+| Obligation | Returned/applied/unsupported/conflict/failure theo type/version |
+| Business | Final executed/not-executed/committed/filtered outcome và action KPI |
+
+## 13.3 Cảnh báo
+
+| **Alert** | **Điều kiện định hướng** | **Owner** |
+| --- | --- | --- |
+| Security-floor convergence breach | Healthy PDP chưa đạt generation mới quá revoke SLA | Security Platform + SRE |
+| Privilege-expansion mismatch | Legacy `DENY` / new `ALLOW` > 0 ở critical hoặc vượt approved threshold | Domain + Security |
+| Cross-tenant anomaly | Cross-tenant deny spike hoặc allow không có registered grant | SecOps + Domain |
+| PDP SLO burn | Error/timeout/latency burn-rate nhanh/chậm | Authorization on-call |
+| Route/handler coverage drift | Route/handler không có action hoặc inventory mismatch | Gateway/Domain owner |
+| Bundle/fleet drift | Desired≠active, signature/schema failure hoặc stale age | Security Platform |
+| Audit durability risk | Enqueue error, spool high-water/full, ack/reconcile lag | SecOps/SRE |
+| Break-glass/wildcard | Bất kỳ activation hoặc usage | SecOps + approver |
+| Mesh trust failure | Plaintext, unknown principal, cert/trust bundle expiry | Mesh/SRE |
+
+Threshold số, burn-rate window và escalation path nằm trong Dashboard & Alert L3; alert critical phải có synthetic test và runbook link trước production.
+
+## 13.4 SLI/SLO
+
+- SLI availability theo action đo từ trusted Edge đến final enforcement outcome; explicit policy deny không tính là platform error.
+- `INDETERMINATE`, PDP/context unavailable, stale security floor và obligation failure tính là failed authorization service cho SLO dù action đã fail-close an toàn.
+- Latency action bao gồm Edge, mesh, fact lookup, PDP, invariant và obligation; local evaluation latency là component SLI riêng.
+- Revocation SLI đo commit-at-authority → fleet enforce, không chỉ publish/download.
+- Audit SLI đo local durable enqueue và end-to-end collector delivery riêng.
+- Error budget Edge/PDP/action do SRE và owner quản lý; policy/application rollout tự pause khi burn, mismatch hoặc business KPI vượt gate.
+
+# 14. Operational Readiness
+
+## 14.1 RTO & RPO
+
+| **Năng lực** | **RPO target đề xuất** | **RTO target đề xuất** | **Ghi chú** |
+| --- | ---: | ---: | --- |
+| Runtime Edge/local PDP | Không có state request cần restore | Theo action SLO/auto failover | Bundle/floor phải có local safe state |
+| Policy Git/registry/control metadata | `<= 15 phút` | `<= 60 phút` | Không được làm mất approved digest/provenance |
+| Signing/revocation capability | Không mất key state/generation | `TBD` critical runbook | Compromise recovery khác outage recovery |
+| Decision audit | Theo compliance schedule | Theo SecOps incident need | Local spool/replication và reconciliation |
+
+Giá trị cuối cùng cần SRE/Security/Privacy phê duyệt và restore/failover drill. LKG không thay thế backup control-plane metadata hoặc signing-key recovery.
+
+## 14.2 Runbook bắt buộc
+
+- IAM/JWKS outage, unknown key và emergency user/client revoke;
+- bundle compile/sign/publish failure, corrupt bundle và fleet digest drift;
+- security-floor convergence breach và emergency deny/kill switch;
+- PDP crash/latency/CPU/memory/cold-start regression;
+- context provider outage/cache storm và remote-PDP circuit open;
+- audit backend outage, spool high-water/full/corrupt và reconciliation;
+- compromised bundle/STS/mesh signing key;
+- mTLS cert/trust-domain failure, plaintext/unknown caller;
+- policy rollback an toàn và legacy route rollback có security floor;
+- lost AZ/region, restore registry/metadata và validate post-restore;
+- break-glass activate/revoke/retrospective.
+
+## 14.3 Action-level production checklist
+
+Một action chỉ sẵn sàng production enforcement khi:
+
+- có owner, risk class, versioned action/resource schema và data classification;
+- issuer/audience/token class, workload identity và delegation mode được xác minh;
+- route, handler, async/job và response path có no-bypass coverage evidence;
+- resource/tenant/fact authority, provenance, freshness và TOCTOU rule được chốt;
+- policy có positive/negative/cross-tenant/stale/property tests và signed digest/floor;
+- PEP hiểu/applies mọi obligation; final enforcement outcome được audit;
+- shadow sample đủ business cycle; mọi privilege expansion đã đóng, không chỉ đạt tỷ lệ tổng;
+- load/soak/chaos/security test đạt action SLO và revoke objective;
+- fail mode, cache, LKG, floor, audit-full và rollback đã diễn tập;
+- dashboard, alert, on-call, runbook, RTO/RPO và capacity owner tồn tại;
+- Security, Domain Owner và SRE ký duyệt; Privacy ký nếu audit/resource data yêu cầu.
+
+## 14.4 RACI tóm tắt
+
+| **Năng lực** | **Accountable** | **Responsible** | **Consulted** |
+| --- | --- | --- | --- |
+| IAM/token/delegation profile | Identity/Security | IAM team | Platform, domains |
 | Edge Gateway | Application Platform | Gateway team/SRE | Security, domains |
-| Istio/workload identity | Platform/SRE | Service Mesh team | Security |
-| AuthZ control plane/PDP/SDK | Security Platform | Authorization team | SRE, domains |
-| Global guardrail/tenant isolation | CISO/Security Architecture | Security Platform | Domain owners |
-| Domain policy/vocabulary | Domain owner | Domain team | Security Platform |
-| Business invariant | Domain owner | Domain service team | Security |
-| Audit/SIEM | Security Operations | SecOps/Data Platform | Legal, Privacy, SRE |
+| Mesh/workload identity | Platform/SRE | Mesh team | Security |
+| Control plane/PDP/PEP SDK | Security Platform | Authorization team | SRE, domains |
+| Tenant/security guardrail | Security Architecture | Security Platform | Domain owners |
+| Domain vocabulary/policy/facts | Domain owner | Domain team | Security Platform |
+| Business invariant/response filter | Domain owner | Domain service team | Security |
+| Audit/SIEM/privacy | SecOps/Privacy | SecOps/Data Platform | Legal, SRE, domains |
 | SLO/on-call | Platform + owning domain | SRE/service team | Security |
 
-### 24.2 Policy ownership model
+## 14.5 Recommended first slice
 
-- Platform policy có `CODEOWNERS` của Security Platform.
-- Domain policy cần domain owner; high-risk rule cần Security đồng phê duyệt.
-- Vocabulary addition cần Architecture/API governance để tránh trùng nghĩa.
-- Quarterly access/policy review; exception và break-glass review thường xuyên hơn.
-- Deprecation có notice period, usage telemetry và migration guide.
+Chọn một endpoint **read-only, authenticated, single-active-tenant, traffic vừa, resource authority rõ và không có composition phức tạp** từ `agent-api` hoặc `market-api`. Pilot phải đi trọn Edge → mTLS → delegated context → domain PEP/PDP → obligation/enforcement outcome → durable audit, đồng thời chạy revoke drill và handler-coverage test. Không dùng `core-broker-api`, privileged action hoặc remote relationship graph làm first slice.
 
-### 24.3 Operating model
+# 15. Testing & Quality Strategy
 
-- Authorization Platform cung cấp paved road: SDK, templates, examples, test harness, dashboards và runbooks.
-- Domain team không tự fork SDK/policy engine; extension thông qua versioned interface.
-- Architecture Council giải quyết tranh chấp boundary: shared policy hay business invariant.
-- Security incident có kill switch theo action/resource/tenant và emergency bundle pipeline.
+## 15.1 Phạm vi kiểm thử bắt buộc
 
-## 25. Risks và mitigations
+| **Nhóm** | **Phạm vi** | **Cổng** |
+| --- | --- | --- |
+| Policy unit/negative | Allow/deny, missing field, wildcard, tenant, stale, exception expiry | Mọi PR |
+| Property/fuzz | Unknown action deny, cross-tenant invariant, monotonic floor, canonical cache key, input limits | Build bundle |
+| Contract | Request/decision/obligation/error, schema evolution, N/N-1 capability | Integration/OAT |
+| Route/PEP conformance | Edge routes, HTTP/gRPC handlers, consumers, jobs, response filters | Build + production gate |
+| Identity/security | Issuer/audience/algorithm, forged header, replay, caller spoof, confused deputy, IDOR | OAT/security sign-off |
+| Integration | JWKS/key rotation, STS, mesh, PDP, facts, KMS, registry, audit | OAT |
+| Migration | Golden confirmed behavior, shadow comparison, cohort, rollback and floor | Mỗi route cutover |
+| Performance/soak | Peak/2x, N-1 AZ, bundle/input worst case, cold start, cache miss, shadow load | OAT |
+| Chaos/DR | PDP/control/registry/IAM/audit/fact outage, stale/corrupt bundle/floor, AZ/region loss | OAT/DR |
+| Privacy/audit | Field allowlist, tokenization, access, retention/delete/restore, completeness reconcile | Privacy/OAT |
 
-| Risk | Impact | Mitigation |
-|---|---|---|
-| Gateway trở thành monolith | Coupling, blast radius | Thin gateway rule, architecture fitness tests, cấm domain DB access |
-| PDP/control plane thành SPOF | Outage diện rộng | Distributed PDP, LKG bundle, multi-AZ/region, no control-plane dependency on hot path |
-| Policy drift/stale bundle | Quyền sai | Digest telemetry, freshness classes, revoke channel, rollout health gate |
-| Sai mapping legacy | Deny hợp lệ hoặc privilege expansion | Inventory, golden tests, shadow mode, cohort rollout |
-| Context provider tăng latency | SLO miss | Domain prefetch, bounded attributes, cache, local invariant check |
-| Confused deputy | Service vượt quyền user | Actor + caller check, audience-bound delegation, mTLS identity |
-| Cross-tenant IDOR | Data breach | Mandatory tenant guardrail, negative/property tests, fail-close |
-| Audit chứa PII | Compliance exposure | Data minimization, tokenization, access control, retention |
-| Policy language khó dùng | Adoption thấp, lỗi policy | SDK/templates, lint/explain, training, review, limited constructs |
-| Mesh complexity | Operational incidents | Phased permissive->strict, inventory, SRE ownership, runbooks |
-| Chi phí sidecar cao | Resource overhead | Benchmark sidecar vs node-local, right-sizing, shared bundle |
-| Dual enforcement kéo dài | Complexity | Deadline/exit criteria per route, migration scorecard |
+## 15.2 Cổng chất lượng
 
-## 26. Alternatives considered
+- CI: schema/lint/static analysis, unit/negative/property test, dependency/SBOM/provenance và signature verification.
+- STAGING: contract, integration, route coverage, shadow replay và backward compatibility.
+- OAT: threat-model tests, load/soak, chaos, revoke objective, full-spool behavior, restore/rollback.
+- Production canary: policy digest/floor/PEP version pin, cohort KPI, deny delta, SLO burn và auto-pause.
+- Evidence lưu theo release/action: report, sample size, migration mapping, signed digest, dashboard/alert test, runbook drill và risk acceptance còn hạn.
 
-### A. Tiếp tục một BFF cho mỗi domain/channel
+## 15.3 Kịch bản kiểm thử trọng yếu
 
-- **Ưu:** thay đổi nhỏ, team autonomy ngắn hạn.
-- **Nhược:** tiếp tục copy policy, drift, khó audit và tăng hop.
-- **Kết luận:** không chọn làm target; chỉ giữ BFF có composition/experience value thật.
+- Client tự gửi mọi identity/delegation/XFCC header phải bị strip; downstream chỉ thấy context do trusted boundary tạo.
+- Token đúng signature nhưng sai issuer/audience/token class/algorithm hoặc key chưa biết đều bị từ chối.
+- External bearer token forward sang sai service audience bị từ chối; exchanged token dùng bởi workload khác thất bại sender binding.
+- Service A hợp lệ nhưng actor không có quyền, hoặc actor hợp lệ nhưng caller A không được phép, đều deny.
+- `system` job không thể đổi mode thành `on_behalf_of` hoặc gắn actor giả.
+- Unknown route, handler thiếu action annotation, gRPC method mới, consumer/job chưa đăng ký và response obligation hook thiếu đều không bypass.
+- Cross-tenant request không grant, grant sai action/resource/caller, expired/revoked grant đều deny.
+- Decision-cache collision/fingerprint thiếu fact/version/digest/floor phải được property test phát hiện; security-floor revoke bypass mọi positive cache.
+- Revoke user/grant/policy/key đo từ authority commit tới toàn fleet; PDP stale quá budget deny/not-ready.
+- Bundle corrupt/sai signature/incompatible schema/floor thấp hơn không activate; atomic swap không có partial state.
+- High-risk mutation state đổi giữa lookup và commit không thực thi; audit nối decision tới `NOT_EXECUTED`/conflict.
+- Unknown/conflicting/misapplied obligation không trả dữ liệu; field/row leak test chạy E2E.
+- Legacy `DENY`/new `ALLOW` chặn canary; tỷ lệ parity phải kèm absolute count và risk-weighted sample.
+- Audit sink outage không chặn khi spool healthy; spool full/corrupt áp dụng đúng risk policy và không silent drop.
+- Async committed event không bị xử lý như reusable user `ALLOW`; deferred command hết quyền/expired grant không tạo side effect.
+- Mất control plane/registry vẫn dùng safe LKG/floor; compromised signer không cho rollback về compromised digest.
+- Load 2x peak, one-AZ loss, cold start và shadow dual-evaluation không vượt action SLO/capacity gate.
 
-### B. Một API Gateway làm toàn bộ AuthZ và business logic
+## 15.4 Dữ liệu kiểm thử và bằng chứng
 
-- **Ưu:** điểm enforce rõ, client đơn giản.
-- **Nhược:** gateway thành monolith, cần domain data, latency/blast radius lớn.
-- **Kết luận:** loại bỏ.
+Replay/impact test chỉ dùng dữ liệu tổng hợp hoặc đã ẩn danh/tokenize theo phê duyệt. Fixture identity/resource/fact có schema/version, không chứa production credential/PII và bao phủ success, deny, stale, malformed, timeout, duplicate, cross-tenant và revoke. Bằng chứng phải truy ngược được từ action/release tới policy digest, floor generation, PEP/PDP version và test report.
 
-### C. Central remote PDP cho mọi request
+# 16. Risks & Open Issues
 
-- **Ưu:** policy/facts tức thời, vận hành tập trung.
-- **Nhược:** network hop, bottleneck, dependency và failure amplification.
-- **Kết luận:** chỉ dùng có chọn lọc; hot path ưu tiên distributed evaluation.
+## 16.1 Architecture Risks
 
-### D. Chỉ dùng Istio AuthorizationPolicy
+| **Mã** | **Nhóm** | **Mô tả/ảnh hưởng** | **Mức độ** | **Giảm thiểu/điều kiện đóng** |
+| --- | --- | --- | --- | --- |
+| AR-001 | Delegation | IAM/token exchange/sender binding chưa chốt; raw context có thể bị giả mạo/confused deputy | Nghiêm trọng | IAM & Delegation Profile v1 + replay/wrong-caller E2E được ký duyệt |
+| AR-002 | PEP bypass | SDK gọi thủ công hoặc route/consumer mới thiếu PEP có thể bỏ qua authorization | Nghiêm trọng | Default-deny route/handler/consumer registry và full coverage evidence |
+| AR-003 | Revocation | Token, attribute, decision cache, base bundle và LKG có thể tạo cửa sổ revoke không kiểm soát | Nghiêm trọng | Security floor + measured end-to-end revoke drill đạt SLA |
+| AR-004 | Supply chain | Compromised policy/signing key gây blast radius đa domain | Nghiêm trọng | KMS/HSM, SoD, provenance, key-revoke/floor recovery exercise |
+| AR-005 | Tenant | Exact tenant equality không đủ cho legitimate cross-tenant; role bypass có thể gây data breach | Cao | Explicit grant contract/authority/expiry + property/negative tests |
+| AR-006 | Obligation | Edge/domain không thống nhất capability/merge có thể trả dữ liệu chưa mask | Cao | Typed registry, capability negotiation, applied-outcome and leak tests |
+| AR-007 | Async | Không phân biệt event/command có thể tái dùng ALLOW cũ hoặc chặn workflow hợp lệ | Cao | Async semantics/envelope/inbox-outbox contract + E2E |
+| AR-008 | Audit | Non-blocking audit nhưng chưa chốt spool-full behavior có thể mất bằng chứng critical | Cao | Risk-specific policy, durable spool, reconciliation/full test, Legal sign-off |
+| AR-009 | Engine/topology | Engine/PDP placement chưa benchmark có thể không đạt latency/cost/operability | Cao | PoC report theo mục 5.1, Architecture Council decision |
+| AR-010 | Mesh coverage | Workload/plaintext/direct ingress ngoài mesh tạo bypass | Cao | Traffic inventory, `STRICT`, default deny, exception expiry and tests |
+| AR-011 | Multi-region | Trust/floor/audit residency chưa chốt có thể drift hoặc vi phạm data boundary | Cao | Multi-region SAD, federation/convergence/DR approval |
+| AR-012 | Legacy mapping | Golden test có thể đóng băng lỗ hổng legacy hoặc shadow bỏ sót rare path | Cao | Confirmed cases, risk-weighted coverage, full-cycle/sample evidence |
+| AR-013 | Capacity | Chưa có workload/size/audit EPS nên SLO và roadmap có thể không khả thi | Cao | Approved workload model + 2x/N-1 load/soak |
+| AR-014 | Platform adoption | Policy language/SDK/governance phức tạp làm team fork/bypass paved road | Trung bình | Templates, lint/explain, training, conformance and deprecation support |
+| AR-015 | Cost | Sidecar/audit/multi-region cost chưa định lượng | Trung bình | FinOps comparison per million evaluation và peak/N-1 |
 
-- **Ưu:** gần traffic, tốt cho workload/network policy.
-- **Nhược:** không đủ cho resource-level business authorization và domain facts phức tạp.
-- **Kết luận:** dùng như một lớp, không phải giải pháp toàn bộ.
+## 16.2 Vấn đề thiết kế cần quyết định
 
-### E. Chỉ dùng authorization library trong từng service
+| **ID** | **Vấn đề cần quyết định** | **Owner đề xuất** | **Điều kiện đóng/cổng** |
+| --- | --- | --- | --- |
+| OI-01 | IAM issuer/token profile và RFC 8693/workload federation support | IAM + Security | Delegation Profile v1 trước PoC S2S |
+| OI-02 | Gateway product/integration external auth | Application Platform | Platform ADR + HA/feature evidence trước implementation baseline |
+| OI-03 | Policy engine và sidecar/node-local/embedded topology | Authorization + SRE | Benchmark report/ADR trước PoC baseline |
+| OI-04 | Cross-tenant grant authority/data model | Security Architecture + Domains | Contract + negative/property tests trước relevant action |
+| OI-05 | Relationship data ở graph hay domain | Domain + Architecture | Ownership/consistency/latency/residency decision |
+| OI-06 | Numeric TTL/revoke/security-floor convergence theo risk | IAM + Security + SRE | End-to-end drill trước high-risk pilot |
+| OI-07 | Audit field/retention/residency/legal hold và spool-full policy | SecOps + Privacy/Legal | Decision Audit Contract trước OAT/data thật |
+| OI-08 | Workload/peak/SLO/RTO/RPO/capacity/cost | Product + SRE + FinOps | Approved baseline + load/DR evidence |
+| OI-09 | Multi-region trust and promotion authority | Platform/Security | Deployment SAD trước multi-region enable |
+| OI-10 | BFF endpoint classification/composition value | Domain + Application Platform | Migration Matrix trước route cutover |
+| OI-11 | On-call 24x7 và incident authority cho Edge/PDP/signer | System owners | Named roster/runbook before production |
 
-- **Ưu:** latency thấp, gần business logic.
-- **Nhược:** dễ version drift, thiếu central governance và cross-language consistency.
-- **Kết luận:** SDK/embedded có thể là PEP/PDP runtime, nhưng policy lifecycle vẫn phải tập trung.
+Vấn đề mở không mặc nhiên được chấp nhận. Risk acceptance cần owner, scope/action, control bù trừ, approver, evidence và expiry; item nghiêm trọng chưa đóng chặn `UNDER REVIEW → APPROVED` trừ khi Architecture Council ghi rõ điều kiện phê duyệt.
 
-### F. SaaS/managed authorization service
+# Appendix
 
-- **Ưu:** time-to-market nhanh, UI/relationship model sẵn.
-- **Nhược:** data residency, latency, cost, lock-in và availability dependency.
-- **Kết luận:** đánh giá bằng PoC nếu relationship-based authorization là nhu cầu chính; vẫn phải giữ abstraction PEP contract.
+## A. Glossary
 
-## 27. Open questions và decision gates
+| **Thuật ngữ** | **Định nghĩa** |
+| --- | --- |
+| Actor | Principal gốc chịu ngữ nghĩa của action: user, service hoặc job. |
+| Caller | Workload trực tiếp thực hiện hop hiện tại; không đồng nhất với actor. |
+| PEP | Policy Enforcement Point: tạo/validate input, lấy facts, gọi PDP và enforce decision/obligation. |
+| PDP | Policy Decision Point: evaluate policy trên canonical input. |
+| Control plane | Author/test/build/sign/distribute/inventory policy; không bắt buộc synchronous mỗi request. |
+| Data plane | Edge/mesh/service PEP/PDP thực thi request runtime. |
+| Delegation | Quyền một caller hành động thay mặt actor, có audience/scope/TTL/provenance. |
+| Security floor | Signed monotonic deny/revocation generation mà bundle/cache/LKG không được hạ thấp. |
+| LKG | Last-known-good bundle đã verify, còn freshness và đạt security floor. |
+| Obligation | Enforcement bắt buộc sau decision như step-up, mask field hoặc row limit. |
+| Authorization transaction | Một business request/command có thể gồm nhiều evaluation/decision ID. |
+| Explicit grant | Artefact cho phép cross-tenant/deferred action có authority, scope, version, expiry và revoke. |
 
-Các câu hỏi này không chặn phê duyệt kiến trúc tổng thể nhưng phải đóng trước production enforcement:
+## B. References
 
-1. IAM/IdP nào là nguồn chuẩn, có hỗ trợ token exchange và workload federation không?
-2. Policy engine nào đạt benchmark với policy Agent/Market/Broker thực tế?
-3. Relationship data nào cần centralized graph, data nào phải ở domain?
-4. Data classification và audit retention chính thức cho từng domain/region?
-5. Emergency revocation SLA thực tế của IAM, bundle distribution và context cache?
-6. Endpoint nào thực sự cần channel-specific BFF composition?
-7. Ownership/on-call 24x7 cho Edge, PDP và signing pipeline?
-8. Ngưỡng parity/rollout cuối cùng theo business criticality?
+| **Tài liệu/chuẩn** | **Tham chiếu** |
+| --- | --- |
+| OAuth 2.0 Token Exchange | [RFC 8693](https://www.rfc-editor.org/rfc/rfc8693.html) |
+| OAuth 2.0 mTLS and Certificate-Bound Tokens | [RFC 8705](https://www.rfc-editor.org/rfc/rfc8705.html) |
+| OAuth 2.0 Security Best Current Practice | [RFC 9700](https://www.rfc-editor.org/rfc/rfc9700.html) |
+| Zero Trust Architecture | [NIST SP 800-207](https://csrc.nist.gov/pubs/sp/800/207/final) |
+| Istio Authorization Policy | [Istio Security Reference](https://istio.io/latest/docs/reference/config/security/authorization-policy/) |
+| Istio External Authorization | [Istio External Authorization Task](https://istio.io/latest/docs/tasks/security/authorization/authz-custom/) |
+| Open Policy Agent | [OPA Documentation](https://www.openpolicyagent.org/docs/) |
+| SPIFFE | [SPIFFE Specifications](https://spiffe.io/docs/latest/spiffe-about/spiffe-concepts/) |
 
-## 28. Implementation roadmap đề xuất
+## C. Đầu vào bắt buộc trước production
 
-| Giai đoạn | Thời lượng tham khảo | Deliverable chính |
-|---|---:|---|
-| Discovery | 3–5 tuần | Inventory, action/resource vocabulary, baseline, risk classes |
-| Foundation | 6–10 tuần | Edge/mesh baseline, policy CI, signed bundles, PDP/SDK, audit |
-| Pilot | 4–6 tuần | Một read path của Agent hoặc Market ở shadow rồi enforce |
-| Domain rollout | 2–4 quý | Agent -> Market -> Broker theo risk và readiness |
-| Decommission/optimize | liên tục | Xóa pure auth proxy, right-size, tighten mTLS/policy |
+| **Đầu vào** | **Chủ sở hữu** | **Cổng** |
+| --- | --- | --- |
+| Named system owner/reviewer/on-call | Security/Application Platform/SRE | Approval |
+| IAM & Delegation Profile v1 | IAM/Security | S2S integration |
+| Authorization Contract + Obligation Registry v1 | Authorization/Domain | PEP/PDP integration |
+| Vocabulary + route/handler/consumer inventory | Domain/Gateway | Shadow/enforce |
+| Engine/topology benchmark và ADR | Authorization/SRE/Architecture | PoC baseline |
+| Security floor/revocation design + drill | IAM/Security/SRE | High-risk enable |
+| Mesh traffic inventory/default-deny baseline | Mesh/SRE | mTLS `STRICT` |
+| Decision audit/privacy/retention/full-spool policy | SecOps/Privacy/Legal | OAT/data thật |
+| Workload/SLO/capacity/cost baseline | Product/SRE/FinOps | Load/OAT |
+| RTO/RPO/backup/restore/multi-region SAD | Platform/SRE/Security | DR/OAT |
+| BFF Migration Matrix + rollback plan | Application Platform/Domains | Cutover |
+| Dashboard/alert/runbook/on-call evidence | Owning teams | Go-live |
 
-Thời lượng phụ thuộc maturity của IAM, Kubernetes/Istio, telemetry và mức business logic đang nằm trong các BFF.
+## D. Danh mục quyết định kiến trúc (ADR)
 
-## 29. Acceptance criteria
+| **ID** | **Quyết định** | **Cơ sở/hệ quả** | **Trạng thái** |
+| --- | --- | --- | --- |
+| ADR-001 | Edge mỏng, không chứa business invariant/domain DB lookup | Giảm coupling/blast radius; domain phải có mandatory PEP | `ĐỀ XUẤT` |
+| ADR-002 | Hybrid platform policy + domain authorization | Shared guardrail thống nhất, business truth ở domain | `ĐỀ XUẤT` |
+| ADR-003 | Distributed PDP cho synchronous hot path | Giảm hop/SPOF; cần fleet freshness/compatibility | `ĐỀ XUẤT` |
+| ADR-004 | Policy-as-code, signed immutable bundle | Traceability, provenance, rollback; cần emergency workflow | `ĐỀ XUẤT` |
+| ADR-005 | Istio mTLS/workload identity + default-deny caller policy | User AuthZ không thay service authentication | `ĐỀ XUẤT` |
+| ADR-006 | Versioned Actor/Caller/Action/Resource/Context contract | Transport-independent policy/audit; cần governance vocabulary | `ĐỀ XUẤT` |
+| ADR-007 | Audience-bound delegation; không forward bearer token tùy ý | Giảm replay/confused deputy; phụ thuộc IAM/STS profile | `ĐỀ XUẤT CÓ ĐIỀU KIỆN` |
+| ADR-008 | Async decision audit qua durable local spool | Remote sink không trên hot path; full-spool policy theo risk | `ĐỀ XUẤT CÓ ĐIỀU KIỆN` |
+| ADR-009 | Security floor tách base bundle/LKG | Emergency revoke không bị rollback/cache vô hiệu hóa | `ĐỀ XUẤT` |
+| ADR-010 | Explicit grant cho cross-tenant/deferred authority | Không dùng role override chung; tăng governance/data model | `ĐỀ XUẤT CÓ ĐIỀU KIỆN` |
 
-Giải pháp được coi là sẵn sàng production cho một action khi:
+## E. Alternatives Considered
 
-- action/resource có owner, schema và risk class;
-- AuthN issuer/audience và workload identity được xác minh;
-- policy có positive/negative/cross-tenant tests và signed digest;
-- PEP không bypass được qua route/network thông thường;
-- shadow parity đạt threshold và mọi privilege-expansion mismatch đã đóng;
-- latency/availability/load/chaos test đạt SLO;
-- audit event đầy đủ, không chứa token/PII ngoài allowlist;
-- fail mode, freshness, cache và rollback đã được test;
-- dashboard, alert, runbook và on-call owner tồn tại;
-- Security, domain owner và SRE ký duyệt cho high-risk action.
+| **Phương án** | **Ưu điểm** | **Lý do không chọn làm target** |
+| --- | --- | --- |
+| Một BFF cho mỗi domain/channel | Thay đổi nhỏ, autonomy ngắn hạn | Tiếp tục copy policy, drift, audit khó và thêm hop; chỉ giữ BFF có composition value |
+| Gateway làm toàn bộ AuthZ/business logic | Một điểm enforce rõ | Gateway thành monolith, cần domain data, latency/blast radius cao |
+| Central remote PDP cho mọi request | Quản lý runtime tập trung | Network dependency/bottleneck/failure amplification; chỉ dùng use case được duyệt |
+| Chỉ Istio AuthorizationPolicy | Gần traffic, tốt cho workload policy | Không đủ resource-level/business invariant/response authorization |
+| Chỉ library trong từng service | Latency thấp, gần code | Version/policy drift và cross-language governance; embedded chỉ là một topology có control plane chung |
+| Managed authorization SaaS | Time-to-market và relationship feature | Residency, latency, cost, lock-in/availability; chỉ PoC nếu contract abstraction giữ được |
 
-## 30. Recommended first slice
+## F. Kết luận đề xuất thẩm định
 
-Chọn một endpoint **read-only, authenticated, single-tenant, lưu lượng vừa và không có composition phức tạp** từ `agent-api` hoặc `market-api`. Pilot phải đi hết chuỗi Edge -> mTLS -> domain PEP/PDP -> audit, không chỉ demo policy engine. Sau khi đạt parity và SLO, mở rộng sang write path mức standard; `core-broker-api` và privileged action đi sau khi fail-close, fresh-context và transactional invariant đã được chứng minh.
+Thiết kế chuyển shared authorization thành platform capability nhưng không chuyển business truth ra khỏi domain. Edge chịu perimeter và coarse policy; mesh xác thực workload; PEP/PDP evaluate gần service; control plane quản lý policy tập trung; domain giữ resource fact, invariant, transaction và response filtering.
 
-## 31. Kết luận
-
-Kiến trúc đề xuất loại bỏ sự lặp lại AuthN/AuthZ bằng cách biến authorization thành một platform capability nhưng không tước quyền sở hữu nghiệp vụ khỏi domain. Edge giữ mỏng, mesh xác thực workload, PDP đánh giá policy gần workload, control plane quản lý policy tập trung, còn domain service enforce invariant dựa trên dữ liệu thật. Mô hình này giảm policy drift và BFF proliferation, đồng thời tránh tạo một centralized authorization bottleneck mới.
-
-Quyết định quan trọng nhất để giữ kiến trúc bền vững là ranh giới: **shared access policy thuộc Authorization Platform; business truth và invariant thuộc domain service; mọi boundary đều được xác minh và audit bằng một contract thống nhất.**
+Kiến trúc đủ điều kiện **đưa vào thẩm định**, chưa đủ điều kiện production approval cho đến khi đóng các risk nghiêm trọng: delegation profile, PEP coverage, end-to-end revocation/security floor và policy signing recovery. First slice phải chứng minh cả decision chain, no-bypass, revoke, obligation và durable audit — không chỉ benchmark policy engine.
