@@ -5,15 +5,15 @@
 | **Trường** | **Nội dung** |
 | --- | --- |
 | **Trạng thái** | **ĐANG THẨM ĐỊNH (UNDER REVIEW)** |
-| **Phiên bản & Lịch sử thay đổi** | `v1.6` — 31/08/2026 — Bổ sung DDD boundary, SPIFFE/SPIRE workload identity, SRE operating model và kiểm tra tương thích Mermaid |
+| **Phiên bản & Lịch sử thay đổi** | `v1.7` — 31/08/2026 — Chốt Architecture Decision Authority, baseline ADR và chuẩn hóa trạng thái theo owner/evidence/gate |
 | **Chủ sở hữu tài liệu** | Security Platform + Application Platform |
 | **Chủ sở hữu hệ thống** | Security Platform (Authorization) · Application Platform (Edge) · Platform/SRE (Workload Trust) |
 | **Hệ thống** | `ap-authz` — Edge Gateway & Authorization Platform |
 | **Hệ thống liên quan** | IAM/IdP, workload platform, KMS/HSM, Audit/SIEM, `agent-api`, `market-api`, `core-broker-api` và domain services |
 | **Nhóm chịu trách nhiệm** | Product/Business · Solution Architecture · Integration Architecture · Security Architecture · IAM · Platform/SRE · Privacy/Legal · Domain Owners |
-| **Cơ chế rà soát/phê duyệt** | Theo workflow thẩm định chính thức; phạm vi trách nhiệm tại Review Responsibility Matrix |
-| **Mốc thiết kế** | Baseline L2 cho Architecture Council và đầu vào thiết kế L3/PoC |
-| **Tài liệu L1** | Application Platform/Authorization capability landscape: `TBD` |
+| **Cơ chế rà soát/phê duyệt** | Lead Architect/Tech Lead là Architecture Decision Authority, phê duyệt L2 và ADR; Business, Security/Legal, SRE và Domain Owner phê duyệt control thuộc accountability của họ |
+| **Mốc thiết kế** | Baseline L2 do Lead Architect/Tech Lead quyết định và làm đầu vào thiết kế L3/PoC |
+| **Tài liệu L1** | Chưa có tham chiếu được cung cấp; không chặn L2, phải bổ sung khi L1 được ban hành |
 | **Tài liệu L3** | Theo L3 Artefact Register của tài liệu này |
 | **Tiêu chuẩn tham chiếu** | NIST SP 800-207, OAuth Security BCP, Token Exchange, workload identity và tiêu chuẩn nội bộ tương ứng |
 | **Lần rà soát gần nhất** | 31/08/2026 |
@@ -63,7 +63,7 @@ Kiến trúc đề xuất tách trách nhiệm:
 
 | **Nhóm chịu trách nhiệm** | **Phạm vi thẩm định** | **Cổng xác nhận** |
 | --- | --- | --- |
-| Architecture Council | Boundary, component, topology, integration, ADR và migration | L2 approval |
+| Lead Architect/Tech Lead | Boundary, component, topology, integration, ADR, migration và exception kiến trúc | Architecture Decision Authority; L2/ADR approval |
 | Security Architecture/ANBM | Identity, authorization, tenant, failure mode, supply chain, break-glass | Security approval |
 | IAM | Issuer/audience, token exchange, delegation, revocation và key rotation | Delegation Profile |
 | Platform/SRE | Workload trust, availability, capacity, SLO, deployment, alert và runbook | OAT/production readiness |
@@ -77,7 +77,7 @@ Kiến trúc đề xuất tách trách nhiệm:
 | **Chuyển trạng thái** | **Điều kiện đầu vào** |
 | --- | --- |
 | `DRAFT → UNDER REVIEW` | Scope, component, trust boundary, requirement, diagram, ADR, risk và open issue có định danh |
-| `UNDER REVIEW → APPROVED` | Named owner/reviewer; workload identity, delegation, PEP coverage, revocation decision, audit action matrix và critical risks đã đóng hoặc có điều kiện phê duyệt rõ |
+| `UNDER REVIEW → APPROVED` | Lead Architect/Tech Lead chấp thuận L2; workload identity, delegation, PEP coverage, revocation decision, audit action matrix và critical risks đã đóng hoặc có điều kiện phê duyệt rõ |
 | `APPROVED → POC BASELINE` | Contract/vocabulary v1, engine shortlist, benchmark plan và pilot action được duyệt |
 | `POC BASELINE → IMPLEMENTATION BASELINE` | L3 artefacts, threat model, performance/chaos evidence, migration và runbook hoàn tất |
 | `IMPLEMENTATION BASELINE → PRODUCTION` | Action-level checklist đạt và Security, Domain, SRE, Product/Business ký duyệt |
@@ -86,18 +86,18 @@ Kiến trúc đề xuất tách trách nhiệm:
 
 | **Tài liệu L3** | **Trạng thái** | **Chủ sở hữu** | **Phạm vi/nguồn thẩm định** | **Evidence và cổng xác nhận** |
 | --- | --- | --- | --- | --- |
-| IAM & Delegation Profile v1 | `TBD` | IAM + Security | Mục 6.4, 9.1 | Trước PoC service-to-service |
-| Authorization Contract & Vocabulary v1 | `TBD` | Authorization + Domains | Mục 3, 6 | Trước PEP/PDP integration |
-| Policy Lifecycle, Test & Signing Standard | `TBD` | Security Platform | Mục 7 | Trước publish artifact |
-| PDP Engine & Topology Benchmark | `TBD` | Authorization + SRE | Mục 5, 11, 12 | Trước production selection |
-| PEP Coverage & Conformance Specification | `TBD` | Authorization + Domains | Mục 2.4, 6.3, 15 | Trước enforce |
-| Emergency Revocation PoC & ADR | `TBD` | IAM + Security + SRE | Mục 7.5, 12.3, 16 | Trước high-risk action |
-| SPIFFE Trust Domain, Workload Identity & Flow Profile | `TBD` | Platform/SRE + Security | Mục 9.1, 10.4 | Trước strict enforcement |
-| Decision Audit & Retention Contract | `TBD` | SecOps + Privacy | Mục 8.3, 9.4, 13 | Trước dữ liệu thật |
-| Action-level Audit Durability Matrix | `TBD` | Product + Security/Legal + SRE | Mục 12.4 | Trước enforce từng action |
-| SRE Service Level, Error Budget & Capacity Matrix | `TBD` | SRE + Product + System Owners | Mục 4, 11–14 | Trước OAT |
-| BFF Migration Matrix & Rollback Plan | `TBD` | Platform + Domains | Mục 10.5 | Trước cutover |
-| Dashboard, Alert, On-call & DR Pack | `TBD` | SRE + System Owners | Mục 13, 14 | Trước production |
+| IAM & Delegation Profile v1 | `CHỜ ĐẦU VÀO` | IAM + Security | Mục 6.4, 9.1 | Trước PoC service-to-service |
+| Authorization Contract & Vocabulary v1 | `CHƯA KHỞI TẠO` | Authorization + Domains | Mục 3, 6 | Trước PEP/PDP integration |
+| Policy Lifecycle, Test & Signing Standard | `CHƯA KHỞI TẠO` | Security Platform | Mục 7 | Trước publish artifact |
+| PDP Engine & Topology Benchmark | `CẦN PoC` | Authorization + SRE | Mục 5, 11, 12 | Trước production selection |
+| PEP Coverage & Conformance Specification | `CHƯA KHỞI TẠO` | Authorization + Domains | Mục 2.4, 6.3, 15 | Trước enforce |
+| Emergency Revocation PoC & ADR | `CẦN PoC` | IAM + Security + SRE | Mục 7.5, 12.3, 16 | Trước high-risk action |
+| SPIFFE Trust Domain, Workload Identity & Flow Profile | `CHỜ ĐẦU VÀO` | Platform/SRE + Security | Mục 9.1, 10.4 | Trước strict enforcement |
+| Decision Audit & Retention Contract | `CHỜ PHÊ DUYỆT NGOÀI KIẾN TRÚC` | SecOps + Privacy | Mục 8.3, 9.4, 13 | Trước dữ liệu thật |
+| Action-level Audit Durability Matrix | `CHỜ PHÊ DUYỆT NGOÀI KIẾN TRÚC` | Product + Security/Legal + SRE | Mục 12.4 | Trước enforce từng action |
+| SRE Service Level, Error Budget & Capacity Matrix | `CHỜ ĐẦU VÀO` | SRE + Product + System Owners | Mục 4, 11–14 | Trước OAT |
+| BFF Migration Matrix & Rollback Plan | `CHỜ ĐẦU VÀO` | Platform + Domains | Mục 10.5 | Trước cutover |
+| Dashboard, Alert, On-call & DR Pack | `CHƯA KHỞI TẠO` | SRE + System Owners | Mục 13, 14 | Trước production |
 
 ## Quy ước trạng thái thiết kế
 
@@ -107,7 +107,9 @@ Kiến trúc đề xuất tách trách nhiệm:
 | `ĐỀ XUẤT` | Có phương án cụ thể, đang chờ phê duyệt |
 | `CẦN PoC` | Chỉ được quyết định sau evidence định lượng |
 | `BÊN NGOÀI` | Phụ thuộc authority/hệ thống ngoài phạm vi |
-| `TBD` | Chưa có quyết định hoặc bằng chứng; phải đóng tại gate được nêu |
+| `CHỜ ĐẦU VÀO` | Kiến trúc đã xác định câu hỏi, owner và gate nhưng còn thiếu inventory/số liệu từ hệ thống phụ thuộc |
+| `CHỜ PHÊ DUYỆT NGOÀI KIẾN TRÚC` | Cần Business, Security/Legal, Privacy hoặc SRE nhận accountability/risk; Architect không phê duyệt thay |
+| `CHƯA KHỞI TẠO` | Deliverable L3 đã có scope/owner/gate nhưng chưa bắt đầu |
 | `BẮT BUỘC` | Invariant/control phải đạt trước production |
 
 # 1. Business Objectives & Scope
@@ -146,7 +148,7 @@ Các BFF như `agent-api`, `market-api` và `core-broker-api` đang có xu hư�
 | Delegation | User-on-behalf-of, system và deferred grant | `BẮT BUỘC` |
 | Authorization contract | Actor/caller/action/resource/context/decision/obligation | `BẮT BUỘC` |
 | Policy lifecycle | Review, test, sign, distribute, inventory, rollback | `BẮT BUỘC` |
-| Distributed evaluation | Local/near-workload PDP; remote theo use case | `ĐỀ XUẤT` |
+| Distributed evaluation | Local/near-workload PDP; remote theo use case | `BASELINED` |
 | Domain enforcement | Resource fact, invariant, field/row filtering | `BẮT BUỘC` |
 | Audit/observability | Evaluation, final outcome, correlation và SLI | `BẮT BUỘC` |
 | Migration | Shadow, canary, BFF decomposition và decommission | `BẮT BUỘC` |
@@ -167,14 +169,14 @@ Các BFF như `agent-api`, `market-api` và `core-broker-api` đang có xu hư�
 | --- | --- | --- | --- |
 | A-01 | External route trong scope chỉ expose qua managed Edge | `BẮT BUỘC` | Direct public ingress bị cấm |
 | A-02 | IAM có issuer/audience rõ và key rotation | `BÊN NGOÀI` | Thiếu profile chặn AuthN PoC |
-| A-03 | Token exchange/sender binding chưa xác nhận | `TBD` | Chặn delegation baseline |
-| A-04 | Workload platform hỗ trợ mutual authentication và principal ổn định | `ĐỀ XUẤT` | Workload ngoài trust layer cần control tương đương |
+| A-03 | Delegation phải exact-audience, caller-bound, short-lived và chống replay | `BẮT BUỘC` | IAM không đáp ứng thì on-behalf-of service flow không được production enable |
+| A-04 | Workload platform phải hỗ trợ mutual authentication và SPIFFE-compatible principal ổn định | `BẮT BUỘC` | Không đạt conformance thì kích hoạt SPIRE adoption gate |
 | A-05 | Domain là authority của resource state/tenant/relationship | `BẮT BUỘC` | PDP không sao chép mọi domain DB |
 | A-06 | Policy evaluation deterministic, không gọi network tùy ý | `BẮT BUỘC` | Dynamic fact do PEP/provider cung cấp |
 | A-07 | Remote audit sink không là synchronous dependency của mọi request | `BẮT BUỘC` | Cần local outbox/queue và action mode |
 | A-08 | Cross-tenant chỉ qua explicit grant | `BẮT BUỘC` | Không dùng admin role bypass |
 | A-09 | Workload clocks được đồng bộ/giám sát | `BẮT BUỘC` | TTL, signature, replay và audit phụ thuộc |
-| A-10 | Multi-region, workload và audit volume chưa có baseline | `TBD` | SLO/capacity/cost là target đề xuất |
+| A-10 | Multi-region, workload và audit volume chưa có baseline đo lường | `CHỜ ĐẦU VÀO` | Product/SRE cung cấp trace và growth forecast trước OAT |
 
 ## 1.5 Stakeholders & Personas
 
@@ -187,7 +189,7 @@ Các BFF như `agent-api`, `market-api` và `core-broker-api` đang có xu hư�
 | IAM | User/workload/delegation identity và revocation |
 | Platform/SRE | Runtime trust, availability, capacity, on-call và DR |
 | SecOps/Privacy/Legal | Audit, retention, access, incident và legal constraints |
-| Architecture Council | Boundary, ADR, trade-off và gate approval |
+| Lead Architect/Tech Lead | Boundary, ADR, trade-off, exception và architecture gate approval |
 
 ## 1.6 Personal/Security Data Processing Summary
 
@@ -399,7 +401,7 @@ Các target dưới đây là đề xuất cần workload model, PoC và owner p
 
 | **Hạng mục** | **Chỉ số đo lường** | **Target đề xuất** | **Ghi chú/cổng** |
 | --- | --- | --- | --- |
-| End-to-end availability | Successful authorized action / valid attempt | Theo action class | `TBD` trước OAT |
+| End-to-end availability | Successful authorized action / valid attempt | C0 ≥ 99.99%; C1 ≥ 99.95%; C2 ≥ 99.9% | `BASELINED` L2; action inventory phải phân loại trước OAT |
 | Edge availability | Monthly availability | ≥ 99.99% critical path | PoC/OAT |
 | Local evaluation | P95/P99 | ≤ 5 ms / ≤ 10 ms khi policy/fact local | Benchmark policy thật |
 | Edge overhead | P95 | ≤ 15 ms | Không gồm domain processing |
@@ -412,13 +414,21 @@ Các target dưới đây là đề xuất cần workload model, PoC và owner p
 | Recoverability | Control metadata | RPO ≤ 15 phút; RTO ≤ 60 phút | DR drill |
 | Data isolation | Cross-tenant allow | 0 ngoài approved grant | `BẮT BUỘC` |
 
+Action class baseline:
+
+| **Class** | **Loại action** | **Availability target** | **Failure posture** |
+| --- | --- | ---: | --- |
+| C0 | Privileged/cross-tenant/financial hoặc critical mutation | ≥ 99.99% | Fail-close; durable audit theo approved action matrix |
+| C1 | Authenticated business read và standard mutation | ≥ 99.95% | Fail-close authorization; audit có bounded degraded mode nếu được phê duyệt |
+| C2 | Public/non-sensitive read, health và discovery | ≥ 99.9% | Chỉ fail-open khi có registry, owner, data classification và expiry |
+
 # 5. Technology Stack & Justification
 
 L2 chọn capability và tiêu chí; không khóa ngôn ngữ hoặc thư viện ứng dụng.
 
 | **Lĩnh vực** | **Giải pháp lựa chọn** | **Cơ sở lựa chọn** | **Đánh đổi/trạng thái** |
 | --- | --- | --- | --- |
-| Edge Gateway | Enterprise managed gateway/Envoy-compatible edge | TLS, routing, policy hook, HA, observability | Product `TBD` |
+| Edge Gateway | Enterprise managed gateway/Envoy-compatible edge | TLS, routing, policy hook, HA, observability | `CHỜ ĐẦU VÀO` — platform product inventory/ADR |
 | Workload identity model | SPIFFE ID + short-lived X.509-SVID + trust bundle | Canonical, attested workload principal độc lập hạ tầng | `BẮT BUỘC` ở mức contract |
 | Workload identity authority | Dùng platform issuer hiện có nếu đạt SPIFFE profile | Tránh thêm một identity control plane và vận hành hai authority | **SPIRE không thuộc baseline hiện tại; có adoption gate** |
 | Workload policy | Mutual authentication + default-deny caller/destination policy | East-west AuthN và AuthZ độc lập | Mesh/Istio là carrier tùy chọn, không là baseline bắt buộc |
@@ -426,27 +436,27 @@ L2 chọn capability và tiêu chí; không khóa ngôn ngữ hoặc thư viện
 | PDP topology | Local sidecar, node-local, embedded hoặc remote-regional | Trade-off latency, isolation, cost, operations | `CẦN PoC` |
 | Policy repository/pipeline | Version control + protected review + immutable build | Traceability và separation of duties | `BẮT BUỘC` |
 | Signing | KMS/HSM-backed signer | Artifact integrity và key governance | `BẮT BUỘC` |
-| Distribution | Immutable object/OCI-compatible registry + regional cache | Digest addressing và horizontal scale | `ĐỀ XUẤT` |
+| Distribution | Immutable object/OCI-compatible registry + regional cache | Digest addressing và horizontal scale | `BASELINED` |
 | Audit mutation | Transactional outbox hoặc equivalent atomic intent | Tránh business commit mất audit intent | Theo action mode |
 | Audit delivery | Local durable relay + collector + SIEM/DWH | Remote sink ngoài hot path | `BẮT BUỘC` |
-| Observability | OpenTelemetry-compatible telemetry | Cross-component correlation | `ĐỀ XUẤT` |
+| Observability | OpenTelemetry-compatible telemetry | Cross-component correlation | `BASELINED` |
 
 ## 5.1 ADR Log
 
 | **ADR ID** | **Tiêu đề quyết định** | **Trạng thái** | **Ngày quyết định** | **Link chi tiết** |
 | --- | --- | --- | --- | --- |
-| ADR-001 | Edge mỏng; domain giữ invariant/resource truth | `ĐỀ XUẤT` | — | L3 ADR `TBD` |
-| ADR-002 | Hybrid platform guardrail + domain authorization | `ĐỀ XUẤT` | — | `TBD` |
-| ADR-003 | Distributed PDP cho synchronous hot path | `CẦN PoC` | — | `TBD` |
-| ADR-004 | Signed immutable policy artifact | `ĐỀ XUẤT` | — | `TBD` |
-| ADR-005 | SPIFFE-compatible workload identity + default-deny caller policy; SPIRE conditional | `ĐỀ XUẤT CHỐT L2` | 31/08/2026 | Workload Identity Profile |
-| ADR-006 | Versioned authorization contract/vocabulary | `ĐỀ XUẤT` | — | `TBD` |
-| ADR-007 | Audience/caller-bound delegation | `ĐỀ XUẤT CÓ ĐIỀU KIỆN` | — | IAM Profile |
-| ADR-008 | Audit durability/failure mode theo action | `ĐỀ XUẤT CÓ ĐIỀU KIỆN` | — | Audit Matrix |
+| ADR-001 | Edge mỏng; domain giữ invariant/resource truth | `BASELINED` | 31/08/2026 | Mục 2.1–2.5 |
+| ADR-002 | Hybrid platform guardrail + domain authorization | `BASELINED` | 31/08/2026 | Mục 2.2–2.4 |
+| ADR-003 | Distributed PDP cho synchronous hot path | `CẦN PoC` | — | PDP Engine & Topology Benchmark |
+| ADR-004 | Signed immutable policy artifact | `BASELINED` | 31/08/2026 | Mục 7.2 |
+| ADR-005 | SPIFFE-compatible workload identity + default-deny caller policy; SPIRE conditional | `BASELINED` | 31/08/2026 | Mục 9.1.1 |
+| ADR-006 | Versioned authorization contract/vocabulary | `BASELINED` | 31/08/2026 | Mục 6.2–6.7 |
+| ADR-007 | Audience/caller-bound delegation | `BÊN NGOÀI` | — | IAM & Delegation Profile |
+| ADR-008 | Audit durability/failure mode theo action | `CHỜ PHÊ DUYỆT NGOÀI KIẾN TRÚC` | — | Action-level Audit Durability Matrix |
 | ADR-009 | Candidate security floor tách base policy | `CẦN PoC — CHƯA DUYỆT PRODUCTION` | — | Revocation PoC |
-| ADR-010 | Explicit grant cho cross-tenant/deferred authority | `ĐỀ XUẤT CÓ ĐIỀU KIỆN` | — | Grant Contract |
-| ADR-011 | DDD bounded-context ownership và Anti-Corruption Layer | `ĐỀ XUẤT` | — | Authorization Contract |
-| ADR-012 | SLO/error-budget gate theo action class | `ĐỀ XUẤT` | — | SRE Service Level Policy |
+| ADR-010 | Explicit grant cho cross-tenant/deferred authority | `BASELINED` | 31/08/2026 | Mục 6.5 |
+| ADR-011 | DDD bounded-context ownership và Anti-Corruption Layer | `BASELINED` | 31/08/2026 | Mục 2.5 |
+| ADR-012 | SLO/error-budget gate theo action class | `BASELINED` | 31/08/2026 | Mục 4, 13.6 |
 
 ## 5.2 Trade-off Analysis
 
@@ -1020,24 +1030,24 @@ BFF thuần proxy chỉ decommission sau zero-traffic window, revoke credential/
 
 | **Component** | **Metric** | **Current Value** | **Target Value** | **Headroom/Gate** |
 | --- | --- | --- | --- | --- |
-| Edge | Peak RPS/concurrency | `TBD` | 2× approved peak | One-AZ loss |
-| Service PEP | Added P95 latency | `TBD` | Within action budget | Load/OAT |
-| Local PDP | Evaluation P95/P99 | `TBD` | ≤ 5/10 ms candidate | Representative policy/input |
-| Policy artifact | Rule/bundle size | `TBD` | Engine/topology benchmark | Cold activation |
-| Distribution | Propagation/convergence | `TBD` | ≤ 2 min standard | Fleet status evidence |
-| Revocation | Effective convergence | `TBD` | ≤ 30 s candidate | Partition/recovery drill |
-| Audit | Peak EPS/event size | `TBD` | 2× peak + outage reserve | Full/noisy-tenant test |
-| Context providers | Lookup QPS/P95 | `TBD` | Within action deadline | Cache-miss/one-AZ |
+| Edge | Peak RPS/concurrency | `CHỜ ĐẦU VÀO` — CAP-01 | 2× approved peak | One-AZ loss |
+| Service PEP | Added P95 latency | `CẦN PoC` | Within action budget | Load/OAT |
+| Local PDP | Evaluation P95/P99 | `CẦN PoC` | ≤ 5/10 ms candidate | Representative policy/input |
+| Policy artifact | Rule/bundle size | `CẦN PoC` — CAP-02 | Engine/topology benchmark | Cold activation |
+| Distribution | Propagation/convergence | `CẦN PoC` | ≤ 2 min standard | Fleet status evidence |
+| Revocation | Effective convergence | `CẦN PoC` | ≤ 30 s candidate | Partition/recovery drill |
+| Audit | Peak EPS/event size | `CHỜ ĐẦU VÀO` — CAP-04 | 2× peak + outage reserve | Full/noisy-tenant test |
+| Context providers | Lookup QPS/P95 | `CHỜ ĐẦU VÀO` — CAP-03 | Within action deadline | Cache-miss/one-AZ |
 
 ## 11.2 Rate Limit Matrix
 
 | **Boundary/Caller** | **Operation Class** | **Sustained RPS** | **Burst/Window** | **Quota Key** | **Khi vượt** | **Owner/Trạng thái** |
 | --- | --- | ---: | --- | --- | --- | --- |
-| Internet client | External routes | `TBD` | `TBD` | Client/tenant/route | `429`/throttle | Edge/Product — `TBD` |
-| Edge | Domain action | `TBD` | `TBD` | Caller/action/tenant | Backpressure | Domain/SRE — `TBD` |
-| Service PEP | PDP evaluation | `TBD` | `TBD` | Workload/action | Bounded queue/fail-close | Authorization/SRE — `TBD` |
-| PEP | Fact provider | `TBD` | `TBD` | Provider/action | Circuit/bulkhead | Provider owner — `TBD` |
-| Domain | Audit relay | `TBD` | `TBD` | Tenant/action | Per action mode | Product/SecOps/SRE — `TBD` |
+| Internet client | External routes | Theo approved route class | 2× sustained trong 10 giây, hiệu chỉnh bằng CAP-01 | Client/tenant/route | `429`/throttle | Edge/Product — `CHỜ ĐẦU VÀO` |
+| Edge | Domain action | Theo action capacity model | 1.5× sustained trong 10 giây | Caller/action/tenant | Backpressure | Domain/SRE — `CHỜ ĐẦU VÀO` |
+| Service PEP | PDP evaluation | Theo per-instance benchmark | Bounded concurrency; queue không vượt action deadline | Workload/action | Bounded queue/fail-close | Authorization/SRE — `CẦN PoC` |
+| PEP | Fact provider | Theo provider contract | Bounded concurrency + bulkhead | Provider/action | Circuit/bulkhead | Provider owner — `CHỜ ĐẦU VÀO` |
+| Domain | Audit relay | ≤ 80% measured drain rate | Burst theo reserved spool quota | Tenant/action | Per action mode | Product/SecOps/SRE — `CHỜ PHÊ DUYỆT NGOÀI KIẾN TRÚC` |
 
 ## 11.3 Capacity/Cost Inputs
 
@@ -1054,12 +1064,12 @@ BFF thuần proxy chỉ decommission sau zero-traffic window, revoke credential/
 
 | **Hạng mục** | **Phạm vi chi phí** | **Cơ sở tính** | **Chi phí/tháng** | **Owner/Deadline** |
 | --- | --- | --- | --- | --- |
-| Edge/PEP/PDP runtime | Compute/memory/network | Cost per million evaluations + peak/N-1 | `TBD` | FinOps/SRE trước production |
-| Policy control plane | Repository, build, registry, cache | Artifact count/distribution | `TBD` | Security Platform |
-| KMS/HSM | Signing/key operations | Sign/verify/key lifecycle | `TBD` | Security/FinOps |
-| Audit | Ingest, storage, retention, query | EPS × size × retention | `TBD` | SecOps/Privacy/FinOps |
-| Shadow migration | Dual evaluation/telemetry | Route volume × migration duration | `TBD` | Platform/Product |
-| Multi-region | Compute, replication, egress | Approved deployment topology | `TBD` | Platform/FinOps |
+| Edge/PEP/PDP runtime | Compute/memory/network | Cost per million evaluations + peak/N-1 | `CHỜ ĐẦU VÀO` — FinOps estimate | FinOps/SRE trước production |
+| Policy control plane | Repository, build, registry, cache | Artifact count/distribution | `CHỜ ĐẦU VÀO` — FinOps estimate | Security Platform |
+| KMS/HSM | Signing/key operations | Sign/verify/key lifecycle | `CHỜ ĐẦU VÀO` — provider price model | Security/FinOps |
+| Audit | Ingest, storage, retention, query | EPS × size × retention | `CHỜ ĐẦU VÀO` — CAP-04/retention | SecOps/Privacy/FinOps |
+| Shadow migration | Dual evaluation/telemetry | Route volume × migration duration | `CHỜ ĐẦU VÀO` — CAP-05 | Platform/Product |
+| Multi-region | Compute, replication, egress | Approved deployment topology | `CHỜ ĐẦU VÀO` — CAP-06 | Platform/FinOps |
 
 # 12. Scalability & Reliability
 
@@ -1115,9 +1125,9 @@ Các row dưới là draft, không phải approval:
 
 | **Action** | **Business Owner** | **Mode đề xuất** | **Degraded Window** | **Reserved Quota** | **Hết Window/Quota** | **Trạng thái** |
 | --- | --- | --- | --- | --- | --- | --- |
-| `broker.order.approve` | `TBD` | `REQUIRED_DURABLE` | `0` | Peak EPS × event size × outage objective | `503`; không commit | Chờ Business/Security/Legal/SRE |
-| `market.order.read` | `TBD` | `DEGRADED_BOUNDED` | `TBD` | Per-tenant + platform reserve | Stop/restricted fallback — `TBD` | Chờ phê duyệt |
-| Public catalog/health | Action owner | `BEST_EFFORT` nếu data class cho phép | N/A | Bounded queue | Continue + alert | Chờ registry |
+| `broker.order.approve` | Broker Product Owner | `REQUIRED_DURABLE` | `0` | 30 phút approved peak, tách quota theo tenant | `503`; không commit | `CHỜ PHÊ DUYỆT NGOÀI KIẾN TRÚC` |
+| `market.order.read` | Market Product Owner | `DEGRADED_BOUNDED` | 15 phút | 30 phút approved peak/tenant + 20% platform emergency reserve | Controlled `503` + incident | `CHỜ PHÊ DUYỆT NGOÀI KIẾN TRÚC` |
+| Public catalog/health | Public API Product Owner | `BEST_EFFORT` nếu data class cho phép | N/A | Bounded queue | Continue + alert | `CHỜ PHÊ DUYỆT NGOÀI KIẾN TRÚC` |
 
 Mỗi production action có một row gồm data classification, peak EPS, maximum event size, retention/outage objective, drain rate, alert threshold và incident owner. Thiếu row/chữ ký → không `ENFORCE`.
 
@@ -1251,7 +1261,7 @@ Ngưỡng trên là baseline vận hành; thay đổi phải qua SRE Service Lev
 | --- | ---: | ---: | --- |
 | Edge/PDP runtime | Không có request state cần restore | Theo action SLO/auto failover | LKG/revocation state local |
 | Policy repository/registry/control metadata | ≤ 15 phút | ≤ 60 phút | Không mất approved digest/provenance |
-| Signing/revocation capability | Không mất key state/generation | `TBD` critical runbook | Compromise khác outage |
+| Signing/revocation capability | Không mất key state/generation | ≤ 15 phút để khôi phục emergency operation | Compromise khác outage; drill bắt buộc |
 | Decision audit | Theo compliance schedule | Theo SecOps need | Local durability/reconciliation |
 
 ## 14.2 Runbook bắt buộc
@@ -1369,7 +1379,7 @@ Ngưỡng trên là baseline vận hành; thay đổi phải qua SRE Service Lev
 
 ### 16.1.1 Risk Acceptance
 
-Risk acceptance phải ghi scope/action, owner, compensating control, approver, evidence, expiry và review date. Critical risk chưa đóng chặn `UNDER REVIEW → APPROVED` trừ khi Architecture Council ghi điều kiện phê duyệt rõ.
+Risk acceptance phải ghi scope/action, owner, compensating control, approver, evidence, expiry và review date. Critical risk chưa đóng chặn `UNDER REVIEW → APPROVED` trừ khi Lead Architect/Tech Lead ghi điều kiện phê duyệt rõ và đúng control owner cùng ký nhận rủi ro.
 
 ## 16.2 Tech Debt
 
