@@ -3,7 +3,7 @@
 | Thuộc tính | Giá trị |
 |---|---|
 | Document ID | AP-CBFF-L2 |
-| Phiên bản | 2.4 |
+| Phiên bản | 2.5 |
 | Trạng thái | **READY FOR ARCHITECTURE REVIEW** |
 | Ngày | 01/09/2026 |
 | Architecture Owner | Chief Architect |
@@ -57,7 +57,8 @@ condition verifier, date và minutes locator. Chỉ Board đổi status `D-01..0
 |---|---|---|
 | 2.0–2.2 | Superseded | Thiết kế ban đầu và các vòng bổ sung control/gate |
 | 2.3 | Superseded | Board brief, alternatives, fact base, complexity budget và exit strategy |
-| 2.4 | Current | Executive narrative; một decision source; G0 learning cap; nhập operational controls vào core; rút L2 |
+| 2.4 | Superseded | Executive narrative; một decision source; G0 learning cap; nhập operational controls vào core; rút L2 |
+| 2.5 | Current | Topology-neutral D-01; pre-registered measurement; final-PDP/delegation PoC; proportional gate review |
 
 ---
 
@@ -74,11 +75,11 @@ Chưa có code, trace, incident, traffic, cost hay ownership evidence xác nhậ
 đó. G0 phải chứng minh hoặc bác bỏ nó.
 
 Board không được đề nghị cam kết “một service lớn”. Hướng thử là **một logical BFF
-product**: modular monolith stateless, nhiều replica và module có boundary; domain
-vẫn sở hữu data, invariant và final resource authorization. Nó có thể tạo external
-contract, action taxonomy và Zero Trust controls nhất quán trong khi migration/
-rollback vẫn theo route. OPA, Istio, SPIRE và mọi product cụ thể chỉ là candidate,
-không phải production approval.
+product** với shared contract, action taxonomy, identity, control distribution và
+telemetry. G0/pilot phân xử giữa modular shared runtime và deployable theo
+ownership; domain vẫn sở hữu data, invariant và final resource authorization.
+Migration/rollback giữ theo route. OPA, Istio, SPIRE và mọi product cụ thể chỉ là
+candidate, không phải production approval.
 
 Khoản đầu tư để biết có nên build pilot là **G0 tối đa 10 ngày làm việc và 30
 person-days**, cho ba API identifier và một route ứng viên. Đây là proposed
@@ -100,6 +101,8 @@ Nếu value hypothesis sai hoặc central runtime làm blast radius, lead time h
 xấu hơn alternative, sunk cost không bảo vệ chương trình. `PIVOT` có thể giữ
 BFF deploy riêng nhưng dùng shared controls, giảm scope về proxy/read, hoặc đổi
 technology qua ADR. `ABORT` rollback cohort và revoke route/credential/path.
+`PIVOT — secure in place` là programme outcome thành công khi control
+convergence tạo measured value dù không hợp nhất physical runtime.
 Top risk là governance/runtime lớn hơn năng lực vận hành khi owner, fact base và
 domain final PEP chưa tồn tại; complexity budget và gates là stop-loss.
 
@@ -110,17 +113,22 @@ Board là approval authority cho toàn bộ bảng. Endorser và change authorit
 
 | ID / status | Decision | Alternatives considered | Trade-off, condition và exit | Endorsers / change authority |
 |---|---|---|---|---|
-| `D-01` / `FOR_APPROVAL` | Logical BFF, modular monolith nhiều replica cho pilot | Retain as-built/no consolidation là abort; shared controls + deployable theo ownership là scale-out/pivot; gateway-only cho pure proxy | Tăng coupling/blast radius; pilot phải so topology và đạt `H-01/H-02`, value, isolation, lead time, cost | Program, Runtime, Domain / Architecture Owner chỉ trong approved topology; Board duyệt topology pivot/abort |
-| `D-02` / `FOR_APPROVAL` | BFF coarse PEP/composition; domain giữ data/invariant/final PEP; workflow giữ saga state | BFF-only/mesh-only AuthZ và BFF-owned data/saga bị reject | Cần domain capacity; không cutover khi final PEP, bypass và idempotency chưa đạt `SG-2` | Domain, Security / Domain + Security |
-| `D-03` / `FOR_APPROVAL` | Per-hop workload identity + bounded delegation; cấm raw token | RFC 8693 ưu tiên; internal assertion/introspection qua ADR; actor header bị reject | Thêm IAM dependency; profile bind caller/actor/audience/action/tenant/expiry/sender; failure → technology pivot | IAM, Security / Security + Architecture |
+| `D-01` / `FOR_APPROVAL` | Centralize logical contract/controls; production deployment topology deferred | Pilot compares modular shared runtime và deployable theo ownership; retain as-built/no consolidation là abort; gateway-only cho pure proxy | Tránh premature topology nhưng tăng learning scope; G0 pre-register comparator, pilot đóng `H-02` | Program, Runtime, Domain / Board chọn production topology; Architecture Owner chỉ trong topology đã duyệt |
+| `D-02` / `FOR_APPROVAL` | BFF coarse PEP/composition; domain giữ data/invariant/final PEP; workflow giữ saga state | Baseline in-domain transaction; relationship PDP/local domain evaluator là conditional; BFF/mesh-only và BFF-owned saga bị reject | Option phải chứng minh snapshot/version consistency, latency/failure và ownership; không cutover trước `SG-2` | Domain, Security / Domain + Security |
+| `D-03` / `FOR_APPROVAL` | Per-hop workload identity + bounded delegation; mechanism do PoC chọn; cấm raw token | Acquisition: RFC 8693 hoặc IAM-issued assertion; representation: self-contained hoặc opaque + introspection; actor header bị reject | PoC so hot-path dependency/cache, binding, attenuation, replay/revocation, rotation/audit; assertion phải đạt control equivalence | IAM, Security / Security + Architecture |
 | `D-04` / `FOR_APPROVAL` | Product-neutral; ưu tiên local/near PDP và existing identity/network | OPA/Cedar/managed PDP; Istio modes/Linkerd/gateway; existing issuer/SPIRE | PoC compatibility, failure, skill, capacity, cost; OPA/Istio chỉ là candidates; boundary change quay lại Board | Security, Platform/SRE / Architecture + platform owner |
 | `D-05` / `FOR_APPROVAL` | Route strangler với cap/deadline và `PAUSE/PIVOT/ABORT` | Reject big bang và dual-run vô hạn | Reversible nhưng chậm; transition cần `PASS`; scope/funding/value fail → §7.4 | Product, Delivery / route pause/rollback theo gate; Board duyệt pivot/abort/restart |
 
 Binding interpretation: SPIFFE là standard, SPIRE là implementation và chỉ thêm
 khi existing issuer không đạt requirement. RFC 8693 biểu diễn được
-subject/actor/audience nhưng deployment profile vẫn phải enforce các binding tại
-`D-03`. Không mặc định Istio self-signed production root hoặc remote PDP hot
-path; PKI/product/data-plane mode cần version-pinned ADR/PoC.
+subject/actor/audience nhưng không tự enforce profile; IAM-issued assertion phải
+đạt cùng caller/actor/audience/action/tenant/expiry/JTI, sender/replay và audit floor
+tại `D-03`. Introspection là validation/revocation mechanism, không phải
+delegation protocol. PKI/product/data-plane mode cần version-pinned ADR/PoC.
+Internal assertion MUST được cryptographically integrity-protect hoặc là opaque
+handle do trusted authority validate; minting issuer MUST được authorize cho
+actor/audience. Conformance MUST reject forged, tampered, replayed, wrong-issuer
+và wrong-audience assertion.
 
 ### 1.3 Yêu cầu Board và hợp đồng học tập
 
@@ -154,16 +162,24 @@ production traffic trong vòng này. G0 phải trả lại pilot ROM/capacity tr
 Tên service không được dùng để suy diễn domain hoặc team. Claim dùng cho gate phải
 là `OBSERVED` hoặc `MEASURED`, có locator và observed-at.
 
-### 2.2 Hồ sơ bằng chứng G0
+### 2.2 Hồ sơ bằng chứng và measurement contract G0
 
-Mỗi API và route trong cohort có một context record, không cần tạo tool mới:
+Mỗi API/route trong cohort có một versioned record trong system of record hiện
+hữu:
 
 | Nhóm | Trường tối thiểu |
 |---|---|
-| Vai trò/value | Capability class, consumer/use case, duplication/change/incident evidence |
-| Contract/execution | Method/path, resource/action, data/side effect/consistency, handler/downstream, DB access, sync/async, resilience |
-| Security | Issuer/audience, actor/client/caller, current AuthZ, final PEP, bypass |
-| Runtime/ownership | Traffic/latency/error/payload/cost; code/deploy/rollback/SLO/on-call; source/time/reviewer |
+| Vai trò/value | Capability, consumer/use case; duplicated `control_id`, implementation location, semantic diff và incident/audit gap |
+| Change flow | Sample/window; repo/deployment/owner phải chạm; lead time, coordination/rework và operator effort |
+| Contract/execution | Method/path, resource/action, data/side effect/consistency, downstream/DB access, sync/async và resilience |
+| Security | Issuer/audience, actor/client/caller, current AuthZ, final PEP, bypass và delegation capability |
+| Runtime/cost | Traffic, latency/error/payload/fan-out, compute/platform cost trên route/request và capacity owner |
+| Measurement | Cohort/comparator, operational definition, query/window/exclusion, threshold/rubric, raw locator, owner, approver và version |
+
+`SG-0` MUST pre-register metric/rubric và mapping sang
+`CONTINUE/PIVOT/ABORT` trước khi quan sát G0 result. G0 baseline được dùng để
+đặt pilot targets trước pilot. Mọi thay đổi sau khi xem result phải versioned,
+có rationale/approver và không áp dụng hồi tố.
 
 ### 2.3 Giả thuyết chưa đóng và điều kiện dừng
 
@@ -191,20 +207,22 @@ production adoption của OPA/Istio/SPIRE trước PoC.
 
 ### 3.1 Guardrail cấp Board
 
-| ID | Guardrail normative |
-|---|---|
-| `GR-01` | Một logical product nhưng runtime MUST có nhiều replica/failure domain; request path MUST stateless và không có singleton bắt buộc |
-| `GR-02` | BFF MUST NOT sở hữu domain data, business invariant, durable workflow/idempotency state hoặc truy cập domain database/repository |
-| `GR-03` | Mọi request MUST resolve thành stable `route_id/action_id`; registry chỉ là signed/versioned configuration, không là runtime actor/service |
-| `GR-04` | Actor, client và caller MUST tách biệt; internal hop MUST xác thực workload; downstream credential MUST ngắn hạn, audience/action/tenant-bound; raw token forwarding bị cấm |
-| `GR-05` | BFF PEP chỉ early-reject; domain/application boundary MUST final-authorize trên current resource facts; bypass không được tạo unexpected allow |
-| `GR-06` | Route/policy/trust config MUST signed, versioned, schema-validated, preload trước readiness, có LKG/rollback; unknown/invalid security evidence không được thành allow |
-| `GR-07` | Deadline, retry, fan-out, cache, consistency, audit và resource use MUST bounded/explicit; BFF không giả lập atomic cross-domain snapshot |
-| `GR-08` | Mỗi route migration MUST reversible; không promotion nếu owner, contract, security, reliability, cost và rollback evidence áp dụng chưa `PASS` |
+| ID | Guardrail normative | Chi tiết canonical |
+|---|---|---|
+| `GR-01` | Một logical product nhưng runtime MUST có nhiều replica/failure domain; request path MUST stateless và không có singleton bắt buộc | §3.2–3.3, §5.1/§5.5 |
+| `GR-02` | BFF MUST NOT sở hữu domain data, business invariant, durable workflow/idempotency state hoặc truy cập domain database/repository | §3.3, §4.5 |
+| `GR-03` | Mọi request MUST có canonical parse và resolve đúng một stable `route_id/action_id`; unknown/ambiguous/collision bị reject; registry chỉ là signed/versioned configuration | §3.3, §4.6, Phụ lục A |
+| `GR-04` | Actor/client/caller MUST tách biệt; internal hop MUST workload-authenticated và expected-flow default-deny; egress MUST declared/SSRF-protected; downstream credential MUST short-lived và audience/action/tenant-bound; raw token bị cấm | §4.1–4.3, Phụ lục A |
+| `GR-05` | BFF PEP chỉ early-reject; domain/application boundary MUST final-authorize trên current resource facts; bypass không được tạo unexpected allow | §4.2–4.5 |
+| `GR-06` | Image và route/policy/trust config MUST integrity/provenance-verified, versioned, compatible, schema-validated và preload; readiness MUST expose active/LKG version; invalid evidence không được thành allow và rollback MUST có | §4.2, §5.1/§5.4, Phụ lục A |
+| `GR-07` | Deadline, retry, fan-out, cache, consistency, audit và resource use MUST bounded/explicit; BFF không giả lập atomic cross-domain snapshot | §4.4–4.6, §5 |
+| `GR-08` | Mỗi route migration MUST reversible; không promotion nếu owner, contract, security, reliability, cost và rollback evidence áp dụng chưa `PASS` | §7 |
 
 `GR-01..08` có hiệu lực từ ngày trong Board approval record đến khi superseded.
-Làm yếu guardrail cần L2 revision, threat/risk review và Board approval; config
-flag hoặc risk acceptance đơn lẻ không đủ.
+GR row là Board-level invariant; mapped `MUST/MUST NOT` clauses là binding L2
+refinement thuộc approved floor. Detail MAY thu hẹp nhưng không làm yếu GR.
+Mapping/conflict mơ hồ làm evidence `NOT_READY` và cần sửa L2. Làm yếu
+guardrail cần threat/risk review cùng Board approval.
 
 ### 3.2 Kiến trúc logic
 
@@ -213,7 +231,7 @@ flowchart TB
     Consumer["Consumers / Channels"]
     Edge["DNS / CDN / WAF / L7 Gateway"]
 
-    subgraph BFF["Centralized BFF — one logical product, many replicas"]
+    subgraph BFF["Logical BFF product — deployment topology selected by D-01"]
         Guard["Guard + Dispatcher"]
         Registry["Signed Route / Action Snapshot"]
         Identity["Identity Context"]
@@ -254,9 +272,9 @@ flowchart TB
     Domain -. outcome .-> Obs
 ```
 
-Sơ đồ là target responsibility model, không khẳng định số domain service,
-database, trust domain hoặc team hiện hữu. G0 phải thay generic nodes bằng context
-map có evidence.
+Sơ đồ là logical responsibility model; BFF boundary MAY nằm trong một hoặc nhiều
+deployable theo D-01. Nó không khẳng định số domain service, database, trust domain
+hoặc team. G0 phải thay generic nodes bằng context map có evidence.
 
 ### 3.3 Ranh giới trách nhiệm và tách triển khai
 
@@ -284,6 +302,8 @@ thay identity, delegation, final PEP hay domain ownership.
 ## 4. Zero Trust, hợp đồng và luồng trọng yếu
 
 ### 4.1 Trust, workload identity và network
+
+Parent floor: `GR-04` và `GR-06`.
 
 Theo NIST SP 800-207/207A, network location không tạo implicit trust; decision
 dựa trên subject, workload, resource, action và context; enforcement nằm gần
@@ -323,9 +343,18 @@ Domain đọc current resource snapshot, cung cấp facts/version cho final PEP 
 enforce trên cùng snapshot. Mutation dùng transactional hoặc optimistic
 concurrency check nếu resource có thể đổi sau decision.
 
-Final PDP MAY là domain logic hoặc relationship-based service; enforcement vẫn ở
-resource boundary, với fact/version, consistency, invalidation và ownership
-contract rõ. Không thêm authorization service chỉ vì industry precedent.
+Final enforcement vẫn ở resource boundary. Option selection:
+
+| Final-PDP option | Disposition và evidence |
+|---|---|
+| In-domain code trên transaction snapshot | Baseline; chứng minh same-snapshot/concurrency, testability và domain ownership |
+| Relationship-based PDP | Chỉ khi có relationship requirement; chứng minh model owner, resource/version token, freshness/invalidation, latency và outage posture |
+| Local evaluator trong domain | Chỉ khi facts co-located; chứng minh deterministic input, snapshot binding, bundle/LKG và failure semantics |
+| BFF/mesh-only decision | Reject vì thiếu current resource facts |
+
+Không thêm authorization service chỉ vì industry precedent. Mọi option MUST trả
+fact/resource version để enforcement và mutation concurrency check dùng cùng
+decision context.
 
 Canonical effect là `ALLOW | DENY | CHALLENGE | INDETERMINATE`, kèm reason,
 policy version, fact/version reference, `valid_until`, obligations và decision
@@ -481,6 +510,8 @@ path không được loại bỏ hard ceiling.
 
 ### 5.4 Quan sát, audit, readiness và phát hành
 
+Parent floor: `GR-06` và `GR-07`.
+
 Telemetry MUST correlate request, actor pseudonym, caller, action,
 resource/version, policy/config version, decision, downstream, consistency và
 final outcome. Raw token, full role list và PII không cần thiết MUST NOT xuất hiện
@@ -596,9 +627,10 @@ API identifier và một pilot; checkpoint ngày 5 và exit decision ngày 10. G
 feasibility spike bằng tooling hiện hữu—không production, procurement, wide
 migration hoặc persistent platform dependency mới.
 
-Output là fact/hypothesis verdict, owner/capacity, final-PEP/delegation
-feasibility, topology test plan, pilot ROM/targets và recommendation. Chưa có record thì không bắt
-đầu; quá hạn không tự gia hạn. `market.order.read` chỉ thành pilot sau
+Output là measured fact/hypothesis verdict, owner/capacity,
+final-PEP/delegation feasibility, topology comparator, pilot ROM và
+pre-registered pilot targets. Chưa có record thì không bắt đầu; quá hạn không tự
+gia hạn. `market.order.read` chỉ thành pilot sau
 `SG-1` xác minh mirror safety; shadow/canary theo `SG-2/SG-3`. Toàn
 estate chỉ reconcile trước retirement, không trước cohort học đầu tiên.
 
@@ -606,7 +638,7 @@ estate chỉ reconcile trước retirement, không trước cohort học đầu 
 
 | Gate | Decision và minimum `PASS` evidence | Accountable → approver | Khi fail |
 |---|---|---|---|
-| `SG-0 G0 authorized` | Board record có scope/cap/date, hypothesis, named funded roles và exit authority | Program Owner → Architecture Board | Không bắt đầu platform build |
+| `SG-0 G0 authorized` | Board record có scope/cap/date, hypothesis, funded roles, pre-registered G0 measurement/decision mapping và exit authority | Program Owner → Architecture Board | Không bắt đầu platform build |
 | `SG-1 Route discovered` | Context/classification, value, owner, data/security/dependency, mirror safety và rollback rõ | Route Owner → Architecture + affected Domain/Security | Giữ legacy, đóng gap/chọn route khác |
 | `SG-2 Shadow ready` | Contract/action, delegation, final PEP, signed config/LKG/readiness và negative tests đạt | Runtime + Domain + Security → Security + Architecture | Không shadow |
 | `SG-3 Canary ready` | Shadow không có unexpected allow; approved semantic/latency/error/capacity/cost/revocation/rollback target đạt | Route + SRE → Product + Security + Architecture | Rollback/optimize/pivot |
@@ -617,6 +649,11 @@ Security floor không được waive bằng legacy baseline. Target biến thiê
 route/risk owner duyệt trước phép đo. Data/Compliance Authority approve thêm khi
 liên quan classification, residency, retention, audit hoặc external obligation.
 Không gate nào do evidence producer tự phê duyệt một mình.
+
+Review MAY batch trong cùng Board sitting và reuse cùng evidence locator; mỗi pack
+MAY là one-page index tới raw evidence. Gate outcome vẫn tách: `SG-4` MUST NOT
+`PASS` trước canary observation của `SG-3`. Pre-authorization/delegation
+không phải pre-approval của evidence chưa tồn tại.
 
 ### 7.4 CONTINUE / PAUSE / PIVOT / ABORT
 
@@ -630,6 +667,8 @@ Không gate nào do evidence producer tự phê duyệt một mình.
 | `ABORT consolidation` | Không có compliant path/owner/capacity; value fail; cost/risk vượt envelope sau replan | Dừng build; rollback controlled legacy/hybrid; revoke pilot route/credential; archive evidence |
 | `RESTART` | Owner, capacity, business case và architecture decision mới đã có | Bắt đầu G0 mới; không reuse stale `PASS` |
 
+`PIVOT — secure in place` là successful outcome khi shared controls tạo
+measured value và runtime consolidation không đạt approved envelope.
 Sunk cost không phải lý do `CONTINUE`.
 Route owner MAY invoke immediate `PAUSE`/rollback theo gate mà không chờ Board.
 Program đưa recommendation; Board duyệt `CONTINUE/PIVOT/ABORT/RESTART` tại
@@ -646,7 +685,7 @@ link tới system of record hiện hữu:
 
 | Pack | Nội dung | Gate chính |
 |---|---|---|
-| `EP-01 Current State & Ownership` | Context/dependency/data/identity, owners, value và pilot ROM | SG-0/SG-1 |
+| `EP-01 Current State & Ownership` | Context/dependency/data/identity, owners, pre-registered measurement, baseline/value và pilot ROM | SG-0/SG-1 |
 | `EP-02 Contract & Security` | OpenAPI/schema, action, AuthZ/delegation/trust, consistency, threat và conformance | SG-2 |
 | `EP-03 Performance & Operations` | SLI, load/fault/rotation/revocation/rollback, capacity/cost, audit/DR/runbook | SG-3/SG-4 |
 | `EP-04 Migration & Decisions` | Cohort state, approval, ADR, legacy-FR traceability, exit và retirement | All |
@@ -670,11 +709,15 @@ authority thì disposition là `PAUSE`, không phải approval ngầm.
 
 ## Phụ lục A. Mức tuân thủ bắt buộc
 
-- Parser: spoofed header, path normalization, smuggling và route collision.
-- AuthZ: cross-tenant/resource, stale/spoofed facts, `INDETERMINATE` và bypass.
-- Identity: plaintext, expiry, audience/action/hop mismatch, replay và token leak.
-- Config: signature/version/expiry/rollback, rotation, readiness và N/N-1.
-- Data/operation: SSRF, PII leak, shadow safety, idempotency, consistency và reconciliation.
+- `GR-03` — Parser: spoofed header, normalization, smuggling và route collision.
+- `GR-04/GR-05` — AuthZ: cross-tenant/resource, stale/spoofed facts,
+  `INDETERMINATE` và bypass.
+- `GR-04` — Identity: plaintext, expiry, audience/action/hop mismatch, replay
+  và token leak.
+- `GR-06` — Config/supply: signature, provenance, version, rollback,
+  rotation, readiness và N/N-1.
+- `GR-02/GR-04/GR-07/GR-08` — Data/operation: SSRF, PII leak, shadow safety,
+  idempotency, consistency và reconciliation.
 
 ---
 
