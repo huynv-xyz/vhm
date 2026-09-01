@@ -3,7 +3,7 @@
 | Thuộc tính | Giá trị |
 |---|---|
 | Trạng thái | READY FOR ARCHITECTURE REVIEW |
-| Phiên bản | 2.0-rc1 |
+| Phiên bản | 2.1-rc1 |
 | Ngày | 01/09/2026 |
 | Phạm vi | Hợp nhất agent-api, market-api, core-broker-api thành một BFF logic tập trung |
 | Pilot baseline | market.order.read |
@@ -124,10 +124,18 @@ Các ý từ sách được chuyển thành decision, không sao chép thành ch
 | Workload identity | SPIFFE specifications | SPIFFE ID, SVID, Workload API, trust bundle/federation |
 | Workload attestation | SPIRE | Node/workload attestation và automated SVID issuance |
 | User/delegation token | OIDC/OAuth; RFC 8693, 8705, 9700 | Token exchange, actor/caller, audience và sender constraint |
+| Rate-limit response | RFC 9333 | Retry-After/RateLimit field contract không lộ capacity nhạy cảm |
 | Service mesh | Istio security/traffic docs | mTLS, AuthorizationPolicy, gateway, rollout và telemetry |
 | Policy evaluation | OPA | Local/near-PDP, signed bundle, decision logging |
 | Telemetry | OpenTelemetry | W3C context, metrics, traces và correlated logs |
 | API verification | OWASP API Security Top 10 | BOLA, broken auth, resource consumption, misconfiguration |
+
+### 0.7 Revision history
+
+| Version | Date | Disposition | Nội dung chính |
+|---|---|---|---|
+| 2.0-rc1 | 01/09/2026 | Superseded | Centralized BFF Zero Trust baseline đầu tiên cho Architecture Review |
+| 2.1-rc1 | 01/09/2026 | Current | G0 evidence, temporal consistency/RYW, multi-layer rate limit, durable invalidation, latency benchmark, mesh unit cost và migration ROM |
 
 ---
 
@@ -298,6 +306,26 @@ local bằng signed, valid bundle.
 - Chưa chứng minh STRICT mTLS/default-deny không còn bypass path.
 - Chưa có sidecar policy, performance và failure-mode evidence cho Phase 1.
 - Chưa có token-exchange profile và replay/audience negative tests.
+
+## 1.6 Phạm vi phê duyệt của Architecture Review
+
+Architecture Review của phiên bản này được yêu cầu phê duyệt:
+
+- Target architecture L2, security invariants và ownership boundary.
+- Baseline Phase 1: modular monolith, Istio sidecar/Istio CA, OPA co-located,
+  OAuth token exchange và route-by-route strangler migration.
+- Guardrail bắt buộc cho các quyết định L3 và quyền khởi động G0 Discovery.
+
+Phê duyệt tài liệu này **không đồng nghĩa** với:
+
+- Xác nhận current state đã được inventory đầy đủ.
+- Cho phép chuyển production traffic trước khi các blocker được đóng.
+- Phê duyệt timeline, headcount hoặc chi phí khi chưa có G0 evidence.
+- Bỏ qua G1-G6 gate hoặc cho phép owner tự giảm security floor.
+
+Architecture approval là **conditional approval**. G0 exit cần evidence pack tại
+mục 4.1.1; mọi giả định bị evidence chứng minh sai phải tạo impact assessment
+và ADR trước khi tiếp tục build.
 
 ---
 
@@ -491,6 +519,36 @@ Không bắt đầu migrate trước khi mọi route in-scope có một record:
 | rollback_route | Đường quay lại legacy |
 | target_owner | Owner sau migrate |
 
+## 4.1.1 G0 evidence pack và assumption register
+
+G0 không hoàn tất bằng ticket status. Mỗi BFF legacy MUST cung cấp một evidence
+pack có source, thời điểm thu thập và owner ký xác nhận:
+
+| Evidence | Nguồn tối thiểu | Acceptance cho G0 exit |
+|---|---|---|
+| Route inventory | Gateway config, OpenAPI, access log và code scan | 100% route có owner/state hoặc exception được duyệt |
+| Dependency graph | Trace, service-mesh telemetry và static analysis | Mỗi route có downstream, fan-out và failure dependency |
+| Data access | Code/config/credential và database audit | Direct DB access, table và write/read mode được phân loại |
+| Security path | IAM config, token sample đã redacted và policy | AuthN/AuthZ location, audience, actor/caller và bypass path rõ |
+| Traffic baseline | Tối thiểu 14 ngày gồm hai chu kỳ tải đỉnh | RPS, concurrency, payload, p50/p95/p99 và error taxonomy |
+| Logic decomposition | Code walkthrough với BFF/domain owner | Mọi handler map vào taxonomy mục 4.2 |
+| Test/rollback readiness | CI result, synthetic test và routing config | Coverage hiện tại, rollback route và owner được ghi nhận |
+
+Assumption register MUST có:
+
+    assumption_id
+    statement
+    affected_decision_or_route
+    evidence_required
+    owner
+    due_gate
+    status: UNVERIFIED | CONFIRMED | REJECTED
+    impact_if_rejected
+
+`UNVERIFIED` không được tự chuyển thành `CONFIRMED`. Assumption ảnh hưởng identity,
+data ownership, authorization boundary hoặc migration safety là blocker; khi bị
+`REJECTED`, owner phải dừng route liên quan và lập ADR/plan thay đổi.
+
 ## 4.2 Taxonomy phân rã route
 
 | Loại logic trong BFF cũ | Đích đến | Ví dụ |
@@ -594,6 +652,8 @@ Registry là source of truth cho:
 - required authentication strength.
 - coarse policy set.
 - downstream target và timeout budget.
+- consistency profile, max_age/max_skew và partial-response rule.
+- edge/local/distributed/domain rate-limit policy và quota hierarchy.
 - idempotency requirement.
 - audit durability mode.
 - migration state và legacy fallback.
@@ -914,6 +974,19 @@ Các helper tình cờ giống nhau SHOULD được duplicate nhỏ thay vì t�
 | FR-41 | W3C trace propagation | request/trace/outcome nối được qua hop |
 | FR-42 | Baggage minimization | Không có raw token, role list, PII nhạy cảm |
 
+## 7.7 Evidence, consistency and capacity requirements
+
+| ID | Requirement | Acceptance |
+|---|---|---|
+| FR-43 | G0 as-built evidence pack | Route/dependency/data/security/traffic inventory đủ acceptance mục 4.1.1 |
+| FR-44 | Aggregated consistency profile | Mỗi aggregated route khai báo profile; stale/degraded không bị che giấu |
+| FR-45 | Read-your-writes marker | Marker opaque, scoped, expiring và domain-verified; không silent fallback |
+| FR-46 | Multi-layer rate limiting | Edge/BFF local/BFF distributed/domain có key, quota và failure profile |
+| FR-47 | Durable invalidation transport | At-least-once, idempotent, ordered/versioned, replay và lag observable |
+| FR-48 | Security-path benchmark | Warm/cold/rotation/degradation có p50/p95/p99 và đạt gate mục 12.3.2 |
+| FR-49 | Mesh unit-cost envelope | Sidecar/control-plane/xDS/telemetry có capacity và cost report trước G4 |
+| FR-50 | Migration ROM contract | G0 tạo P50/P80, critical path, role/headcount và assumption register |
+
 ---
 
 # 8. Canonical Contracts
@@ -1051,7 +1124,7 @@ Không được:
     error:
       code: stable_code
       category: AUTHENTICATION | AUTHORIZATION | VALIDATION |
-                CONFLICT | RATE_LIMIT | DEPENDENCY | INTERNAL
+                CONFLICT | CONSISTENCY | RATE_LIMIT | DEPENDENCY | INTERNAL
       message: safe localized or generic message
       retryable: false
       request_id: UUID
@@ -1066,6 +1139,8 @@ Mapping tối thiểu:
 | Resource visibility policy | 404 hoặc 403 | Phải nhất quán theo domain |
 | Schema sai | 400 | Field-level safe detail |
 | Version conflict | 409 | Không retry mù |
+| Read-your-writes chưa đạt | 409 hoặc 503 | Theo public contract; Retry-After nếu retryable |
+| Bounded-staleness không đạt | 503 hoặc partial | Không silently trả stale required component |
 | Quota/rate limit | 429 | Retry-After nếu có |
 | Deadline hết | 504 | Không đổi thành success |
 | Dependency unavailable | 503 | Theo required/optional contract |
@@ -1163,6 +1238,58 @@ Failure rules:
 7. Audit chứa dependency result summary, không chứa raw sensitive payload.
 
 Fan-out MUST có hard maximum. Dynamic fan-out từ client input phải validate và quota.
+
+### 9.2.1 Cross-domain temporal consistency contract
+
+Centralized BFF không được ngụ ý rằng dữ liệu từ nhiều domain thuộc cùng một
+database snapshot. Mỗi aggregated route MUST khai báo đúng một consistency
+profile trong route registry:
+
+| Profile | Guarantee | Khi không đạt |
+|---|---|---|
+| EVENTUAL | Mỗi component có version, observed_at và freshness riêng | MAY trả dữ liệu nếu contract cho phép và UI nhận được stale/degraded indicator |
+| BOUNDED_STALENESS | Required component không quá max_age và chênh lệch không quá max_skew | Không được silently degrade; trả typed CONSISTENCY_UNAVAILABLE hoặc partial theo contract |
+| READ_YOUR_WRITES | Read quan sát tối thiểu commit marker của mutation trước đó | Bounded wait; nếu chưa đạt trả CONSISTENCY_PENDING và Retry-After |
+| ATOMIC_SNAPSHOT | Một snapshot logic duy nhất | BFF không tự cung cấp cross-domain; phải dùng owning read model/application service |
+
+Response contract tối thiểu:
+
+    consistency:
+      requested: EVENTUAL | BOUNDED_STALENESS | READ_YOUR_WRITES
+      achieved: SATISFIED | DEGRADED | UNSATISFIED
+      overall_observed_at: timestamp or null
+      max_skew_ms: integer or null
+      components:
+        market:
+          version: opaque
+          observed_at: timestamp
+          freshness: FRESH | STALE | UNKNOWN
+          required: true
+
+Quy tắc:
+
+- `overall_observed_at` MUST là `null` nếu không có common snapshot được domain
+  chứng minh; BFF không được lấy timestamp mới nhất hoặc cũ nhất để giả lập.
+- Mỗi domain MUST authorize trên cùng snapshot/version mà domain dùng để tạo
+  component response.
+- UI/client contract MUST định nghĩa cách hiển thị `DEGRADED`, `STALE`, partial
+  component và thời điểm người dùng nên refresh.
+- Dữ liệu `UNKNOWN` hoặc quá freshness ceiling không được dùng cho security
+  decision dù route cho phép hiển thị degraded business data.
+- Aggregated response chứa field xung đột giữa các domain phải có source owner;
+  BFF không tự chọn một giá trị làm source of truth.
+
+### 9.2.2 Read-your-writes protocol
+
+- Mutation thành công SHOULD trả opaque `commit_marker` do owning domain phát
+  hành, scope theo tenant/resource và có expiry.
+- Client MAY gửi marker trong request read kế tiếp qua contract field/header đã
+  đăng ký; BFF chỉ validate envelope và chuyển đến đúng audience.
+- Domain/read model quyết định marker đã được quan sát hay chưa; BFF MUST NOT
+  parse, tăng version hoặc tự tạo marker.
+- Bounded wait nằm trong remaining request deadline và không được busy-poll.
+- Marker hết hạn, sai tenant/resource/audience hoặc không xác thực được phải trả
+  typed error; không fallback âm thầm sang eventual consistency.
 
 ## 9.3 Single-domain mutation
 
@@ -1574,6 +1701,49 @@ Cache consumer phải monotonic theo version. Out-of-order event không được
 evidence cũ. Security propagation SLO đo từ effective_at đến mọi relevant PEP xác
 nhận version.
 
+### 10.12.1 Invalidation transport profile
+
+Invalidation MUST đi qua authenticated durable pub/sub hoặc control stream có
+các thuộc tính sau:
+
+- At-least-once delivery; consumer idempotent theo `event_id` và `new version`.
+- Ordering theo subject/resource key hoặc monotonic version check tương đương.
+- Consumer replay được sau restart/disconnect; có checkpoint và dead-letter flow.
+- Producer ACL, schema validation, integrity protection và audit trail.
+- Consumer lag, oldest-unapplied-event age, apply failure và acknowledgement
+  coverage là SLI bắt buộc.
+- Event payload chỉ chứa cache key/version/reason tối thiểu; không phát token,
+  password, credential hoặc raw sensitive profile.
+- Emergency global-deny/revocation có priority channel và on-call runbook, nhưng
+  TTL/freshness ceiling vẫn là safety net khi event transport lỗi.
+
+Mapping tối thiểu:
+
+| Event class | Cache/state bị tác động | Hành vi consumer |
+|---|---|---|
+| User/session disable, credential theft | Session, entitlement và decision cache | Evict/mark revoked; terminate privileged stream trong propagation SLO |
+| Role/entitlement change | Entitlement và decision cache | Chỉ nhận version mới hơn; re-evaluate request kế tiếp |
+| Resource ownership/classification change | Resource decision và response cache | Evict theo domain key/version; không wildcard toàn tenant nếu không cần |
+| Signing key/policy/global deny | JWKS, policy bundle và decision cache | Verify signed version; atomic activate hoặc giữ LKG trong freshness ceiling |
+| Workload revoke/quarantine | Workload identity/path | Deny new connection và drain/terminate theo risk class |
+
+Kafka, Redis Streams hoặc event platform nội bộ là implementation option. L2
+contract không phụ thuộc vendor; lựa chọn L3 phải chứng minh durability, ordering,
+replay và propagation SLO nêu trên.
+
+Pilot propagation baseline, đo từ `effective_at` đến acknowledgement của mọi
+relevant healthy PEP:
+
+| Event class | p99 propagation ceiling |
+|---|---:|
+| Emergency global deny / signing-key compromise | 10 giây |
+| High-risk actor, session hoặc workload revoke | 30 giây |
+| Standard entitlement/resource invalidation | 60 giây |
+
+PEP disconnected lâu hơn ceiling phải rời readiness cho protected route hoặc
+fail closed theo action profile; reconnect phải replay từ checkpoint trước khi
+được nhận protected traffic.
+
 Long-lived stream/session:
 
 - Credential lifetime có trần.
@@ -1706,7 +1876,15 @@ Baseline phân bổ ban đầu cho request có deadline 1,000 ms:
 | Response shaping/network ra | 100 ms |
 | Safety reserve | 100 ms |
 
-Đây chỉ là example. Budget production phải xuất phát từ SLO và baseline.
+`100 ms` cho BFF guard/auth/coarse policy là **hard deadline allocation**, không
+phải p95 objective. `p95 platform overhead < 50 ms` tại mục 12.6 là service
+objective nằm bên trong allocation này. Platform overhead được đo từ lúc BFF
+nhận request đến khi dispatch downstream cộng với local response/audit enqueue;
+nó MUST bao gồm thời gian chờ STS, distributed quota và mọi platform dependency
+trên hot path, nhưng loại trừ domain processing/network sau downstream dispatch.
+
+Budget production chỉ được điều chỉnh bằng measured baseline và sign-off theo
+mục 2.4; không được loại một dependency khỏi metric để làm đẹp SLO.
 
 Quy tắc:
 
@@ -1714,6 +1892,48 @@ Quy tắc:
 - Connect timeout tách khỏi response timeout.
 - Retry phải nằm trong remaining budget.
 - Optional call bị hủy trước required critical path.
+
+### 12.3.1 Security-path latency decomposition
+
+Mỗi request trace MUST tách tối thiểu các span/metric:
+
+| Component | Hot-path baseline | Điều kiện bắt buộc |
+|---|---|---|
+| Request guard, route lookup | Local | Không network lookup hoặc dynamic code load |
+| JWT/credential verification | Local với JWKS hợp lệ | Không synchronous JWKS fetch khi đang nhận protected traffic |
+| OPA coarse decision | Co-located | Không remote PIP/PDP call; facts có freshness/version |
+| Distributed quota | Bounded remote/local lease | Timeout ngắn hơn security allocation; có local conservative fallback |
+| OAuth token exchange | STS call hoặc policy-approved bounded cache | Audience/scope/action đúng; thời gian STS luôn được tính vào platform overhead |
+| Audit | Non-blocking enqueue hoặc durable mode theo action | Backpressure/failure behavior công khai, không drop âm thầm |
+
+Protected readiness MUST giữ replica out-of-service cho đến khi route config,
+JWKS và policy bundle hợp lệ đã được nạp. Key rotation phải dùng overlap/versioned
+refresh; request không được trở thành cơ chế fetch key lần đầu.
+
+### 12.3.2 Benchmark matrix và promotion gate
+
+Benchmark trước G3 MUST công bố raw result và p50/p95/p99 cho:
+
+| Scenario | Evidence bắt buộc |
+|---|---|
+| Warm cache, OPA allow/deny | Guard, JWT, route, OPA, quota và total platform overhead |
+| New replica/readiness | Thời gian nạp config/JWKS/policy; zero protected request trước ready |
+| Signing-key rotation | Verification success/error và latency trong overlap window |
+| Policy bundle rollout/LKG | Compile/activate time, decision latency và rollback |
+| STS normal/slow/unavailable | Token-exchange p50/p95/p99, circuit behavior và error taxonomy |
+| Distributed limiter slow/partitioned | Local fallback latency, allowance safety và hot-key isolation |
+| Forecast peak 1.5x và burst 2x | CPU, memory, queue, saturation, retry amplification |
+
+Pilot gate:
+
+- Warm-path p95 platform overhead MUST dưới 50 ms.
+- p99 MUST nằm trong 100 ms security allocation; timeout không được chuyển
+  thành allow hoặc retry storm.
+- Unexpected synchronous JWKS/policy fetch trên request path MUST bằng 0.
+- STS/limiter degradation MUST giữ đúng failure profile và không làm domain
+  traffic vượt retry/connection budget.
+- Nếu gate không đạt, route không được vào canary; owner phải giảm hot-path work,
+  điều chỉnh topology hoặc xin thay đổi SLO bằng evidence/ADR.
 
 ## 12.4 Retry
 
@@ -1736,6 +1956,41 @@ Thứ tự bảo vệ:
 4. Reject low-priority traffic có Retry-After.
 5. Bảo vệ mutation/high-priority route theo policy.
 
+### 12.5.1 Multi-layer rate limiting và distributed quota
+
+Rate limiting MUST có nhiều lớp; một global counter duy nhất không được trở thành
+correctness dependency hoặc single point of failure:
+
+| Enforcement layer | Key/dimension chính | Mục tiêu |
+|---|---|---|
+| Edge | Source/network reputation, client credential, API product, coarse route class | Chặn volumetric/application abuse trước khi vào BFF |
+| BFF local | Replica, route, concurrency, fan-out cost | Tự bảo vệ event loop/thread/connection pool với quyết định sub-millisecond |
+| BFF distributed | Tenant, actor, client, action và entitlement | Fairness xuyên replica, contractual quota và anti-hot-tenant |
+| Domain service | Expensive operation, resource/business invariant | Bảo vệ source of truth và cost mà BFF không nhìn thấy đầy đủ |
+
+Quy tắc bắt buộc:
+
+- Local token bucket/leaky bucket MUST tồn tại ngay cả khi distributed component
+  khỏe; distributed quota không thay bulkhead và concurrency limit.
+- Distributed rate-limit component sở hữu atomic counter/lease. Redis, Envoy
+  Rate Limit Service hoặc implementation tương đương là lựa chọn L3.
+- Key schema được version hóa, bounded cardinality, không dùng raw user input và
+  không để attacker tạo key không giới hạn.
+- Thứ tự áp dụng quota và cách chia budget parent/child phải deterministic; retry
+  attempt tính quota theo route contract, không mặc định tạo allowance mới.
+- Response 429 SHOULD có `Retry-After` và RFC 9333 RateLimit fields khi public
+  contract cho phép; không lộ tenant/global capacity nhạy cảm.
+- Không hứa strong global quota xuyên region trong Phase 1. Single-region
+  multi-AZ quota phải chịu được mất một replica/failure domain.
+
+Failure profile:
+
+| Failure | Low-risk read | Protected read | Mutation/high-cost |
+|---|---|---|---|
+| Distributed limiter timeout, local limiter khỏe | Local conservative cap và audit | Local conservative cap; không vượt entitlement ceiling | Fail closed hoặc reservation đã cấp còn hiệu lực |
+| Counter store partition/version conflict | Không reset allowance | Không reset allowance; alert | Không double-spend quota; typed 429/503 theo route contract |
+| Cardinality/tenant hot key | Isolate key/cohort | Per-tenant shed | Không làm cạn pool của tenant khác |
+
 ## 12.6 Pilot SLO baseline
 
 Các ngưỡng dưới đây là baseline cho pilot; production SLO được hiệu chỉnh bằng
@@ -1749,7 +2004,8 @@ traffic baseline và capacity test theo quy tắc tại mục 2.4:
 | p95 platform overhead, không tính downstream | dưới 50 ms |
 | Audit linkage | 99.99% cho action bắt buộc audit |
 | Config rollback | dưới 10 phút |
-| Revocation propagation high-risk | theo security floor đã phê duyệt |
+| Emergency global-deny propagation p99 | không quá 10 giây |
+| High-risk revocation propagation p99 | không quá 30 giây |
 
 Không tính client 4xx hợp lệ hoặc domain business deny vào BFF availability.
 
@@ -1985,6 +2241,45 @@ Istio config growth là một capacity dimension:
 - Không tạo route/policy theo từng user hoặc resource instance.
 - Performance test đồng thời data-plane request và control-plane config churn.
 
+### 14.8.1 Sidecar capacity và unit-cost model
+
+Sidecar cost MUST được tính như một phần của product capacity, không ẩn trong
+platform overhead. Mỗi môi trường phải có bảng `minimum / expected / peak` cho:
+
+| Dimension | Đơn vị/evidence |
+|---|---|
+| Proxy footprint | CPU request/usage p50-p95-p99 và memory RSS/limit trên mỗi pod |
+| Replica multiplier | Replica-hours theo module/failure domain |
+| Data-plane overhead | Request latency delta, connection count, throughput và TLS handshake rate |
+| Telemetry | Log/metric/trace GiB mỗi ngày, sampling rate, collector/export queue |
+| Control plane | Proxy count, config object/serialized size, Istiod CPU/memory |
+| xDS | Push count/rate, convergence p50/p95/p99, rejected config và version skew |
+
+Cost envelope tính tối thiểu:
+
+    monthly_sidecar_cpu_core_hours = sum(replica_hours * sidecar_cpu_request)
+    monthly_sidecar_memory_gib_hours = sum(replica_hours * sidecar_memory_request_gib)
+    monthly_telemetry_gib = daily_signal_gib * retention_or_export_days
+    monthly_mesh_cost = cpu_cost + memory_cost + telemetry_cost + control_plane_cost
+
+Không dùng resource request làm số đo usage. Báo cáo MUST có cả request, observed
+peak, headroom và đơn giá hạ tầng nội bộ/cloud tại thời điểm review.
+
+Acceptance gate:
+
+- Tại 1.5x forecast peak, application và sidecar mỗi bên còn ít nhất 30% CPU
+  headroom; không memory throttle/OOM và connection queue không tăng không giới hạn.
+- Sidecar p95 latency delta không vượt 10% so với no-mesh baseline và toàn bộ
+  platform vẫn đạt mục 12.6.
+- Sidecar memory p99 phải thấp hơn limit với tối thiểu 20% headroom.
+- Rejected xDS config bằng 0; convergence p99 và security-policy propagation nằm
+  trong SLO được Security/SRE phê duyệt.
+- Mất một Istiod replica hoặc một failure domain không làm data plane mất policy
+  hợp lệ; LKG/freshness behavior phải qua chaos test.
+
+Kết quả benchmark, replica forecast và đơn giá MUST được đính kèm G4 capacity
+report. Vượt cost envelope hoặc gate cần sizing change hay ADR trước canary.
+
 ---
 
 # 15. Migration Strategy
@@ -2069,6 +2364,73 @@ State transition cần evidence, không chỉ ticket status.
 - Mesh/network route deny.
 - Dashboard và on-call ownership đóng.
 - Code/service archive theo retention policy.
+
+## 15.3.1 Critical path
+
+```mermaid
+flowchart LR
+    G0["G0 Evidence<br/>Route inventory + baseline"]
+    Contract["Canonical contract<br/>Route / identity / error / audit"]
+    IAM["IAM / STS profile<br/>Trust domain + delegation"]
+    DomainPEP["Domain readiness<br/>Resource PEP + API"]
+    Foundation["BFF foundation<br/>Modules + mesh + OPA + quota"]
+    Shadow["Shadow / diff / rollback<br/>infrastructure"]
+    Pilot["market.order.read<br/>pilot"]
+    Reads["Proxy + aggregated<br/>read waves"]
+    Writes["Single-domain + cross-domain<br/>write waves"]
+    Retire["Observation<br/>revoke + retire legacy"]
+
+    G0 --> Contract
+    G0 --> IAM
+    G0 --> DomainPEP
+    Contract --> Foundation
+    IAM --> Foundation
+    Foundation --> Shadow
+    DomainPEP --> Shadow
+    Shadow --> Pilot --> Reads --> Writes --> Retire
+```
+
+Critical path mặc định là G0 evidence → IAM/STS và domain PEP readiness → BFF
+foundation → shadow/rollback → pilot → migration waves → retirement. Việc tăng
+số developer BFF không rút ngắn các dependency do IAM, domain owner, Security
+hoặc observation window nắm giữ.
+
+## 15.3.2 ROM estimation và staffing contract
+
+Không publish calendar commitment trước G0 exit. G0 MUST tạo delivery estimate
+P50/P80 với assumptions, dependency, headcount theo role và confidence range.
+
+Mỗi route được phân complexity unit:
+
+| Class | Đặc trưng | Work bắt buộc |
+|---|---|---|
+| C1 Pure proxy | Không composition/mutation | Contract, route, auth, shadow và retire |
+| C2 Read/composition | Fan-out, partial/staleness | Consistency contract, domain PEP, load/chaos |
+| C3 Single-domain mutation | Invariant/idempotency | Same-snapshot auth, audit và rollback safety |
+| C4 Cross-domain workflow | Saga/async/compensation | Application service, workflow state và recovery drill |
+
+ROM model:
+
+    weighted_route_units = N1*W1 + N2*W2 + N3*W3 + N4*W4
+    total_person_weeks = foundation + domain_readiness + weighted_route_units
+                         + security_platform + sre_qa + retirement
+    calendar_weeks ~= critical_path_foundation
+                     + ceil(weighted_route_units / effective_parallel_capacity)
+                     + mandatory_observation_windows
+
+`W1..W4` không được lấy từ cảm tính. Team phải calibrate bằng pilot và tối thiểu
+10 route đại diện, tính lại throughput sau mỗi wave. Estimate MUST tách:
+
+- Platform/IAM/Security foundation.
+- BFF engineering theo module.
+- Domain engineering cho API/PEP/invariant extraction.
+- SRE/QA/observability/load/security test.
+- Product/consumer migration và legacy retirement.
+
+Minimum active roles gồm Architecture/Tech Lead, BFF owner, IAM/Security,
+Platform/SRE, QA và domain engineer của từng wave. Một người MAY giữ nhiều role
+nhưng SoD cho high-risk policy/release vẫn phải giữ. ReviewBoard nhận estimate
+P50/P80, không nhận một ngày duy nhất không có confidence/assumption.
 
 ## 15.4 Pilot market.order.read
 
@@ -2370,6 +2732,12 @@ coverage và operating ownership.
 | R-17 | Stale LKG dùng vô hạn | Revoked access tiếp tục | Freshness ceiling và fail closed |
 | R-18 | Ambient policy đặt sai enforcement point | Source identity/policy bypass | Waypoint/ztunnel conformance test |
 | R-19 | Federation mở quá rộng | Cross-domain lateral movement | Explicit bundle/flow approval, narrow trust |
+| R-20 | Aggregated read trộn snapshot khác thời điểm | Người dùng quyết định trên dữ liệu mâu thuẫn | Consistency profile, version/observed_at, RYW marker hoặc owning read model |
+| R-21 | STS/quota/JWKS kéo dài security hot path | Vỡ latency SLO, cascade | Local verification/eval, readiness preload, benchmark và bounded failure profile |
+| R-22 | Distributed limiter hỏng/reset allowance | DoS hoặc vượt quota | Local conservative cap, atomic/versioned counter và partition test |
+| R-23 | Invalidation event mất/trễ/out-of-order | Quyền đã revoke tiếp tục dùng | Durable at-least-once stream, monotonic version, lag SLO và TTL ceiling |
+| R-24 | Sidecar/xDS/telemetry cost vượt forecast | Tăng chi phí, throttle hoặc control-plane outage | Unit-cost model, headroom gate và config-churn load test |
+| R-25 | Timeline cam kết trước inventory | Trễ kế hoạch và thiếu owner | G0-calibrated P50/P80 ROM, critical path và assumption register |
 
 ## 18.2 Trade-offs
 
@@ -2406,6 +2774,11 @@ guardrail tương ứng. Thay đổi baseline cần ADR mới.
 | L3-13 | Internal workload dùng mTLS-bound credential khi STS hỗ trợ; public client dùng DPoP theo risk profile | Client/resource eligibility matrix | IAM + Security | G3 |
 | L3-14 | Phase 1 chỉ dùng deterministic identity/device/resource facts; risk score không được tạo allow | Provider allowlist và freshness nhỏ hơn decision TTL | Security + Data owner | G3 |
 | L3-15 | OPA evaluator co-located với BFF; signed bundle phân phối ngoài request path | Sidecar/process packaging và bundle polling interval | Security + SRE | G2 |
+| L3-16 | Rate limiting theo bốn lớp và failure profile mục 12.5.1 | Redis/Envoy/service implementation, counter TTL và lease algorithm | Platform + BFF + SRE | G2 |
+| L3-17 | Invalidation transport durable, authenticated, replayable và version-monotonic | Kafka/Redis Streams/internal platform, partition key và retention | Security + Platform | G2 |
+| L3-18 | Mỗi aggregated route có consistency profile; atomic snapshot không làm tại BFF | max_age/max_skew, commit-marker format và UI presentation | BFF + Domain + Product | G1 |
+| L3-19 | Mesh unit-cost/capacity đạt gate mục 14.8.1 | Resource request/limit, telemetry sampling và approved cost envelope | Platform + SRE + FinOps | G4 |
+| L3-20 | Delivery commitment dùng ROM P50/P80 sau G0 | Route weights, team allocation và calendar milestones | Engineering leadership + Product | G1 |
 
 ---
 
@@ -2418,6 +2791,9 @@ guardrail tương ứng. Thay đổi baseline cần ADR mới.
 - [ ] Không có direct domain database access.
 - [ ] Cross-domain write có orchestrator rõ.
 - [ ] Route/action registry có owner/version/rollback.
+- [ ] G0 evidence pack và assumption register đủ acceptance, có owner sign-off.
+- [ ] Aggregated route có consistency profile và UI degraded/stale contract.
+- [ ] Atomic cross-domain view dùng owning read model, không giả snapshot tại BFF.
 
 ## 19.2 Security
 
@@ -2436,6 +2812,7 @@ guardrail tương ứng. Thay đổi baseline cần ADR mới.
 - [ ] Delegation token bind actor, caller, audience, action và tenant.
 - [ ] Sidecar Phase-1 policy, performance, failure mode và bypass test đạt gate.
 - [ ] Egress destination và SSRF control đã kiểm tra.
+- [ ] Invalidation transport đạt ordering/replay/lag và emergency-revocation drill.
 
 ## 19.3 Reliability
 
@@ -2445,6 +2822,9 @@ guardrail tương ứng. Thay đổi baseline cần ADR mới.
 - [ ] Load/chaos/capacity result.
 - [ ] Route-level rollback.
 - [ ] Dashboard, alert và runbook.
+- [ ] Security-path warm/cold/rotation/degradation benchmark đạt p95/p99 gate.
+- [ ] Rate-limit local/distributed failure và hot-tenant isolation đã test.
+- [ ] Sidecar/xDS/telemetry capacity và unit-cost envelope được phê duyệt.
 
 ## 19.4 Migration
 
@@ -2454,6 +2834,7 @@ guardrail tương ứng. Thay đổi baseline cần ADR mới.
 - [ ] Cohort và control ổn định.
 - [ ] Promotion gate đo được.
 - [ ] Legacy identity/path được revoke sau retire.
+- [ ] Critical path và ROM P50/P80 có route mix, role/headcount và assumptions.
 
 ---
 
@@ -2507,6 +2888,9 @@ Rename action là breaking policy/audit change và cần migration mapping.
 | Strangler | Migrate tăng dần qua façade/traffic routing |
 | Bulkhead | Cô lập tài nguyên để hạn chế cascade |
 | LKG | Last Known Good |
+| Consistency profile | Guarantee freshness/temporal consistency công khai của một aggregated route |
+| Commit marker | Opaque domain evidence dùng để yêu cầu read-your-writes |
+| ROM | Rough Order of Magnitude estimate kèm confidence và assumptions |
 
 # Appendix D. References
 
@@ -2541,6 +2925,8 @@ Nguồn chuẩn:
   https://www.rfc-editor.org/rfc/rfc8705.html
 - OAuth 2.0 Security Best Current Practice, RFC 9700:
   https://www.rfc-editor.org/rfc/rfc9700.html
+- RateLimit Fields for HTTP, RFC 9333:
+  https://www.rfc-editor.org/rfc/rfc9333.html
 - Open Policy Agent Envoy integration:
   https://www.openpolicyagent.org/docs/envoy
 - Open Policy Agent bundles:
@@ -2582,6 +2968,7 @@ Tài liệu nội bộ liên quan:
 | SPIFFE/SPIRE | Workload identity, attestation, federation | FR-25-36, 10.7 |
 | RFC 8693 | Delegation, actor token, audience | FR-10/39, 10.8 |
 | RFC 8705/9700 | Sender constraint and audience restriction | 10.8.3 |
+| RFC 9333 | HTTP rate-limit response fields | FR-46, 12.5.1 |
 | Istio current docs | STRICT mTLS, default-deny, ambient placement | FR-37/38, 10.11 |
 | OPA current docs | Local ext-authz, signed bundles, LKG | FR-29/30/40, 10.10 |
 | OpenTelemetry | Context and signal correlation | FR-41/42, 13 |
@@ -2600,6 +2987,10 @@ Tài liệu nội bộ liên quan:
 | OAuth delegation, không raw-token forwarding | RECOMMENDED FOR APPROVAL | Actor/caller/audience rõ và giảm confused deputy |
 | Istio sidecar Phase 1 | RECOMMENDED FOR APPROVAL | L7 policy/ext-authz semantics rõ; ambient cần ADR và PoC riêng |
 | Strangler route-by-route | RECOMMENDED FOR APPROVAL | Giảm migration risk và rollback được |
+| Explicit aggregated consistency profiles | RECOMMENDED FOR APPROVAL | Không giả cross-domain snapshot; hỗ trợ bounded staleness và read-your-writes |
+| Multi-layer local/distributed rate limiting | RECOMMENDED FOR APPROVAL | Chống abuse, bảo vệ replica/domain và giữ fairness xuyên replica |
+| Durable event-driven invalidation + TTL ceiling | RECOMMENDED FOR APPROVAL | Emergency revocation nhanh nhưng vẫn an toàn khi event transport lỗi |
+| Evidence-based latency, mesh cost và delivery ROM | RECOMMENDED FOR APPROVAL | Không production/canary dựa trên estimate không có benchmark |
 
 # Appendix G. Kết luận thẩm định
 
