@@ -3,7 +3,7 @@
 | Thuộc tính | Giá trị |
 |---|---|
 | Document ID | AP-CBFF-L2 |
-| Phiên bản | 2.5 |
+| Phiên bản | 2.6 |
 | Trạng thái | **READY FOR ARCHITECTURE REVIEW** |
 | Ngày | 01/09/2026 |
 | Architecture Owner | Chief Architect |
@@ -58,53 +58,55 @@ condition verifier, date và minutes locator. Chỉ Board đổi status `D-01..0
 | 2.0–2.2 | Superseded | Thiết kế ban đầu và các vòng bổ sung control/gate |
 | 2.3 | Superseded | Board brief, alternatives, fact base, complexity budget và exit strategy |
 | 2.4 | Superseded | Executive narrative; một decision source; G0 learning cap; nhập operational controls vào core; rút L2 |
-| 2.5 | Current | Topology-neutral D-01; pre-registered measurement; final-PDP/delegation PoC; proportional gate review |
+| 2.5 | Superseded | Topology-neutral D-01; pre-registered measurement; final-PDP/delegation PoC; proportional gate review |
+| 2.6 | Current | One-page Board TL;DR; quantified value floor; mandatory no-reframe abort boundaries |
 
 ---
 
 ## 1. Câu chuyện điều hành và quyết định của Board
 
-### 1.1 Câu chuyện cần Board quyết định
+### 1.1 TL;DR cho Board — quyết định trong một trang
 
-Đề xuất bắt đầu từ một vấn đề chưa được chứng minh. **`HYPOTHESIS`:**
-`agent-api`, `market-api` và `core-broker-api` có thể lặp hoặc diễn
-giải khác các control về identity, action, authorization, error, resilience và
-telemetry. Pain giả định: cùng actor/action qua hai entry point nhận decision hoặc
-audit khác nhau; security change phải phát hành nhiều nơi và bypass khó kiểm kê.
-Chưa có code, trace, incident, traffic, cost hay ownership evidence xác nhận điều
-đó. G0 phải chứng minh hoặc bác bỏ nó.
+**Vấn đề cần kiểm chứng.** `HYPOTHESIS`: `agent-api`, `market-api` và
+`core-broker-api` đang lặp hoặc diễn giải khác các control identity, action,
+authorization, error, resilience và telemetry. Hệ quả nghi ngờ là cùng actor/action
+qua hai entry point có decision hoặc audit khác nhau; một security change phải sửa,
+phối hợp và phát hành nhiều nơi. Chưa có code, trace, incident, traffic, cost hoặc
+ownership evidence đủ để xác nhận. G0 phải chứng minh hoặc bác bỏ giả thuyết; tên
+service không được dùng thay bằng chứng.
 
-Board không được đề nghị cam kết “một service lớn”. Hướng thử là **một logical BFF
-product** với shared contract, action taxonomy, identity, control distribution và
-telemetry. G0/pilot phân xử giữa modular shared runtime và deployable theo
-ownership; domain vẫn sở hữu data, invariant và final resource authorization.
-Migration/rollback giữ theo route. OPA, Istio, SPIRE và mọi product cụ thể chỉ là
-candidate, không phải production approval.
+**Board được xin gì.** Approve tám guardrail làm floor: không singleton hoặc domain
+state/database trong BFF; stable route/action; per-hop workload identity và bounded
+delegation; final authorization tại resource boundary; signed/LKG configuration;
+bounded failure/consistency; migration reversible. Conditional-approve năm quyết
+định: tập trung logical contract/control nhưng defer deployment topology; giữ
+domain/workflow ownership; cấm raw-token forwarding; giữ policy/mesh
+product-neutral; migration theo route có stop-loss. Authorize G0 tối đa **10 ngày
+làm việc/30 person-days**, ba API identifier và một route ứng viên. Board chưa duyệt
+production traffic, rollout, numeric SLO, procurement hoặc topology.
 
-Khoản đầu tư để biết có nên build pilot là **G0 tối đa 10 ngày làm việc và 30
-person-days**, cho ba API identifier và một route ứng viên. Đây là proposed
-planning cap, không phải baseline hoặc rollout estimate. G0 dùng tooling hiện hữu;
-không procurement, persistent platform dependency hay production traffic.
-Checkpoint ngày 5 kiểm tra access/owner/scope; ngày 10 Board phải chọn `CONTINUE`,
-`PAUSE`, `PIVOT` hoặc `ABORT`. Mở rộng cap/scope là quyết định mới.
-Nói cách khác, Board đang mua bằng chứng để giảm uncertainty và định giá pilot,
-không mua trước một platform hoặc một lộ trình rollout.
+**Board mua được gì trong cap.** Ngày 5 kiểm tra access, owner và scope. Trước khi
+xem kết quả, `SG-0` khóa tập alternative × scope, comparator, công thức/threshold
+value, decision mapping và owner. Ngày 10 trả measured fact base, `H-01`
+pilot-funding verdict, evidence status `H-02..05`, final-PEP/delegation feasibility,
+topology comparison plan và pilot ROM. Không procurement, persistent platform
+dependency hoặc production traffic; quá cap/scope cần decision record mới.
 
-`CONTINUE` cần evidence cho thấy duplication tạo chi phí/rủi ro đáng kể; pilot
-có owner, read-only/mirror-safe và rollbackable; domain/IAM có final PEP và bounded
-delegation path; G0 tạo baseline cùng pilot ROM. Pilot sau đó phải chứng minh không
-unexpected authorization allow, giữ isolation/rollback và đạt latency,
-reliability, operational-load, unit-cost targets đã duyệt trước phép đo. “HTTP
-proxy works” không phải success.
+**Rủi ro lớn nhất.** Governance/runtime có thể lớn hơn năng lực vận hành trong khi
+owner, fact base hoặc domain final PEP chưa tồn tại. Vì vậy success không phải “HTTP
+proxy works” hoặc tạo một service lớn: phải không có unexpected authorization allow,
+giữ isolation/rollback và vượt comparator trên value, latency, reliability,
+operational load và unit cost theo target đăng ký trước. OPA, Istio, SPIRE và các
+product khác chỉ là candidate.
 
-Nếu value hypothesis sai hoặc central runtime làm blast radius, lead time hay cost
-xấu hơn alternative, sunk cost không bảo vệ chương trình. `PIVOT` có thể giữ
-BFF deploy riêng nhưng dùng shared controls, giảm scope về proxy/read, hoặc đổi
-technology qua ADR. `ABORT` rollback cohort và revoke route/credential/path.
-`PIVOT — secure in place` là programme outcome thành công khi control
-convergence tạo measured value dù không hợp nhất physical runtime.
-Top risk là governance/runtime lớn hơn năng lực vận hành khi owner, fact base và
-domain final PEP chưa tồn tại; complexity budget và gates là stop-loss.
+**Bốn kết cục tại ngày 10.** `CONTINUE` mở một pilot có cap/funding/gates riêng khi
+security, ownership và value floor đạt; `PAUSE` đóng băng thêm G0 work nhưng không
+gia hạn G0—muốn discovery/remediation thêm phải `RESTART` bằng decision/`SG-0` mới;
+`PIVOT` chọn alternative còn compliant và đạt value floor, gồm secure-in-place như
+một kết quả thành công; `ABORT` bắt buộc khi hết cap mà không có funded
+owner/compliant path hoặc không permitted scope nào đạt pre-registered value floor.
+Sunk cost, đổi tên scope hoặc threshold hậu nghiệm không được biến `ABORT` thành
+`PIVOT`/`CONTINUE`; chi tiết tại §7.4.
 
 ### 1.2 Hồ sơ quyết định duy nhất
 
@@ -176,17 +178,56 @@ hữu:
 | Runtime/cost | Traffic, latency/error/payload/fan-out, compute/platform cost trên route/request và capacity owner |
 | Measurement | Cohort/comparator, operational definition, query/window/exclusion, threshold/rubric, raw locator, owner, approver và version |
 
-`SG-0` MUST pre-register metric/rubric và mapping sang
-`CONTINUE/PIVOT/ABORT` trước khi quan sát G0 result. G0 baseline được dùng để
-đặt pilot targets trước pilot. Mọi thay đổi sau khi xem result phải versioned,
-có rationale/approver và không áp dụng hồi tố.
+`SG-0` MUST đăng ký as-built baseline và enumerate một tập hữu hạn permitted
+`alternative × scope`: secure-in-place bắt buộc, các candidate physical topology và
+reduced/gateway scope nếu áp dụng. Value measurement MUST dùng cùng cohort, time
+horizon, currency và cost basis. Với mỗi permitted pair `a`, G0 tính tối thiểu:
+
+- `duplication_ratio = duplicated control implementation instances / total control
+  implementation instances` trong cohort;
+- `divergence_rate = duplicated control groups có semantic decision/audit mismatch /
+  duplicated control groups được kiểm tra`;
+- `change_amplification = median số repo, deployment và accountable owner phải chạm
+  cho một representative cross-cutting control change`;
+- `benefit_a = annualized avoided duplicated-change effort + avoided attributable
+  incident/audit-remediation loss + avoided baseline runtime/operations cost`, chỉ
+  nhận phần so với as-built có evidence locator và approved loaded-cost/risk value;
+- `TCO_a = annualized migration amortization + added platform/runtime/on-call cost`
+  so với as-built trên cùng horizon;
+- `net_value_a = benefit_a - TCO_a`; `value_ratio_a = benefit_a / TCO_a` khi
+  `TCO_a > 0`, nếu không thì ghi `N/A`.
+
+Một saving chỉ được ghi ở `benefit_a` hoặc giảm `TCO_a`, không cả hai; model này ghi
+saving ở benefit nên `TCO_a < 0` là model error. Mọi ratio yêu cầu denominator `> 0`;
+denominator bằng `0` là `N/A`, không phải `0`/vô cực và không tự tạo `PASS`.
+
+`SG-0` MUST pre-register riêng absolute materiality floor theo currency, ratio hurdle
+và topology-uplift floor. Một pair chỉ đạt G0 value floor trên conservative case khi
+`net_value_a` vượt absolute floor và, nếu `TCO_a > 0`, `value_ratio_a` vượt ratio
+hurdle; ratio hurdle tối thiểu là `1.0` (break-even) hoặc cao hơn theo investment/risk
+policy. `H-01 PASS` chỉ chứng minh ít nhất một control-convergence scope có business
+case đủ để fund reversible pilot so với as-built. Nó không chọn physical topology.
+Pilot/`SG-4` mới đóng `H-02`: physical topology `a` chỉ thắng khi
+`net_value_a - net_value_secure_in_place` vượt pre-registered topology-uplift floor
+và không làm yếu guardrail/SLO. G0 dùng defensible conservative estimate; `SG-3`
+MUST khóa bounded-canary measurement plan và `SG-4` MUST refresh cùng model bằng
+measured canary evidence.
+
+Product/Program và Architecture sở hữu materiality/hurdle; Security phê duyệt risk
+valuation, SRE phê duyệt measurement method. Material security divergence vượt risk
+appetite có thể bắt buộc remediation nhưng không tự chứng minh consolidation.
+`SG-0` MUST pre-register metric/rubric, alternative × scope, comparator, horizon,
+cost basis, threshold, owner/approver, `PAUSE` trigger và mapping sang
+`CONTINUE/PAUSE/PIVOT/ABORT` trước khi quan sát G0 result. G0 baseline được dùng để
+đặt pilot targets trước pilot. Thay đổi sau khi xem result phải versioned, có
+rationale/approver và không áp dụng hồi tố.
 
 ### 2.3 Giả thuyết chưa đóng và điều kiện dừng
 
 | ID | Claim phải đóng | Nếu không chứng minh được |
 |---|---|---|
-| `H-01` | Duplication/phân kỳ đủ lớn để consolidation tạo value | Pivot shared controls hoặc abort runtime consolidation |
-| `H-02` | G0 lập được topology comparison plan/owner/threshold; pilot mới đo isolation/cadence/cost | Retain as-built; không build pilot đến khi comparison khả thi |
+| `H-01` | Ít nhất một permitted control-convergence scope vượt G0 value floor so với as-built và đáng fund reversible pilot | Nếu mọi pair fail/không defensible khi hết cap thì hard-abort `HA-02`; `PASS` không chọn topology |
+| `H-02` | G0 lập comparison plan/owner/threshold; pilot/`SG-4` chứng minh physical topology có incremental value so với secure-in-place cùng isolation/cadence/cost | Pivot secure-in-place nếu nó đạt floor; không physical-consolidate khi topology uplift không đạt |
 | `H-03` | `market.order.read` read-only, mirror-safe và rollbackable | Chọn route khác; không shadow |
 | `H-04` | Domain có final PEP; IAM có bounded delegation path | Giữ legacy, tạo domain facade hoặc technology/reduced-scope pivot |
 | `H-05` | Có accountable owner/capacity và existing platform đáp ứng security floor | Pause, giảm scope hoặc abort; không mặc định thêm platform |
@@ -621,11 +662,15 @@ approver.
 
 ### 7.2 G0 — tranche học tập và pilot
 
-`SG-0` record phải ratify hoặc thay cap đề xuất: 10 ngày, 30 person-days, ba
-API identifier và một pilot; checkpoint ngày 5 và exit decision ngày 10. G0 chỉ
-được inventory/interview, review code/config/trace, baseline và bounded
-feasibility spike bằng tooling hiện hữu—không production, procurement, wide
-migration hoặc persistent platform dependency mới.
+`SG-0` record phải ratify hoặc thay **aggregate** cap đề xuất: 10 ngày, 30
+person-days, ba API identifier và một pilot; checkpoint ngày 5 và exit decision ngày
+10. Cap chỉ bao gồm discovery/remediation trong G0; `PAUSE` không dừng clock, thêm
+person-days hoặc tạo extension. Discovery/remediation G0 sau cap cần `RESTART` với
+decision, funding và `SG-0` mới. `CONTINUE/PIVOT` MAY mở một pilot record có cap,
+funding và gates riêng; đó không phải G0 extension. G0 chỉ được inventory/interview,
+review code/config/trace, baseline
+và bounded feasibility spike bằng tooling hiện hữu—không production, procurement,
+wide migration hoặc persistent platform dependency mới.
 
 Output là measured fact/hypothesis verdict, owner/capacity,
 final-PEP/delegation feasibility, topology comparator, pilot ROM và
@@ -638,11 +683,11 @@ estate chỉ reconcile trước retirement, không trước cohort học đầu 
 
 | Gate | Decision và minimum `PASS` evidence | Accountable → approver | Khi fail |
 |---|---|---|---|
-| `SG-0 G0 authorized` | Board record có scope/cap/date, hypothesis, funded roles, pre-registered G0 measurement/decision mapping và exit authority | Program Owner → Architecture Board | Không bắt đầu platform build |
+| `SG-0 G0 authorized` | Board record có finite alternative × scope, aggregate scope/cap/date, hypothesis, funded roles, absolute/ratio/uplift thresholds, `PAUSE` trigger, decision mapping và exit authority | Program Owner → Architecture Board | Không bắt đầu platform build |
 | `SG-1 Route discovered` | Context/classification, value, owner, data/security/dependency, mirror safety và rollback rõ | Route Owner → Architecture + affected Domain/Security | Giữ legacy, đóng gap/chọn route khác |
 | `SG-2 Shadow ready` | Contract/action, delegation, final PEP, signed config/LKG/readiness và negative tests đạt | Runtime + Domain + Security → Security + Architecture | Không shadow |
-| `SG-3 Canary ready` | Shadow không có unexpected allow; approved semantic/latency/error/capacity/cost/revocation/rollback target đạt | Route + SRE → Product + Security + Architecture | Rollback/optimize/pivot |
-| `SG-4 Target-default ready` | Canary không regression; SLO/on-call/cost/DR rõ; production record có locator | Route + SRE → named Production Change Authority trong `SG-0` record, với Product/Security/Architecture endorsement | Trở về shadow/canary |
+| `SG-3 Canary ready` | Shadow không có unexpected allow; approved semantic/latency/error/capacity/cost/revocation/rollback target đạt; bounded-canary plan khóa secure-in-place comparator và H-02 uplift measurement | Route + SRE → Product + Security + Architecture | Rollback/optimize/pivot |
+| `SG-4 Target-default ready` | Canary không regression; `H-02 PASS` bằng measured uplift/isolation/cadence/cost evidence; SLO/on-call/DR rõ; production record có locator | Route + SRE → named Production Change Authority trong `SG-0` record, với Product/Security/Architecture endorsement | Trở về shadow/canary |
 | `SG-5 Legacy retired` | Không legitimate traffic; credential/DNS/network/deploy path removed; recovery/archive theo class | Legacy + Target → Product + Security + Architecture | Legacy chưa retired |
 
 Security floor không được waive bằng legacy baseline. Target biến thiên phải được
@@ -660,11 +705,11 @@ không phải pre-approval của evidence chưa tồn tại.
 | State | Trigger | Hành động bắt buộc |
 |---|---|---|
 | `CONTINUE` | Fact base, owner, value, final PEP/delegation và pilot envelope đạt | Mở đúng stage/cohort kế tiếp |
-| `PAUSE` | Cap/checkpoint tới nhưng evidence/owner/capacity thiếu; security floor, rollback hoặc revocation fail | Dừng/rollback cohort bị ảnh hưởng, fail theo risk profile, revoke path/credential khi cần và mở incident; chỉ remediation/evidence; Board đặt decision date |
+| `PAUSE` | Trước aggregate cap: evidence/owner/capacity tạm thiếu; security floor, rollback hoặc revocation fail nhưng chưa chạm hard boundary | Dừng/rollback cohort, fail theo risk profile, revoke path/credential khi cần; chỉ remediation/evidence trong G0 cap. Sau cap, additional G0 work cần `RESTART`; pilot chỉ mở bằng `CONTINUE/PIVOT` và record riêng |
 | `PIVOT — secure in place` | Zero Trust controls khả thi nhưng central runtime không đạt value/latency/cost/blast-radius envelope | Giữ BFF deploy riêng; dùng shared action, identity, delegation, final PEP và audit |
 | `PIVOT — reduced scope` | Chỉ proxy/read phù hợp; mutation/workflow không phù hợp | Centralize route phù hợp; stateful use case ở domain/workflow |
 | `PIVOT — technology` | PDP/mesh/STS/identity candidate fail nhưng alternative đạt guardrail | Rollback cohort; ADR + threat/ROM; thử alternative đã review |
-| `ABORT consolidation` | Không có compliant path/owner/capacity; value fail; cost/risk vượt envelope sau replan | Dừng build; rollback controlled legacy/hybrid; revoke pilot route/credential; archive evidence |
+| `ABORT consolidation` | Chạm `HA-01` hoặc `HA-02`; không còn permitted pivot đạt security/value floor | Dừng build; rollback controlled legacy/hybrid; revoke pilot route/credential; archive evidence; security remediation tách sang BAU |
 | `RESTART` | Owner, capacity, business case và architecture decision mới đã có | Bắt đầu G0 mới; không reuse stale `PASS` |
 
 `PIVOT — secure in place` là successful outcome khi shared controls tạo
@@ -673,6 +718,27 @@ Sunk cost không phải lý do `CONTINUE`.
 Route owner MAY invoke immediate `PAUSE`/rollback theo gate mà không chờ Board.
 Program đưa recommendation; Board duyệt `CONTINUE/PIVOT/ABORT/RESTART` tại
 G0 và mọi thay đổi topology `D-01`. Resumption cần gate approver.
+
+Hai hard boundary dưới đây là normative và không được reframe:
+
+1. **`HA-01 — no compliant owned path`:** khi aggregate G0 cap/deadline đã hết,
+   không candidate nào đồng thời có named funded owner và evidence-backed feasible
+   path đạt mọi applicable `GR-01..08`, chương trình MUST `ABORT consolidation`.
+2. **`HA-02 — no defensible value in permitted set`:** khi aggregate G0 cap/deadline
+   đã hết và mọi pre-enumerated `alternative × scope` đều `FAIL` absolute value floor
+   hoặc vẫn `NOT_MEASURED` vì không lập được defensible evidence, chương trình MUST
+   `ABORT consolidation`. Physical topology fail uplift nhưng secure-in-place
+   `PASS` thì là `PIVOT — secure in place`, không phải `HA-02`.
+
+`HA-01/02` MUST NOT bị đổi thành `PAUSE`, `PIVOT` hoặc `CONTINUE` bởi sunk cost,
+đổi tên cohort/scope, threshold hậu nghiệm hay replan. `PIVOT`
+chỉ hợp lệ khi alternative cụ thể vẫn đạt guardrail và pre-registered value floor.
+`ABORT consolidation` không waive security issue: remediation cần thiết tiếp tục
+theo BAU/risk process riêng. Khởi động lại cần decision/funding/`SG-0` mới và không
+được reuse stale `PASS`.
+
+§2.2 là acceptance criterion của `D-01`; `HA-01/02` là binding stop-loss của
+`D-05`, không phải decision source thứ hai.
 
 ### 7.5 Đường găng và bằng chứng L3
 
