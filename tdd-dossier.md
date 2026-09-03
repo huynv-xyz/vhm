@@ -208,8 +208,7 @@ flowchart LR
     Agent([Đại lý / BO / Reviewer]) --> Channel[Ứng dụng nghiệp vụ]
     Channel --> ABFF[Agent / BO BFF<br/>vhm-agent-api]
     MBFF --> MAuth[VHM Market Auth Service<br/>Bearer token validation]
-    ABFF --> AgentAuth[Auth Admin Service<br/>session validation]
-    ABFF -->|Bearer token profile| TTOL
+    ABFF --> AgentAuth[Auth Admin Service<br/>authentication · user profile]
 
     subgraph SCOPE[IN SCOPE OF THIS DESIGN]
         direction TB
@@ -234,7 +233,7 @@ flowchart LR
     Landing -->|presigned PUT media/file| Store
     Channel -->|presigned PUT media/file| Store
     Core --> Msg[Message Delivery]
-    Core --> TTOL[TTOL<br/>user profile · reviewer roster]
+    Core --> TTOL[TTOL<br/>reviewer roster]
 
     class Core,PG inScope
     class Redis,Kafka platformScope
@@ -247,10 +246,10 @@ Khung xanh là phạm vi của thiết kế này. `vhm-dossier-core` và dữ li
 Core sở hữu được tô xanh; Redis/Kafka tô cam vì hạ tầng do platform vận hành nhưng
 keyspace, consumer group/configuration, ACL và failure policy phục vụ Dossier vẫn
 thuộc phạm vi thiết kế. Node xám là kênh hoặc capability ngoài deployable Core.
-Agent/BO BFF là `vhm-agent-api`; nhánh Bearer dùng user-profile contract của TTOL,
-nhánh session dùng Auth Admin Service. VHM Market BFF là capability có sẵn theo L2
-được dẫn chiếu tại Phụ lục B và xác thực Bearer qua VHM Market Auth Service. Hai
-kênh có contract xác thực độc lập.
+Agent/BO BFF là `vhm-agent-api` và thực hiện xác thực qua Auth Admin Service theo
+L2 của BFF này. VHM Market BFF là capability có sẵn theo L2 được dẫn chiếu tại
+Phụ lục B và xác thực Bearer qua VHM Market Auth Service. Hai kênh có contract
+xác thực độc lập; Dossier Core không xác thực trực tiếp credential của end-user.
 
 ### 2.2.2 Ranh giới ứng dụng
 
@@ -268,7 +267,7 @@ Pipeline Social Housing là cấu hình có phiên bản được nạp cùng �
 | --- | --- | --- | --- |
 | Market Landing/Agent UI | Hiển thị notice/form/result và thu thao tác/xác nhận của người dùng theo response backend | Chỉ giữ trạng thái UI tạm thời | Đánh giá consent, phân quyền dossier, checklist, OCR lifecycle hoặc persistence. |
 | VHM Market BFF | Xác thực Bearer qua VHM Market Auth Service, map presentation contract, ký workload/actor context và chuyển request/response | Không sở hữu dữ liệu nghiệp vụ; owning L2 được dẫn chiếu tại Phụ lục B | Business invariant, consent gate, OCR orchestration và gọi trực tiếp `vhm-ocr-ekyc`. |
-| Agent/BO BFF (`vhm-agent-api`) | Xác thực Bearer qua TTOL user-profile contract hoặc xác thực session qua Auth Admin Service; map role/visibility, ký workload/actor context và chuyển request/response | Không sở hữu dữ liệu nghiệp vụ | Business invariant, consent gate và OCR orchestration. |
+| Agent/BO BFF (`vhm-agent-api`) | Xác thực danh tính và role qua Auth Admin Service theo L2 `VHM - Agents BFF`; map role/visibility, ký workload/actor context và chuyển request/response | Không sở hữu dữ liệu nghiệp vụ | Business invariant, consent gate và OCR orchestration. |
 | Dossier Core | Cung cấp internal contract; xác thực workload/actor context; quản lý vòng đời hồ sơ, consent gate/bằng chứng, business authorization, validation, checklist, pipeline, phân công; gửi notification, nhắc SLA và polling/reconciliation OCR sau commit | Aggregate dossier, checklist definition/version/snapshot, consent evidence, trạng thái delivery/dedup, lịch poll và `ocrId`/`ocrStatus` projection | Identity kênh, media, presigned URL, dữ liệu authoritative của dependency và persistence raw/canonical OCR result. |
 | `vhm-ocr-ekyc` | Nhận prepare-upload/create/status-result từ Core, quản lý media reference và thực thi OCR lifecycle | OCR lifecycle, media reference, kết quả authoritative và retention media | Phân quyền dossier, hiển thị/thu consent hoặc tự áp kết quả vào hồ sơ. |
 | Enterprise services | File, Market, TTOL, Message Delivery | Dữ liệu thuộc từng miền | Sở hữu aggregate dossier. |
@@ -278,7 +277,7 @@ Pipeline Social Housing là cấu hình có phiên bản được nạp cùng �
 | **Ranh giới** | **Mức tin cậy** | **Kiểm soát** | **Khoảng trống** |
 | --- | --- | --- | --- |
 | Client → BFF | Không tin cậy | Auth kênh, role, validation, rate limit tầng gateway | Thuộc phạm vi kênh/platform. |
-| Agent/BO BFF → TTOL hoặc Auth Admin Service | Dependency xác thực ngoài Core | Bearer token là nguồn ưu tiên khi có mặt; nếu không có Bearer thì kiểm tra session; lỗi hoặc profile/role không hợp lệ phải fail closed | BFF thiết lập actor context; Core không gọi trực tiếp các dependency xác thực này. |
+| Agent/BO BFF → Auth Admin Service | Dependency xác thực ngoài Core | Xác thực credential/session và lấy identity/role theo L2 `VHM - Agents BFF`; lỗi hoặc profile/role không hợp lệ phải fail closed | BFF thiết lập actor context; Core không gọi trực tiếp dependency xác thực này. |
 | VHM Market BFF → VHM Market Auth Service | Dependency xác thực ngoài Core | HTTPS/REST Bearer token validation và user profile theo L2 Market BFF | Lỗi token/dependency phải fail closed; Core không gọi trực tiếp Auth Service. |
 | BFF → core | Zero Trust nội bộ | Basic Auth, HMAC, timestamp/nonce/body hash, actor signature | Cần vận hành secret rotation. |
 | Actor context → business | Chỉ tin sau verify | `subject`, role, visibility, expiry, JTI | JTI replay đang có thể tắt theo môi trường. |
@@ -495,7 +494,7 @@ ADR chi tiết nằm tại Phụ lục D. Các quyết định nền tảng: mod
 | CMP-01A | Market Landing Page | Bên ngoài | Hiển thị/thu input theo presentation contract; PUT media bằng presigned URL | Không là authority của hồ sơ, consent, quyền hoặc OCR status/result |
 | CMP-01B | Agent / BO UI | Bên ngoài | Hiển thị/thu input theo presentation contract; PUT media bằng presigned URL | Không là authority của hồ sơ, quyền hoặc OCR status/result |
 | CMP-02A | VHM Market BFF | Bên ngoài, capability có sẵn; L2 `VHM - Market BFF` | Xác thực Bearer qua VHM Market Auth Service, map presentation contract, ký workload/actor context và chuyển request/response | Không sở hữu business rule và không mặc định dùng cơ chế xác thực của Agent/BO |
-| CMP-02B | Agent/BO BFF (`vhm-agent-api`) | Bên ngoài, capability có sẵn; L2 `VHM - Agents BFF`, catalog `vhm-marketplace-agent-prod/vhm-agent-api` | Xác thực Bearer qua TTOL user-profile contract hoặc session qua Auth Admin Service; map role/visibility, ký workload/actor context và chuyển request/response | Không sở hữu business rule và không gọi trực tiếp `vhm-ocr-ekyc` |
+| CMP-02B | Agent/BO BFF (`vhm-agent-api`) | Bên ngoài, capability có sẵn; L2 `VHM - Agents BFF`, catalog `vhm-marketplace-agent-prod/vhm-agent-api` | Xác thực danh tính/role qua Auth Admin Service; map role/visibility, ký workload/actor context và chuyển request/response | Không sở hữu business rule và không gọi trực tiếp `vhm-ocr-ekyc` |
 | CMP-03 | `vhm-dossier-core` | **IN SCOPE** | Business authorization, hồ sơ, consent, checklist, pipeline, OCR prepare-upload/create/status-result và notification outbox | Authority của aggregate hồ sơ, checklist và consent NOXH; chỉ chiếu `ocrId`/status, không sở hữu media/result OCR |
 | CMP-04 | PostgreSQL `dossier_db` | **IN SCOPE — owned data store** | Lưu aggregate, checklist definition/snapshot, history, consent evidence và notification outbox | Source of truth của Dossier Core |
 | CMP-05 | Redis / Redisson | **IN SCOPE OF DESIGN — platform runtime** | Nonce/replay security, counter, cache và coordination | Dossier sở hữu keyspace/config/TTL và failure policy; topology vật lý do Platform SAD xác định; không là source of truth nghiệp vụ |
@@ -504,9 +503,9 @@ ADR chi tiết nằm tại Phụ lục D. Các quyết định nền tảng: mod
 | CMP-08 | Market / Project Service | Bên ngoài | Project/SAP/unit và special-day reference | Authority của master data tương ứng |
 | CMP-09 | `vhm-ocr-ekyc` | Bên ngoài | Capability OCR dùng chung; quản lý media/lifecycle/kết quả OCR | Authority của tài nguyên OCR |
 | CMP-10 | Message Delivery | Bên ngoài | Gửi notification từ intent đã commit | Authority của delivery outcome |
-| CMP-11 | TTOL | Bên ngoài | Xác minh Bearer và trả user profile/permission cho Agent/BO BFF; cung cấp reviewer roster cho Core | Authority của profile/permission và roster được công bố qua từng contract |
+| CMP-11 | TTOL | Bên ngoài | Cung cấp reviewer roster cho Core phục vụ assignment | Authority của reviewer roster được công bố qua contract tích hợp |
 | CMP-12 | Private Object Storage | Bên ngoài, phía sau File/OCR capability | Nhận/trả file byte bằng presigned URL; không cung cấp business API cho Core | Authority lưu object vật lý theo policy của File/OCR; Core chỉ giữ opaque reference |
-| CMP-13A | Auth Admin Service | Bên ngoài, capability có sẵn; catalog `vhm-marketplace-prod/auth-admin-service` | Xác minh session và trả identity/role/profile cho Agent/BO BFF | Authority của session/profile theo contract; Core không gọi trực tiếp |
+| CMP-13A | Auth Admin Service | Bên ngoài, capability có sẵn; catalog `vhm-marketplace-prod/auth-admin-service` | Xác thực credential/session và trả identity/role/profile cho Agent/BO BFF theo owning L2 | Authority xác thực của kênh Agent/BO; Core không gọi trực tiếp |
 | CMP-13B | VHM Market Auth Service | Bên ngoài, capability có sẵn theo L2 Market BFF | Xác minh Bearer token và trả user profile cho VHM Market BFF | Authority xác thực kênh Market; Core không gọi trực tiếp |
 
 Các module logic bên trong `CMP-03`:
@@ -533,12 +532,11 @@ flowchart LR
     classDef external fill:#F3F4F6,stroke:#6B7280,stroke-width:1.5px,stroke-dasharray:5 5,color:#1F2937
 
     MAUTH[VHM Market Auth Service<br/>Bearer token validation]
-    AGENT_AUTH[Auth Admin Service<br/>session validation]
+    AGENT_AUTH[Auth Admin Service<br/>authentication · user profile]
     LANDING[Market Landing Page] --> MARKET[VHM Market BFF]
     CHANNEL[Agent / BO UI] --> AGENT[Agent / BO BFF<br/>vhm-agent-api]
     MARKET --> MAUTH
-    AGENT -->|session| AGENT_AUTH
-    AGENT -->|Bearer token profile| TTOL
+    AGENT -->|credential / session| AGENT_AUTH
 
     subgraph DESIGN[IN SCOPE OF THIS DESIGN]
       direction TB
@@ -588,7 +586,7 @@ flowchart LR
     PROJECT[Market / Project]
     OCR[vhm-ocr-ekyc]
     MSG[Message Delivery]
-    TTOL[TTOL<br/>user profile · reviewer roster]
+    TTOL[TTOL<br/>reviewer roster]
 
     MARKET -->|HTTPS · Basic + HMAC<br/>signed actor context| API
     AGENT -->|HTTPS · Basic + HMAC<br/>signed actor context| API
@@ -622,9 +620,9 @@ sở hữu được đặt trong phạm vi thiết kế, còn topology vật lý
 
 | **ID** | **Tích hợp** | **Hướng** | **Kiểu** | **Mục đích** | **Failure policy** |
 | --- | --- | --- | --- | --- | --- |
-| INT-01A | Agent/BO BFF (`vhm-agent-api`) | Inbound | HTTPS sync | Registration, consent, list/detail và action | BFF xác thực Bearer hoặc session và thiết lập actor context; Core kiểm tra signature/actor/replay và business authorization theo fail-closed |
+| INT-01A | Agent/BO BFF (`vhm-agent-api`) | Inbound | HTTPS sync | Registration, consent, list/detail và action | BFF xác thực theo contract của kênh và thiết lập actor context; Core kiểm tra signature/actor/replay và business authorization theo fail-closed |
 | INT-01B | VHM Market BFF | Inbound | HTTPS sync | Registration, consent, list/detail và action | BFF xác thực Bearer qua VHM Market Auth Service; Core kiểm tra signature/actor/replay và business authorization theo fail-closed |
-| INT-01C | TTOL; Auth Admin Service | Agent/BO BFF outbound | HTTPS hoặc Thrift sync theo contract | Bearer: xác minh token và lấy user profile/permission; session: xác minh session và lấy identity/role/profile | Bearer là nguồn ưu tiên khi có mặt; lỗi, profile hoặc role không hợp lệ phải fail closed; Core không gọi trực tiếp |
+| INT-01C | Auth Admin Service | Agent/BO BFF outbound | HTTPS hoặc Thrift sync theo owning L2 | Xác thực credential/session và lấy identity/role/profile | Lỗi, profile hoặc role không hợp lệ phải fail closed; Core không gọi trực tiếp |
 | INT-01D | VHM Market Auth Service | VHM Market BFF outbound | HTTPS/REST sync | Bearer token validation và user profile | Token/dependency không hợp lệ phải fail closed; Core không gọi trực tiếp và không dùng giả định từ Agent/BO |
 | INT-02 | File Management Service | Core outbound | HTTPS sync | Prepare upload, existence, download/presign và ownership metadata | Fail hard cho validation bắt buộc; timeout theo NFR-T04; API/ownership contract phải đạt contract test |
 | INT-03 | Market/Project | Outbound | HTTP sync + cache | SAP/project/unit/special days | Tùy use case: fail hard hoặc best effort |
@@ -1292,19 +1290,13 @@ sequenceDiagram
     participant AgentUI as Agent / BO UI
     participant AgentBFF as Agent / BO BFF (vhm-agent-api)
     participant AgentAuth as Auth Admin Service
-    participant TTOL as TTOL user-profile API
     participant Core as Dossier Core API & Authorization
     participant Redis as Redis nonce store
 
     User->>AgentUI: Đăng nhập / mở phiên
-    AgentUI->>AgentBFF: API request + Bearer hoặc session
-    alt Có Authorization Bearer
-        AgentBFF->>TTOL: Xác minh token, lấy user profile/permission
-        TTOL-->>AgentBFF: Profile/permission hợp lệ
-    else Không có Bearer, dùng session
-        AgentBFF->>AgentAuth: Xác minh session, lấy identity/role/profile
-        AgentAuth-->>AgentBFF: Identity/role/profile hợp lệ
-    end
+    AgentUI->>AgentBFF: API request + credential của kênh
+    AgentBFF->>AgentAuth: Xác thực request, lấy identity/role/profile
+    AgentAuth-->>AgentBFF: Identity/role/profile hoặc lỗi
     Note over AgentBFF: Credential/dependency/profile/role không hợp lệ<br/>thì fail closed và không gọi Core
     AgentBFF->>AgentBFF: Map role/visibility và ký actor context
     AgentBFF->>Core: HTTPS + Basic + HMAC<br/>timestamp + nonce + body hash + signed actor context
@@ -1322,12 +1314,11 @@ sequenceDiagram
     end
 ```
 
-Kênh Agent/BO ưu tiên Bearer khi request có Authorization và không fallback sang
-session nếu Bearer không hợp lệ; chỉ khi không có Bearer mới dùng session. VHM
-Market BFF xác minh Bearer qua VHM Market Auth Service theo L2 riêng; tài liệu không
-mặc định hai kênh dùng chung cơ chế xác thực. Core không gọi các authority này trực
-tiếp và không tin role/visibility do client gửi; Core chỉ dùng signed actor context
-sau khi xác minh workload, chữ ký và replay.
+VHM Market BFF và Agent/BO BFF xác thực end-user theo contract tại L2 của từng
+kênh; tài liệu không mặc định hai kênh dùng chung credential hoặc cơ chế xác thực.
+Core không gọi các authority xác thực này trực tiếp và không tin role/visibility
+do client gửi; Core chỉ dùng signed actor context sau khi xác minh workload, chữ
+ký và replay.
 
 ### 8.1.1 Create DRAFT và replay
 
@@ -1667,8 +1658,7 @@ Public client xác thực tại BFF theo đúng contract của từng kênh:
 | **Kênh** | **Credential tại BFF** | **Authority xác thực** | **Quy tắc** |
 | --- | --- | --- | --- |
 | Market | Authorization Bearer | VHM Market Auth Service theo L2 `VHM - Market BFF` | Token/profile không hợp lệ hoặc dependency lỗi phải fail closed; không suy diễn từ Agent/BO |
-| Agent/BO | Authorization Bearer | TTOL user-profile contract | Bearer là nguồn ưu tiên khi xuất hiện; token/profile/permission không hợp lệ phải fail closed, không fallback sang session |
-| Agent/BO | Session cookie khi không có Bearer | Auth Admin Service | Session phải hợp lệ và trả được identity/role/profile; lỗi dependency phải fail closed |
+| Agent/BO | Credential/session theo L2 `VHM - Agents BFF` | Auth Admin Service | Chỉ thiết lập actor context khi xác thực thành công và lấy được identity/role/profile; lỗi dependency phải fail closed |
 
 Sau khi xác thực kênh, BFF tạo actor context từ danh tính đã xác minh. Mọi request
 từ BFF vào `/internal/**` của Core phải có hai lớp danh tính độc lập:
