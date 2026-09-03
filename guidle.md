@@ -20,7 +20,8 @@ bố cho Domain Backend.
 
 ## 2. Xác thực và base URL
 
-- Domain Backend gọi `vhm-ocr-ekyc` bằng Basic Authentication qua HTTPS.
+- Domain Backend gọi `vhm-ocr-ekyc` bằng Basic Authentication qua HTTPS; ingress/platform
+  thực hiện kiểm tra credential, application không kiểm tra lại Basic Auth.
 - Dùng credential riêng cho từng môi trường/caller và lấy từ Secret Manager tại runtime.
 - Không ghi `Authorization`, request/response chứa PII, `session-id` hoặc media vào log.
 - Không gửi FPT `api-key`/`api_key`; `vhm-ocr-ekyc` tự chèn credential FPT.
@@ -38,14 +39,14 @@ EKYC_BASIC_PASSWORD="<secret-manager-reference>"
 
 | Giá trị | Nguồn | Mục đích | Cách xử lý tại Domain Backend |
 | --- | --- | --- | --- |
-| `X-VHM-Ekyc-Request-Id` | `vhm-ocr-ekyc` | UUID ổn định của toàn bộ hành trình trong VHM | Lưu ngay sau `init_session`, gắn với business object và gửi lại ở các bước sau |
+| `X-VHM-Ekyc-Request-Id` | `vhm-ocr-ekyc` | UUID dùng để tương quan các bước của hành trình trong VHM | Không bắt buộc ở wire contract; cần lưu sau `init_session` và gửi lại nếu Domain Backend cần đối soát/lấy đầy đủ detail |
 | `session-id` | FPT, trả qua `vhm-ocr-ekyc` | Duy trì phiên FPT giữa init/OCR/liveness/NFC | Chuyển tiếp đúng giá trị ở các bước sau; coi là dữ liệu nhạy cảm |
 | `x-request-id` | FPT | Truy vết một lần gọi provider | Không dùng làm `{requestId}` khi gọi API detail |
 
 `GET /v1/ekyc-sdk/{requestId}` nhận giá trị từ header
 `X-VHM-Ekyc-Request-Id`, không nhận `session-id` hoặc `x-request-id`.
 
-## 4. Luồng tích hợp bắt buộc
+## 4. Luồng tích hợp phục vụ đối soát
 
 ```mermaid
 sequenceDiagram
@@ -78,13 +79,13 @@ sequenceDiagram
     E-->>DBE: metadata + status + steps[].response + steps[].medias
 ```
 
-Quy tắc triển khai:
+Quy tắc triển khai khi Domain Backend cần đối soát dữ liệu:
 
-1. Domain Backend phải tạo/gọi `init_session` trước và lấy
+1. Domain Backend gọi `init_session` trước và lấy
    `X-VHM-Ekyc-Request-Id` từ response header.
 2. Lưu UUID này theo business object/hành trình eKYC ngay khi nhận được, kể cả khi
    FPT trả non-2xx nhưng header vẫn có mặt, để phục vụ truy vết.
-3. Ở mọi bước tiếp theo, Domain Backend đọc UUID từ dữ liệu server-side và inject
+3. Ở mọi bước tiếp theo, Domain Backend nên đọc UUID từ dữ liệu server-side và inject
    vào header `X-VHM-Ekyc-Request-Id`; không tin request ID do Mobile/Web tự gửi.
 4. Đồng thời chuyển tiếp đúng `session-id` FPT của cùng phiên.
 5. Đọc lại `X-VHM-Ekyc-Request-Id` trên response của mỗi bước và kiểm tra nó bằng ID
@@ -92,9 +93,11 @@ Quy tắc triển khai:
 6. Trước khi gọi API detail, Domain Backend phải kiểm tra người dùng có quyền trên
    business object đang ánh xạ với `requestId`.
 
-Nếu thiếu hoặc gửi sai `X-VHM-Ekyc-Request-Id`, capability có thể fallback theo
-`session-id`. Khi không tìm thấy phiên, capability sẽ tạo một audit request khác. Vì vậy
-không được dựa vào fallback trong luồng tích hợp chuẩn.
+`X-VHM-Ekyc-Request-Id` không bắt buộc ở cấp API. Nếu header thiếu, sai định dạng hoặc
+không trỏ tới request phù hợp, capability fallback theo `session-id`; khi không tìm thấy
+phiên, capability tạo một audit request khác và trả ID hiệu lực mới trên response. Cơ chế
+này giữ tương thích SDK nhưng có thể làm dữ liệu của một hành trình nằm ở nhiều request.
+Vì vậy Domain Backend muốn đối soát/lấy đầy đủ detail không được dựa vào fallback.
 
 ## 5. Khởi tạo phiên và lưu request ID
 
@@ -159,7 +162,8 @@ return preserveProviderResponse(response, providerSessionId);
 
 ## 6. Gọi các bước tiếp theo
 
-Mọi bước OCR, liveness và NFC phải gửi:
+Wire contract cho phép không gửi `X-VHM-Ekyc-Request-Id`. Tuy nhiên, Domain Backend
+muốn đối soát cùng một hành trình nên gửi các header sau ở OCR, liveness và NFC:
 
 ```http
 Authorization: Basic <service-credential>
