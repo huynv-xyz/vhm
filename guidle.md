@@ -39,7 +39,7 @@ EKYC_BASIC_PASSWORD="<secret-manager-reference>"
 
 | Giá trị | Nguồn | Mục đích | Cách xử lý tại Domain Backend |
 | --- | --- | --- | --- |
-| `X-VHM-Ekyc-Request-Id` | `vhm-ocr-ekyc` | UUID dùng để tương quan các bước của hành trình trong VHM | Không bắt buộc ở wire contract; cần lưu sau `init_session` và gửi lại nếu Domain Backend cần đối soát/lấy đầy đủ detail |
+| `X-VHM-Ekyc-Request-Id` | `vhm-ocr-ekyc` | UUID dùng để tương quan các bước của hành trình trong VHM | Không bắt buộc ở wire contract; lưu sau `init_session` nếu Domain Backend cần đối soát/lấy detail |
 | `session-id` | FPT, trả qua `vhm-ocr-ekyc` | Duy trì phiên FPT giữa init/OCR/liveness/NFC | Chuyển tiếp đúng giá trị ở các bước sau; coi là dữ liệu nhạy cảm |
 | `x-request-id` | FPT | Truy vết một lần gọi provider | Không dùng làm `{requestId}` khi gọi API detail |
 
@@ -59,16 +59,20 @@ sequenceDiagram
 
     SDK->>DBE: init_session + business context
     DBE->>DBE: authorize business object
-    DBE->>E: POST init_session + Basic Auth + X-VHM metadata
+    DBE->>E: POST init_session + SDK request + X-VHM metadata (tùy chọn)
     E->>F: init_session + FPT credential
     F-->>E: status/body + session-id
     E-->>DBE: status/body + session-id + X-VHM-Ekyc-Request-Id
-    DBE->>DB: lưu business object ↔ eKYC requestId
+    opt Domain Backend cần đối soát
+        DBE->>DB: lưu business object ↔ eKYC requestId
+    end
     DBE-->>SDK: giữ nguyên provider status/body + session-id
 
     SDK->>DBE: OCR/liveness/NFC
-    DBE->>DB: đọc eKYC requestId đã lưu
-    DBE->>E: request SDK + session-id + X-VHM-Ekyc-Request-Id
+    opt Đã lưu eKYC requestId
+        DBE->>DB: đọc eKYC requestId đã lưu
+    end
+    DBE->>E: SDK request + session-id + X-VHM-Ekyc-Request-Id (tùy chọn)
     E->>F: request tương thích SDK
     F-->>E: provider response
     E-->>DBE: provider response + X-VHM-Ekyc-Request-Id
@@ -79,14 +83,26 @@ sequenceDiagram
     E-->>DBE: metadata + status + steps[].response + steps[].medias
 ```
 
-Quy tắc triển khai khi Domain Backend cần đối soát dữ liệu:
+Domain Backend có thể triển khai theo một trong hai chế độ:
+
+| Chế độ | Cách xử lý |
+| --- | --- |
+| Proxy thuần | Chuyển tiếp request/header do SDK gửi và trả nguyên response. Không cần tự thêm header `X-VHM-*`; capability tương quan các bước bằng `session-id`. |
+| Proxy có đối soát | Ngoài việc forward SDK request, lưu `X-VHM-Ekyc-Request-Id` từ response `init_session`; có thể inject ID này server-side vào các bước sau và dùng nó để gọi API detail. |
+
+Các header `X-VHM-*` là metadata nội bộ của VHM. Domain Backend có thể bổ sung chúng
+mà không ảnh hưởng request gửi FPT vì `vhm-ocr-ekyc` sử dụng nội bộ và loại chúng trước
+provider boundary.
+
+Quy tắc bổ sung khi Domain Backend cần đối soát dữ liệu:
 
 1. Domain Backend gọi `init_session` trước và lấy
    `X-VHM-Ekyc-Request-Id` từ response header.
 2. Lưu UUID này theo business object/hành trình eKYC ngay khi nhận được, kể cả khi
    FPT trả non-2xx nhưng header vẫn có mặt, để phục vụ truy vết.
-3. Ở mọi bước tiếp theo, Domain Backend nên đọc UUID từ dữ liệu server-side và inject
-   vào header `X-VHM-Ekyc-Request-Id`; không tin request ID do Mobile/Web tự gửi.
+3. Ở các bước tiếp theo, Domain Backend có thể đọc UUID từ dữ liệu server-side và inject
+   vào header `X-VHM-Ekyc-Request-Id`. Nếu sử dụng header này, không tin request ID do
+   Mobile/Web tự gửi.
 4. Đồng thời chuyển tiếp đúng `session-id` FPT của cùng phiên.
 5. Đọc lại `X-VHM-Ekyc-Request-Id` trên response của mỗi bước và kiểm tra nó bằng ID
    đã lưu. Nếu khác nhau, không tự ghi đè mapping; dừng flow và xử lý như lỗi tương quan.
@@ -97,22 +113,24 @@ Quy tắc triển khai khi Domain Backend cần đối soát dữ liệu:
 không trỏ tới request phù hợp, capability fallback theo `session-id`; khi không tìm thấy
 phiên, capability tạo một audit request khác và trả ID hiệu lực mới trên response. Cơ chế
 này giữ tương thích SDK nhưng có thể làm dữ liệu của một hành trình nằm ở nhiều request.
-Vì vậy Domain Backend muốn đối soát/lấy đầy đủ detail không được dựa vào fallback.
+Vì vậy Domain Backend muốn đối soát/lấy đầy đủ detail nên lưu request ID; việc inject lại
+ID ở các mutation sau giúp tương quan tường minh nhưng không phải điều kiện kỹ thuật bắt buộc.
 
 ## 5. Khởi tạo phiên và lưu request ID
 
 ### 5.1 Request
 
-Các header metadata VHM chỉ gửi ở bước `init_session`:
+Các header enrich VHM chỉ có ý nghĩa ở bước `init_session`. Chúng không bắt buộc; Domain
+Backend có thể bổ sung từ business context server-side hoặc bỏ toàn bộ khi chỉ làm proxy:
 
-| Header | Bắt buộc trong tích hợp Domain | Ràng buộc |
+| Header | Cách xử lý | Ràng buộc |
 | --- | --- | --- |
-| `X-VHM-Source` | Có | Tối đa 30 ký tự, ví dụ `DOSSIER` |
-| `X-VHM-Reference-Id` | Có | Tối đa 150 ký tự; dùng định danh nghiệp vụ opaque |
-| `X-VHM-Request-By` | Có | Tối đa 150 ký tự; không đưa PII không cần thiết |
-| `X-VHM-Channel` | Có | `MOBILE` hoặc `WEB`, phải khớp `device-type` |
-| `X-Correlation-Id` | Khuyến nghị | Chuỗi opaque tối đa 128 ký tự |
-| `device-type` | Có | `android`, `ios` hoặc `web-sdk` |
+| `X-VHM-Source` | Tùy chọn, Domain Backend có thể bổ sung | Tối đa 30 ký tự, ví dụ `DOSSIER` |
+| `X-VHM-Reference-Id` | Tùy chọn, Domain Backend có thể bổ sung | Tối đa 150 ký tự; dùng định danh nghiệp vụ opaque |
+| `X-VHM-Request-By` | Tùy chọn, Domain Backend có thể bổ sung | Tối đa 150 ký tự; không đưa PII không cần thiết |
+| `X-VHM-Channel` | Tùy chọn, Domain Backend có thể bổ sung | `MOBILE` hoặc `WEB`, phải khớp `device-type` |
+| `X-Correlation-Id` | Tùy chọn; có thể forward hoặc tự bổ sung | Chuỗi opaque tối đa 128 ký tự; capability tự sinh khi thiếu |
+| `device-type` | Chuyển tiếp từ SDK | `android`, `ios` hoặc `web-sdk` |
 
 ```bash
 curl --request POST "${EKYC_BASE_URL}/v1/ekyc-sdk/init_session" \
@@ -128,6 +146,9 @@ curl --request POST "${EKYC_BASE_URL}/v1/ekyc-sdk/init_session" \
   --include
 ```
 
+Bốn dòng `X-VHM-Source`, `X-VHM-Reference-Id`, `X-VHM-Request-By` và
+`X-VHM-Channel` trong ví dụ trên có thể bỏ nếu Domain Backend không cần enrich metadata.
+
 Ngoài các trường minh họa, Domain Backend phải giữ nguyên metadata/header do phiên
 bản FPT SDK được phê duyệt tạo ra theo OpenAPI.
 
@@ -141,7 +162,7 @@ X-VHM-Ekyc-Request-Id: 0198f0f0-7b42-7a18-8c54-4ad3a274be82
 session-id: <provider-session-id>
 ```
 
-Domain Backend phải:
+Nếu cần đối soát/lấy detail, Domain Backend phải:
 
 - Parse `X-VHM-Ekyc-Request-Id` thành UUID và lưu theo business object.
 - Không tự sinh UUID thay thế nếu header bị thiếu hoặc không hợp lệ.
@@ -162,8 +183,9 @@ return preserveProviderResponse(response, providerSessionId);
 
 ## 6. Gọi các bước tiếp theo
 
-Wire contract cho phép không gửi `X-VHM-Ekyc-Request-Id`. Tuy nhiên, Domain Backend
-muốn đối soát cùng một hành trình nên gửi các header sau ở OCR, liveness và NFC:
+Domain Backend chuyển tiếp các header SDK/FPT của cùng phiên, đặc biệt là `session-id`.
+Nếu đã lưu mapping để đối soát, Domain Backend có thể bổ sung
+`X-VHM-Ekyc-Request-Id` server-side:
 
 ```http
 Authorization: Basic <service-credential>
@@ -171,6 +193,10 @@ X-VHM-Ekyc-Request-Id: <UUID đã lưu sau init_session>
 session-id: <session-id của cùng phiên FPT>
 device-type: <android|ios|web-sdk>
 ```
+
+Trong ví dụ trên, `X-VHM-Ekyc-Request-Id` là tùy chọn; `session-id` và các header SDK
+cần thiết vẫn phải được forward đúng theo request SDK. Các lệnh mẫu bên dưới minh họa
+chế độ có đối soát nên có dòng request ID.
 
 ### 6.1 OCR giấy tờ
 
@@ -315,12 +341,16 @@ trả về cho SDK và dữ liệu detail là hai trách nhiệm riêng.
 
 - [ ] Cấu hình base URL và Basic Auth theo từng môi trường bằng Secret Manager.
 - [ ] Authorize business object trước mọi lời gọi tới capability.
-- [ ] Gửi metadata VHM tại `init_session`.
-- [ ] Lưu `X-VHM-Ekyc-Request-Id` dạng UUID theo business object.
-- [ ] Inject request ID server-side vào OCR/liveness/NFC.
 - [ ] Chuyển tiếp đúng `session-id` của cùng phiên.
 - [ ] Giữ nguyên status/body và header provider cần thiết cho SDK.
 - [ ] Không tự retry mutation khi outcome chưa biết.
-- [ ] Dùng request ID đã lưu để gọi `GET /v1/ekyc-sdk/{requestId}`.
 - [ ] Không log credential, session, PII, provider response hoặc media.
 - [ ] Xử lý `429` theo `Retry-After` và kiểm thử các nhánh `400/401/403/404/413/429/5xx`.
+
+Nếu Domain Backend cần đối soát/lấy detail:
+
+- [ ] Có thể bổ sung metadata `X-VHM-*` tại `init_session`; không lấy các giá trị này từ
+  dữ liệu client không tin cậy.
+- [ ] Lưu `X-VHM-Ekyc-Request-Id` dạng UUID theo business object.
+- [ ] Có thể inject request ID server-side vào OCR/liveness/NFC để tương quan tường minh.
+- [ ] Dùng request ID đã lưu để gọi `GET /v1/ekyc-sdk/{requestId}`.
