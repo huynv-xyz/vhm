@@ -1,8 +1,5 @@
 # Các nhóm cần bổ sung vào dashboard APM Detail Java
 
-> Công thức được rút gọn; các selector chung như `cluster`, `namespace`, `job` và `service_name` được lược bỏ.
->
-> `$availability_slo` lưu dạng tỷ lệ, ví dụ `0.999` tương ứng 99.9%. Allowed error ratio = `1 - $availability_slo`.
 
 ## 1. Service Health — Kubernetes
 
@@ -74,9 +71,3 @@
 <tr><td>Availability burn rate</td><td><code>error_ratio_window / (1 - SLO)</code></td><td>Tốc độ tiêu error budget so với mức cho phép.</td><td>0 = không có 5xx; 1 = tiêu đúng tốc độ; &gt;1 = tiêu nhanh hơn kế hoạch. So cửa sổ 5m, 30m, 1h, 6h để phân biệt spike với incident kéo dài.</td><td>Hiện mới là visualization; muốn dùng thật cần recording rules và multi-window burn-rate alerts.</td></tr>
 </tbody>
 </table>
-
-## Ghi chú triển khai
-
-1. Kiểm kê service nào có HTTP, kube-state-metrics, cAdvisor, JVM histogram và Micrometer metrics trước khi thêm panel.
-2. Chỉ zero-fill khi total series của đúng service còn tồn tại; mất telemetry phải giữ No data.
-3. Đưa giới hạn của từng metric vào description của panel để người trực vận hành không diễn giải No data thành trạng thái khỏe.
