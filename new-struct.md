@@ -47,20 +47,7 @@ Ví dụ, một lỗi được sửa trong `RestControllerExceptionHandler` củ
 trong OCR hoặc campaign. Sau vài lần thay đổi, không còn câu trả lời rõ ràng cho câu hỏi “bản nào là
 chuẩn?”.
 
-### 1.3. `common` cũ không tạo ra ownership rõ ràng
-
-Việc có dependency `tvhbds-common_java25spr` chưa giải quyết được vấn đề nếu service vẫn phải giữ
-thêm các bản local hoặc library không phản ánh kiến trúc hiện tại. Khi đó tồn tại đồng thời:
-
-- code lấy từ common cũ;
-- code đã copy rồi sửa trong service;
-- config mới được viết thêm vì config cũ không đủ linh hoạt;
-- nhiều cách gọi cùng một upstream.
-
-Developer không biết nên dùng common cũ, class local hay tạo implementation mới. Dependency chung
-trở thành một “hộp tiện ích” thay vì contract có ranh giới, owner và cách mở rộng rõ ràng.
-
-### 1.4. Outbound client bị gắn sai ownership
+### 1.3. Outbound client bị gắn sai ownership
 
 File, OCR, Market, IAM, Message Delivery và Profile là upstream contract, nhưng client và DTO cũ
 thường nằm dưới package của service đầu tiên cần chúng. Điều này tạo ra ba vấn đề:
@@ -73,7 +60,7 @@ thường nằm dưới package của service đầu tiên cần chúng. Điều
 Generated Thrift code còn làm duplication lớn hơn: mỗi service dùng Profile có thể phải giữ hàng
 chục nghìn dòng generated source và tự duy trì transport pool/configuration giống nhau.
 
-### 1.5. Security bị phân mảnh
+### 1.4. Security bị phân mảnh
 
 Mỗi service tự có `SecurityConfig`, filter, basic-auth setup, CIDR rule và actor-context handling.
 Hệ quả không chỉ là code lặp mà còn là rủi ro bảo mật:
@@ -87,7 +74,7 @@ Hệ quả không chỉ là code lặp mà còn là rủi ro bảo mật:
 Security là capability cần một implementation chuẩn, còn khác biệt về realm, path và credential phải
 được điều khiển bằng cấu hình.
 
-### 1.6. Kafka và Redis có nhiều nguồn cấu hình
+### 1.5. Kafka và Redis có nhiều nguồn cấu hình
 
 Cấu trúc cũ tồn tại đồng thời các namespace và implementation khác nhau, ví dụ
 `spring.kafka.*`, `kafka.*`, Kafka config riêng của service và legacy config. Một property có thể được
@@ -104,7 +91,7 @@ Hệ quả:
 Redis gặp vấn đề tương tự với standalone/cluster, TLS, key prefix và connection pool. Mục tiêu mới là
 một implementation dùng chung cho mỗi capability, còn service chỉ cung cấp giá trị YAML.
 
-### 1.7. Maven dependency và version phân tán
+### 1.6. Maven dependency và version phân tán
 
 Mỗi service cũ tự khai báo Spring Boot starters, library version, annotation processors, test
 dependency và build plugin. Các POM dài nhưng vẫn không thể hiện rõ phần nào là platform baseline,
@@ -120,7 +107,7 @@ Tác động trực tiếp:
 - build chạy được trên một máy nhưng thất bại trong CI do phụ thuộc relative path hoặc artifact chỉ
   được install local.
 
-### 1.8. Cấu hình bị copy và không rõ độ ưu tiên
+### 1.7. Cấu hình bị copy và không rõ độ ưu tiên
 
 Một service có thể mang cả default kỹ thuật, giá trị local và cấu hình môi trường trong cùng file.
 Khi copy sang service khác, port, schema, topic, key prefix hoặc credential placeholder cũng bị copy
@@ -136,7 +123,7 @@ Không có quy tắc ownership khiến developer khó trả lời:
 
 Kết quả là lỗi cấu hình chỉ được phát hiện lúc startup hoặc sau khi kết nối nhầm resource.
 
-### 1.9. Test và local environment trở nên nặng, khó tái lập
+### 1.8. Test và local environment trở nên nặng, khó tái lập
 
 Khi service tự mang PostgreSQL, Redis, Kafka, ZooKeeper và Docker Maven configuration giống nhau,
 mỗi repository phải duy trì lifecycle test infrastructure riêng. Plugin có thể tự khởi động container
@@ -145,7 +132,7 @@ cho cả test không cần integration environment, làm build chậm và phụ 
 Các default thiếu điều kiện còn khiến application fail startup chỉ vì một capability không được dùng
 nhưng vẫn cố tạo datasource, Kafka consumer, Redis connection hoặc Thrift pool.
 
-### 1.10. Onboarding và review phụ thuộc trí nhớ cá nhân
+### 1.9. Onboarding và review phụ thuộc trí nhớ cá nhân
 
 Developer mới phải hỏi hoặc tìm một repository để copy trước khi viết nghiệp vụ:
 
@@ -160,7 +147,7 @@ Reviewer cũng phải đọc sâu implementation mới biết một thay đổi 
 một bản platform mới. Kiến thức nằm trong trí nhớ của người làm lâu năm thay vì nằm trong module
 boundary và API có tài liệu.
 
-### 1.11. Chi phí tăng theo số service và số biến thể
+### 1.10. Chi phí tăng theo số service và số biến thể
 
 Vấn đề lớn nhất không phải số dòng code bị copy, mà là số implementation phải duy trì. Nếu có `N`
 service và mỗi capability có nhiều biến thể, một thay đổi nền tảng tạo ra chuỗi công việc:
@@ -176,7 +163,7 @@ phân tích tất cả biến thể
 Một bản vá có thể đúng ở ba service nhưng bị bỏ sót ở service thứ tư. Chi phí và rủi ro tăng cùng số
 repository, trong khi giá trị nghiệp vụ không tăng tương ứng.
 
-### 1.12. Nguyên nhân gốc
+### 1.11. Nguyên nhân gốc
 
 > Cấu trúc cũ không có ranh giới ownership rõ ràng giữa platform, inbound web, outbound integration
 > và business domain.
@@ -740,7 +727,6 @@ common”.
 Một service chỉ được xem là migrate hoàn tất khi:
 
 - parent dùng version đã publish và `<relativePath/>` rỗng;
-- không còn dependency `tvhbds-common_java25spr`;
 - không copy base entity, UUID generator, Kafka/Redis config, web exception handler hoặc shared
   security config;
 - client/DTO upstream dùng chung đến từ `vhm-client` và được nhóm theo capability;
