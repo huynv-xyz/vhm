@@ -188,6 +188,105 @@ Mục tiêu không phải đưa càng nhiều code vào `common` càng tốt. M�
 bảo trì, tạo một implementation chính thức cho mỗi capability, nhưng không biến platform thành một
 monolith dùng chung mới.
 
+### 1.12. Áp dụng cấu trúc mới thì giảm được gì?
+
+Thay đổi quan trọng nhất là chuyển từ **nhiều bản sao không có owner** sang **một contract có owner
+và version**. Giá trị không chỉ nằm ở số dòng code được xóa mà ở số nơi phải sửa, kiểm thử và theo
+dõi khi hệ thống thay đổi.
+
+| Công việc | Cấu trúc cũ | Cấu trúc mới | Lợi ích trực tiếp |
+|---|---|---|---|
+| Vá lỗi Kafka/Redis/base infrastructure | Tìm và sửa từng service | Sửa một library, phát hành version, các service nâng version | Giảm implementation phải sửa và nguy cơ bỏ sót |
+| Thay đổi API response/exception mapping | Mỗi service có thể trả contract khác nhau | Một contract trong `vhm-web-starter` | Client nhận response nhất quán hơn |
+| Cập nhật security mechanism | Sửa nhiều filter chain | Sửa implementation chung, khác biệt khai báo bằng YAML | Giảm security drift và phạm vi audit |
+| Upstream thay đổi contract | Tìm client/DTO trong nhiều repository | Sửa typed client theo capability | Biết rõ consumer và nơi chịu trách nhiệm |
+| Nâng Java/Spring/dependency | Chỉnh nhiều POM và plugin | Quản lý baseline tại parent | Nâng cấp, vá CVE và rollback có kiểm soát |
+| Tạo service mới | Copy một service gần giống rồi xóa bớt | Kế thừa baseline và chỉ viết domain | Ít code khởi tạo, ít lỗi copy nhầm |
+| Review business feature | Phải lọc qua nhiều infrastructure class | Service chủ yếu còn code domain | Review nhanh hơn, blast radius rõ hơn |
+| Onboarding developer | Hỏi người cũ hoặc tìm code để copy | Tìm API theo module/package và đọc JavaDoc | Giảm phụ thuộc kiến thức truyền miệng |
+
+#### Giảm duplication có thể đo được
+
+Kết quả refactor trên dossier và OCR/eKYC cho thấy tác động thực tế:
+
+| Chỉ số | Mức giảm |
+|---|---:|
+| Dossier Java production files | 89 file |
+| Dossier Java LOC | 18% |
+| Dossier POM | 88% số dòng |
+| OCR/eKYC Java production files | 40 file |
+| OCR/eKYC Java LOC | 26% |
+| OCR/eKYC POM | 85% số dòng |
+| Generated Profile Thrift trong từng service | Không còn nhân bản; chuyển về `vhm-client` |
+
+Số liệu trên không có nghĩa code nền tảng biến mất. Code dùng chung được chuyển tới một artifact và
+code trùng bị loại bỏ. Phần giảm quan trọng nhất là **số bản implementation phải duy trì**.
+
+#### Giảm chi phí thay đổi
+
+Ví dụ khi cần sửa cách verify internal request:
+
+```text
+Cấu trúc cũ
+  sửa dossier → test/release dossier
+  sửa OCR     → test/release OCR
+  sửa campaign→ test/release campaign
+  rà soát xem còn bản copy nào khác
+
+Cấu trúc mới
+  sửa + test vhm-web-starter một lần
+  publish version mới
+  từng service nâng version theo kế hoạch và chạy compatibility test
+```
+
+Cấu trúc mới không loại bỏ việc test và release service. Nó loại bỏ việc viết lại cùng một bản sửa
+ở từng repository, đồng thời cho phép theo dõi adoption bằng version dependency.
+
+#### Giảm rủi ro vận hành
+
+- Kafka và Redis có một nơi cấu hình serializer, timeout, connection và default behavior.
+- Security có một filter chain chuẩn; path, realm và credential thay đổi bằng cấu hình.
+- Capability tắt không được tạo connection/pool không cần thiết khi startup.
+- Property có namespace và owner, giảm nguy cơ khai báo một key nhưng runtime đọc key khác.
+- Rollback library bằng cách pin version cũ rõ ràng hơn rollback nhiều bản sửa thủ công.
+- Contract upstream tập trung giúp đánh giá phạm vi ảnh hưởng trước khi triển khai.
+
+#### Làm rõ phạm vi thay đổi và ownership
+
+Với cấu trúc mới, vị trí code thể hiện loại thay đổi:
+
+- thay đổi trong service thường chỉ ảnh hưởng một domain;
+- thay đổi trong `vhm-client` ảnh hưởng consumer của upstream tương ứng;
+- thay đổi trong `vhm-web-starter` ảnh hưởng inbound HTTP contract;
+- thay đổi trong `vhm-common` có phạm vi rộng nhất và phải được kiểm thử nghiêm ngặt;
+- thay đổi trong parent ảnh hưởng build/dependency baseline.
+
+Điều này giúp reviewer, QA và release owner xác định blast radius mà không cần đọc toàn bộ source.
+
+#### Lợi ích theo từng vai trò
+
+| Vai trò | Lợi ích |
+|---|---|
+| Developer | Viết ít boilerplate, không phải đoán implementation chuẩn, API dùng chung có JavaDoc |
+| Reviewer | Dễ phát hiện business leakage và thay đổi sai module, phạm vi review rõ hơn |
+| QA | Contract nhất quán, test chung cho infrastructure và test service tập trung vào use case |
+| DevOps/SRE | Property namespace thống nhất, version triển khai truy vết được, ít biến thể runtime |
+| Security | Một nơi audit/cập nhật cơ chế dùng chung, giảm cấu hình lệch giữa service |
+| Tech lead/Manager | Đo adoption bằng version, ước lượng phạm vi nâng cấp và ownership rõ ràng |
+
+#### Lợi ích không đến miễn phí
+
+Shared library làm giảm duplication nhưng tăng mức ảnh hưởng của một thay đổi sai. Vì vậy cấu trúc
+mới chỉ hiệu quả khi:
+
+- library giữ backward compatibility hoặc công bố breaking change rõ ràng;
+- có test tại library và compatibility test tại consumer;
+- service chủ động nâng version, không dùng version mutable trong production;
+- không đưa business rule vào common chỉ vì muốn tái sử dụng;
+- capability lớn được tách tiếp khi classpath hoặc ownership trở nên quá rộng.
+
+Đổi lại, tổ chức quản lý một số artifact có kỷ luật thay vì quản lý nhiều bản sao không kiểm soát.
+
 ## 2. Cấu trúc tổng thể
 
 ```text
