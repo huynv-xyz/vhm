@@ -1,198 +1,754 @@
 # NOXH Java Platform
 
-**Phạm vi:** các dịch vụ Java/Spring Boot NOXH · Java 25 / Spring Boot 4
-**Đối chiếu:** `vhm-dossier-core`, `vhm-ocr-ekyc` (cũ) ↔ `new-structure` (mới) · Số liệu đo 07/09/2026
+> Nền tảng dùng chung cho các service Java 25 / Spring Boot 4 của Vinhomes.
+>
+> Tài liệu này mô tả cấu trúc mới, vai trò của từng library, ranh giới ownership và cách
+> quyết định một thành phần nên nằm trong library hay service.
 
----
+## 1. Vì sao cần platform dùng chung?
 
-## 1. Tóm tắt
+### 1.1. Hiện trạng của cấu trúc cũ
 
-**Vấn đề.** Mỗi service tự mang một bản sao nền tảng Spring Boot: dependency Maven, cấu hình JPA/Kafka/Redis, REST client, exception handler, response envelope, base entity, UUID generator, logging, security, utility. Không bản nào được công nhận là chính thức, nên mỗi bản vá hoặc thay đổi contract upstream trở thành N thay đổi trên N repository, kèm rủi ro bỏ sót.
+Trong cấu trúc cũ, mỗi service đồng thời sở hữu hai hệ thống code:
 
-**Giải pháp.** Tách theo ranh giới sở hữu: `libraries` (4 artifact nền tảng, có version và owner) + `service` (nghiệp vụ). Nguyên tắc bất biến: **nghiệp vụ của service nào thuộc service đó**.
+- **Nghiệp vụ:** entity, workflow, rule, repository query, API, scheduler và event của domain.
+- **Nền tảng:** Maven dependency, base entity, UUID generator, Kafka, Redis, exception handler,
+  API response, security, REST client, logging và utility.
 
-| Chỉ số | Cũ | Mới | Δ |
-|---|---:|---:|---:|
-| Dossier — Java files (`src/main`) | 310 | 221 | −89 |
-| Dossier — Java LOC | 26.463 | 21.611 | −18% |
-| Dossier — POM | 436 dòng | 51 dòng | −88% |
-| OCR/eKYC — Java files | 106 | 66 | −40 |
-| OCR/eKYC — Java LOC | 5.695 | 4.206 | −26% |
-| OCR/eKYC — POM | 124 dòng | 19 dòng | −85% |
-| Thrift generated code trong service | ~66.500 dòng/service dùng Profile | 0 | về `vhm-client` |
-
----
-
-## 2. Nhược điểm cấu trúc cũ
-
-### 2.1. Service gánh hai nhiệm vụ
-
-Package `core` của dossier chứa đồng thời nghiệp vụ và hạ tầng, không phân tầng:
+Hai nhóm này lại được đặt chung trong namespace của service:
 
 ```text
-vn/vinhomes/agent/dossier/core/
-├── annotation/  config/  security/  utils/  validation/   ← hạ tầng
-├── exception/   kafka/   metrics/   mapper/               ← hạ tầng
-├── client/                                                ← outbound integration
-├── controller/  dto/  model/  repository/  service/       ← nghiệp vụ
-└── event/  notification/  enums/  constant/               ← nghiệp vụ
+vn/vinhomes/<service>/
+├── controller/ dto/ model/ repository/ service/  # nghiệp vụ
+├── annotation/ config/ exception/ security/       # nền tảng bị copy
+├── kafka/ redis/ util/                             # nền tảng bị copy
+└── client/                                         # contract upstream bị khóa trong service
 ```
 
-Dưới `core` cùng tồn tại REST client cho File/OCR/VinBigData/Market/Message Delivery; Thrift runtime + connection pool + generated contract; Kafka config và legacy Kafka config; Redis/Redisson config; HMAC filter; logging interceptor, masking layout; base entity, UUID generator, API response, exception handler. OCR/eKYC lặp lại đúng mô hình đó ở quy mô nhỏ hơn.
+Nhìn vào package không thể xác định đâu là code riêng của domain, đâu là implementation chung vô
+tình được tạo đầu tiên trong repository đó. Khi service khác cần cùng capability, lựa chọn nhanh nhất
+là copy code. Mỗi bản copy sau đó có lifecycle riêng và trở thành một biến thể mới.
 
-→ Nhìn vào package không phân biệt được đâu là nghiệp vụ riêng, đâu là nền tảng dùng lại được.
+### 1.2. Nền tảng bị nhân bản và sai lệch hành vi
 
-### 2.2. Trùng tên nhưng không đảm bảo trùng hành vi
+Các class như base entity, UUID generator, API response, global exception handler, Kafka config,
+Redis config và security filter xuất hiện ở nhiều service. Trùng tên không có nghĩa trùng hành vi:
 
-Ít nhất **12 tên class xuất hiện ở cả hai repository**:
+- cùng một exception có thể map sang HTTP status hoặc error payload khác nhau;
+- cùng một DTO có thể khác field name, validation hoặc Jackson serialization;
+- cùng một Kafka config có thể khác serializer, retry, acknowledgement và consumer factory;
+- cùng một Redis config có thể khác prefix, timeout hoặc cách bật cluster;
+- cùng một security filter có thể khác path matcher hoặc cách kiểm tra signature.
+
+Sai lệch này thường không gây compile error. Nó chỉ xuất hiện khi tích hợp hoặc vận hành, nên chi phí
+phát hiện cao hơn duplication thông thường.
+
+Ví dụ, một lỗi được sửa trong `RestControllerExceptionHandler` của dossier không tự động được sửa
+trong OCR hoặc campaign. Sau vài lần thay đổi, không còn câu trả lời rõ ràng cho câu hỏi “bản nào là
+chuẩn?”.
+
+### 1.3. `common` cũ không tạo ra ownership rõ ràng
+
+Việc có dependency `tvhbds-common_java25spr` chưa giải quyết được vấn đề nếu service vẫn phải giữ
+thêm các bản local hoặc library không phản ánh kiến trúc hiện tại. Khi đó tồn tại đồng thời:
+
+- code lấy từ common cũ;
+- code đã copy rồi sửa trong service;
+- config mới được viết thêm vì config cũ không đủ linh hoạt;
+- nhiều cách gọi cùng một upstream.
+
+Developer không biết nên dùng common cũ, class local hay tạo implementation mới. Dependency chung
+trở thành một “hộp tiện ích” thay vì contract có ranh giới, owner và cách mở rộng rõ ràng.
+
+### 1.4. Outbound client bị gắn sai ownership
+
+File, OCR, Market, IAM, Message Delivery và Profile là upstream contract, nhưng client và DTO cũ
+thường nằm dưới package của service đầu tiên cần chúng. Điều này tạo ra ba vấn đề:
+
+1. Service khác khó phát hiện client đã tồn tại nên tiếp tục tạo hoặc copy client mới.
+2. Upstream thay đổi contract phải rà soát nhiều repository và dễ bỏ sót consumer.
+3. DTO của upstream nằm cạnh domain model khiến developer sử dụng trực tiếp DTO transport làm
+   business model, làm domain bị phụ thuộc vào contract bên ngoài.
+
+Generated Thrift code còn làm duplication lớn hơn: mỗi service dùng Profile có thể phải giữ hàng
+chục nghìn dòng generated source và tự duy trì transport pool/configuration giống nhau.
+
+### 1.5. Security bị phân mảnh
+
+Mỗi service tự có `SecurityConfig`, filter, basic-auth setup, CIDR rule và actor-context handling.
+Hệ quả không chỉ là code lặp mà còn là rủi ro bảo mật:
+
+- service có thể bảo vệ thiếu path mới;
+- cùng một internal request được xác thực khác nhau giữa các service;
+- logic chống replay hoặc kiểm tra clock skew được cập nhật không đồng đều;
+- cấu hình mở rộng phải sửa Java code và fork cả filter chain;
+- package crypto/signing dễ bị hiểu nhầm với web authentication/authorization.
+
+Security là capability cần một implementation chuẩn, còn khác biệt về realm, path và credential phải
+được điều khiển bằng cấu hình.
+
+### 1.6. Kafka và Redis có nhiều nguồn cấu hình
+
+Cấu trúc cũ tồn tại đồng thời các namespace và implementation khác nhau, ví dụ
+`spring.kafka.*`, `kafka.*`, Kafka config riêng của service và legacy config. Một property có thể được
+khai báo nhưng không được bean đang chạy bind tới.
+
+Hệ quả:
+
+- khó xác định serializer/factory nào đang thực sự được sử dụng;
+- local, test và production có thể khởi tạo khác nhau;
+- listener không dùng vẫn có thể tạo connection khi startup;
+- sửa timeout, retry hoặc security protocol phải làm nhiều nơi;
+- service mới tiếp tục copy một cấu hình bất kỳ mà không biết đó có phải cấu hình chuẩn hay không.
+
+Redis gặp vấn đề tương tự với standalone/cluster, TLS, key prefix và connection pool. Mục tiêu mới là
+một implementation dùng chung cho mỗi capability, còn service chỉ cung cấp giá trị YAML.
+
+### 1.7. Maven dependency và version phân tán
+
+Mỗi service cũ tự khai báo Spring Boot starters, library version, annotation processors, test
+dependency và build plugin. Các POM dài nhưng vẫn không thể hiện rõ phần nào là platform baseline,
+phần nào thực sự phục vụ nghiệp vụ.
+
+Tác động trực tiếp:
+
+- nâng Spring Boot hoặc Java phải sửa từng repository;
+- vá CVE không biết còn service nào chưa nâng version;
+- Lombok/MapStruct/Hibernate processor có thể chạy khác nhau;
+- test runner và packaging behavior không nhất quán;
+- dependency conflict được xử lý cục bộ và lặp lại ở nhiều service;
+- build chạy được trên một máy nhưng thất bại trong CI do phụ thuộc relative path hoặc artifact chỉ
+  được install local.
+
+### 1.8. Cấu hình bị copy và không rõ độ ưu tiên
+
+Một service có thể mang cả default kỹ thuật, giá trị local và cấu hình môi trường trong cùng file.
+Khi copy sang service khác, port, schema, topic, key prefix hoặc credential placeholder cũng bị copy
+theo.
+
+Không có quy tắc ownership khiến developer khó trả lời:
+
+- property này do library hay service định nghĩa;
+- giá trị mặc định nằm ở đâu;
+- property nào bắt buộc khi feature được bật;
+- secret lấy từ Vault hay đang có default không an toàn;
+- vì sao test lại đọc cấu hình local của developer.
+
+Kết quả là lỗi cấu hình chỉ được phát hiện lúc startup hoặc sau khi kết nối nhầm resource.
+
+### 1.9. Test và local environment trở nên nặng, khó tái lập
+
+Khi service tự mang PostgreSQL, Redis, Kafka, ZooKeeper và Docker Maven configuration giống nhau,
+mỗi repository phải duy trì lifecycle test infrastructure riêng. Plugin có thể tự khởi động container
+cho cả test không cần integration environment, làm build chậm và phụ thuộc Docker trên máy chạy.
+
+Các default thiếu điều kiện còn khiến application fail startup chỉ vì một capability không được dùng
+nhưng vẫn cố tạo datasource, Kafka consumer, Redis connection hoặc Thrift pool.
+
+### 1.10. Onboarding và review phụ thuộc trí nhớ cá nhân
+
+Developer mới phải hỏi hoặc tìm một repository để copy trước khi viết nghiệp vụ:
+
+- response envelope chuẩn là class nào;
+- exception nào map sang status nào;
+- entity nên kế thừa base class nào;
+- File/Profile client đã có chưa;
+- Kafka listener dùng factory nào;
+- security mở path hoặc thêm realm bằng cách nào.
+
+Reviewer cũng phải đọc sâu implementation mới biết một thay đổi là domain-specific hay đang tạo thêm
+một bản platform mới. Kiến thức nằm trong trí nhớ của người làm lâu năm thay vì nằm trong module
+boundary và API có tài liệu.
+
+### 1.11. Chi phí tăng theo số service và số biến thể
+
+Vấn đề lớn nhất không phải số dòng code bị copy, mà là số implementation phải duy trì. Nếu có `N`
+service và mỗi capability có nhiều biến thể, một thay đổi nền tảng tạo ra chuỗi công việc:
 
 ```text
-AppErrorCode   BaseEntity   BaseEntityUUID   HealthController   OutboxEvent
-UUIDv7Generated   UUIDv7Generator   RestControllerExceptionHandler
-PrepareDownloadRequest   PrepareUploadRequest   OcrResponse
+phân tích tất cả biến thể
+        → sửa từng repository
+        → test từng implementation
+        → release theo nhiều lịch khác nhau
+        → theo dõi service chưa được cập nhật
 ```
 
-Hai class cùng tên có thể khác field, validation, status code, serialization. Đây là dạng duplication nguy hiểm hơn copy-paste thuần: developer import nhầm và chỉ phát hiện khi tích hợp hoặc chạy production.
+Một bản vá có thể đúng ở ba service nhưng bị bỏ sót ở service thứ tư. Chi phí và rủi ro tăng cùng số
+repository, trong khi giá trị nghiệp vụ không tăng tương ứng.
 
-### 2.3. Client khó tìm, khó tái sử dụng
+### 1.12. Nguyên nhân gốc
 
-Client cũ nằm trong namespace service sở hữu (`vn.vinhomes.agent.dossier.core.client`). Service khác không biết đã có client sẵn chưa nên tạo mới hoặc copy; bug fix và thay đổi contract phải làm nhiều nơi; DTO upstream nằm trong domain package dossier khiến người đọc hiểu nhầm là model nghiệp vụ.
+> Cấu trúc cũ không có ranh giới ownership rõ ràng giữa platform, inbound web, outbound integration
+> và business domain.
 
-Thrift nặng hơn: riêng generated code cho Profile chiếm **~66.500 dòng** — mỗi service cần Profile đều phải mang IDL và sinh lại toàn bộ khối này.
+Do đó, giải pháp không thể chỉ là xóa class trùng hoặc tạo thêm một package `util`. Cần tách theo
+trách nhiệm và dependency direction:
 
-### 2.4. Maven và version phân tán
+| Điểm yếu cũ | Yêu cầu kiến trúc mới | Thành phần chịu trách nhiệm |
+|---|---|---|
+| Version/plugin khác nhau | Một build baseline có version | `vhm-spring-boot-parent` |
+| Primitive, JPA, Kafka, Redis bị copy | Một implementation hạ tầng thấp nhất | `vhm-common` |
+| Response, exception và security phân mảnh | Một inbound HTTP contract có thể cấu hình | `vhm-web-starter` |
+| Client/DTO nằm rải rác trong service | Typed client được nhóm theo upstream | `vhm-client` |
+| Business và infrastructure trộn lẫn | Service chỉ giữ hành vi của domain | Từng service |
 
-POM dossier 436 dòng, OCR 124 dòng. Mỗi repo tự quản Spring Boot starters, annotation processor, SpringDoc, Lombok, MapStruct, version override để vá CVE, plugin compiler/Surefire/packaging.
+Cấu trúc mới vì vậy tách rõ:
 
-→ **Hiện không có cách trả lời nhanh "còn service nào chưa được vá?"** ngoài mở từng repository kiểm tra thủ công.
+- **Platform libraries** sở hữu capability kỹ thuật dùng chung, có version và lifecycle riêng.
+- **Service** sở hữu toàn bộ hành vi sản phẩm và nghiệp vụ của domain mình.
 
-### 2.5. Cấu hình lặp và khó xác định nguồn
+Mục tiêu không phải đưa càng nhiều code vào `common` càng tốt. Mục tiêu là giảm số biến thể phải
+bảo trì, tạo một implementation chính thức cho mỗi capability, nhưng không biến platform thành một
+monolith dùng chung mới.
 
-Cùng một Kafka bootstrap server được biểu diễn qua cả `spring.kafka.*` lẫn `kafka.*`. Client config dùng 6 root khác nhau: `file-client`, `ocr-client`, `market-client`, `vin-bigdata-client`, `external.message-delivery`, `thrift.client`.
-
-→ Khó biết property nào thực sự được bind; đổi tên property có thể khiến service khởi động với default sai mà không báo lỗi.
-
-### 2.6. Onboarding phụ thuộc người hướng dẫn
-
-Người mới phải hỏi trước khi viết được dòng nghiệp vụ đầu tiên: API response chuẩn ở đâu, exception nào map status code nào, entity kế thừa class nào, client gọi File Service đã có chưa, Kafka listener cần factory tên gì. Câu trả lời phụ thuộc repository đang mở → năng lực bàn giao gắn với cá nhân thay vì gắn với tài sản kỹ thuật.
-
-### 2.7. Chi phí nếu giữ nguyên
-
-Chi phí không tăng theo số dòng code mà theo **số biến thể**: vá một CVE phải sửa và test riêng từng repo; upstream đổi contract phải rà soát thủ công toàn bộ repo với rủi ro bỏ sót; service mới lại copy nền tảng từ repo gần nhất, sinh thêm một biến thể phải duy trì.
-
----
-
-## 3. Nguyên nhân gốc
-
-> **Chưa có ranh giới sở hữu giữa phần dùng chung và phần nghiệp vụ.**
-
-Không có ranh giới thì mọi thành phần kỹ thuật mặc định thuộc về repository nào tình cờ cần nó trước. Không bản nào là chính thức, nên sao chép là phương án hợp lý nhất với từng developer — dù đắt nhất với tổ chức.
-
-Năm nguyên tắc của cấu trúc mới:
-
-- **P1** — Service chỉ sở hữu nghiệp vụ của chính nó, không tự chứa lại base entity, API envelope, global exception handler, generic paging, Kafka/Redis boilerplate.
-- **P2** — Library không chứa business rule. Một class chỉ vào library khi có ≥2 consumer thực tế hoặc là capability nền tảng, không phụ thuộc model nghiệp vụ, có owner, và việc dùng chung **giảm tổng độ phức tạp** chứ không chỉ chuyển code sang chỗ khác.
-- **P3** — Default ở library, giá trị môi trường ở deployment: `Environment/Secret` → `application.yml` của service → defaults có tên riêng của library (`vhm-common-defaults.yml`, `vhm-web-defaults.yml`, `vhm-client-defaults.yml`).
-- **P4** — Auto-configuration phải có điều kiện. Service không dùng Redis/Thrift/HMAC không được fail khởi động chỉ vì default property rỗng. Đây là nguyên tắc then chốt để library dùng chung không thành *monolith dùng chung*.
-- **P5** — Cấu hình local không rò vào test; job nền phải có công tắc kích hoạt tường minh.
-
----
-
-## 4. Cấu trúc mới
+## 2. Cấu trúc tổng thể
 
 ```text
 new-structure/
 ├── libraries/
-│   ├── vhm-spring-boot-parent/   # build convention, không chứa Java code
-│   ├── vhm-common/               # primitive/hạ tầng, không phụ thuộc web
-│   ├── vhm-web-starter/          # chuẩn inbound HTTP
-│   └── vhm-client/               # outbound integration (+ src/main/thrift)
+│   ├── vhm-spring-boot-parent/  # Maven/build baseline
+│   ├── vhm-common/              # primitive và infrastructure dùng chung
+│   ├── vhm-web-starter/         # inbound HTTP contract và web security
+│   └── vhm-client/              # outbound clients và upstream contracts
 └── service/
-    ├── vhm-dossier-core/
-    ├── vhm-ocr-ekyc/
-    └── vhm-campaign-core/
+    ├── vhm-dossier-core/        # domain hồ sơ
+    ├── vhm-ocr-ekyc/            # domain OCR/eKYC
+    └── vhm-campaign-core/       # domain campaign
 ```
 
-| Module | Chịu trách nhiệm | **Không** chịu trách nhiệm |
-|---|---|---|
-| `vhm-spring-boot-parent` | Java/Spring Boot baseline; version dependency và bản vá CVE; compiler, annotation processor, Surefire, packaging plugin | Business dependency của một service; kéo mọi thư viện runtime vào mọi service để POM ngắn |
-| `vhm-common` | `BaseEntity`, UUIDv7, repository primitive; utility thuần đã có test; signing/cipher primitive; default datasource, JPA, virtual threads, structured logging; `logback-spring.xml` canonical | Controller, HTTP response, servlet filter; client của upstream cụ thể; domain status, business error code |
-| `vhm-web-starter` | API response envelope, paging; global exception handler; Spring MVC, validation, OpenAPI defaults; security filter chain, actor context | Business exception code; REST client gọi ra ngoài; JPA entity/repository; logic notification/assignment/workflow |
-| `vhm-client` | `RestClient` infrastructure; typed client File/OCR/VinBigData/Market/Message Delivery/Profile; DTO theo contract upstream; authentication, timeout, retry; Thrift IDL, generated code, transport pool | Quyết định *khi nào* gọi client; map kết quả thành trạng thái domain; fallback nghiệp vụ; phụ thuộc `vhm-web-starter` |
-
-Ví dụ ranh giới: `FileClient.prepareUpload()` thuộc library — quyết định hồ sơ nào upload loại tài liệu nào thuộc dossier. `ProfileClient` thuộc library — quyết định reviewer nào được phân công thuộc dossier.
-
-**Service** giữ toàn bộ domain entity, business rule, workflow, migration và adapter đặc thù. FPT OCR client tiếp tục nằm trong OCR service nếu chỉ OCR dùng — **không đưa mọi outbound call vào `vhm-client` chỉ vì tên class có chữ `Client`**.
-
-### 4.1. Dependency rules
+Quan hệ phụ thuộc runtime:
 
 ```text
-vhm-common ← vhm-web-starter
-           ← vhm-client
-
-service → common + web-starter (nếu có HTTP API) + client capability cần dùng
+                         service
+                            │
+              ┌─────────────┴─────────────┐
+              v                           v
+      vhm-web-starter                vhm-client
+              │                           │
+              └─────────────┬─────────────┘
+                            v
+                       vhm-common
 ```
 
-- `vhm-common` **không** phụ thuộc web starter hoặc client.
-- `vhm-client` **không** phụ thuộc `vhm-web-starter` — đã gỡ trong PoC, nhờ vậy worker/consumer dùng outbound client không bị kéo theo MVC, controller, web security.
-- Library **không** phụ thuộc service. Không dependency cycle. Không tạo bean/connection cho capability đang tắt.
+Các quy tắc bắt buộc:
 
-### 4.2. Bảng quyết định đặt code
+1. Library không phụ thuộc ngược vào service.
+2. `vhm-common` không phụ thuộc `vhm-web-starter` hoặc `vhm-client`.
+3. `vhm-client` không phụ thuộc `vhm-web-starter`.
+4. Business entity, business error code, trạng thái và quyết định nghiệp vụ luôn nằm ở service.
+5. Capability có kết nối ra ngoài phải có điều kiện bật/tắt; capability không dùng không được làm
+   service fail startup.
+6. Khác biệt giữa các service ưu tiên biểu diễn bằng YAML/property, không copy config class.
 
-Áp dụng theo thứ tự, dừng ở dòng đầu tiên khớp:
+## 3. Vai trò và trách nhiệm từng library
 
-| # | Điều kiện | Vị trí |
-|---|---|---|
-| 1 | Chứa thuật ngữ, trạng thái hoặc quyết định của một domain | Service sở hữu domain |
-| 2 | Mô tả contract upstream, không quyết định business flow | `vhm-client` |
-| 3 | Xử lý inbound HTTP/API nhất quán giữa các service | `vhm-web-starter` |
-| 4 | Primitive/utility, không phụ thuộc HTTP và không mang nghiệp vụ | `vhm-common` |
-| 5 | Chỉ quản version/plugin/build | `vhm-spring-boot-parent` |
-| 6 | Chưa có consumer thứ hai và chưa phải nền tảng bắt buộc | Giữ tại service |
+### 3.1. `vhm-spring-boot-parent`
+
+#### Vai trò
+
+Đây là Maven parent thống nhất cách build và dependency baseline của các service. Module có
+`packaging=pom`, không chứa Java source và không cung cấp business API.
+
+Parent hiện chịu trách nhiệm:
+
+- thống nhất Java 25 và Spring Boot 4;
+- quản lý version override và bản vá dependency tập trung;
+- cấu hình Lombok, MapStruct và Hibernate annotation processor;
+- cấu hình Maven Compiler, Surefire và Spring Boot Maven Plugin;
+- cung cấp test dependency chuẩn như Spring Boot Test, Kafka Test, Testcontainers và H2;
+- khai báo Maven repository dùng chung;
+- cung cấp version đồng bộ cho các VHM library.
+
+#### Cách dùng trong service độc lập
+
+```xml
+<parent>
+    <groupId>vn.vinhomes.platform</groupId>
+    <artifactId>vhm-spring-boot-parent</artifactId>
+    <version>0.1.0-SNAPSHOT</version>
+    <relativePath/>
+</parent>
+```
+
+Service nằm ở Git repository riêng phải resolve parent đã publish từ Maven repository.
+`<relativePath/>` ngăn Maven tìm một đường dẫn local như
+`../../libraries/vhm-spring-boot-parent/pom.xml`, vốn không tồn tại trong CI/CD.
+
+#### Không thuộc trách nhiệm của parent
+
+- Java class và application configuration;
+- entity, DTO, business dependency hoặc plugin chỉ phục vụ một domain;
+- secret và giá trị cấu hình theo môi trường;
+- logic giúp POM ngắn hơn nhưng làm mọi service nhận dependency không cần thiết.
+
+#### Trạng thái hiện tại
+
+Parent hiện là **opinionated application parent**: nó khai báo trực tiếp `vhm-common`,
+`vhm-web-starter`, `vhm-client` và test dependencies. Cách này phù hợp với baseline HTTP service và
+giúp POM service ngắn, nhưng worker không dùng web vẫn nhận web classpath.
+
+Khi có nhiều loại application, nên tách thành một BOM/parent chỉ quản version/plugin và để service
+chọn starter cần dùng. Không nên mô tả parent hiện tại là “chỉ quản build” cho tới khi hoàn thành
+việc tách đó.
 
 ---
 
-## 5. Ưu điểm
+### 3.2. `vhm-common`
 
-| Nhược điểm cũ | Cách xử lý | Kết quả đo được |
+#### Vai trò
+
+`vhm-common` là lớp nền thấp nhất. Module sở hữu primitive và infrastructure có thể dùng lại,
+không gắn với inbound HTTP, một upstream cụ thể hoặc business domain cụ thể.
+
+#### Trong library có gì?
+
+| Package | Thành phần | Trách nhiệm |
 |---|---|---|
-| Nền tảng bị xây lặp từng repo | Hạ tầng về library có owner và test | −89 file (dossier), −40 file (OCR) |
-| Không rõ client chính thức | Gom outbound contract vào `vhm-client` | ~66.500 dòng generated code không còn nhân bản |
-| Build/dependency phân tán | Parent quản version/plugin | POM −85…88%; vá CVE tập trung, đo adoption qua version |
-| Cấu hình khó dự đoán | Default library → override service → local profile riêng | Test tái lập, ít phụ thuộc máy dev |
-| Nghiệp vụ lẫn hạ tầng | Service chỉ giữ domain | Reviewer xác định phạm vi ảnh hưởng qua module |
-| Onboarding truyền miệng | Cấu trúc + owner + guide cạnh code | Người mới tự tìm code bằng cấu trúc |
+| `vn.vinhomes.common.annotation` | `UUIDv7Generated`, UUID/String generators | Chuẩn sinh định danh UUIDv7 cho entity |
+| `vn.vinhomes.common.entity` | `BaseEntity`, `BaseEntityUUID`, `AuditedEntity*` | Field persistence và audit nền |
+| `vn.vinhomes.common.repository` | base repository, condition/assignment builders, `@EnablePersistence` | Primitive JPA dùng chung, không chứa query nghiệp vụ |
+| `vn.vinhomes.common.config` | cache, Kafka, Kafka/Jackson, legacy Kafka, Redisson | Auto-configure hạ tầng từ property |
+| `vn.vinhomes.common.crypto` | canonical request, HMAC signer/verifier, cipher, signature headers | Primitive ký và mã hóa độc lập với web security |
+| `vn.vinhomes.common.util` | file, hash, HTTP, JSON, validation, phone, masking, string, UUID | Utility thuần không quyết định business flow |
 
-Luồng làm việc trước / sau:
+Tên `crypto` được dùng có chủ ý. Đây là công cụ ký/mã hóa; gọi package này là `security` sẽ dễ bị
+nhầm với authentication/authorization do `vhm-web-starter` sở hữu.
 
-| Nhu cầu | Cũ | Mới |
-|---|---|---|
-| Tạo API mới | Tìm/copy response, exception, validation pattern trong repo | Dùng contract + handler từ `vhm-web-starter` |
-| Tạo entity | Tìm base entity/UUID generator đúng phiên bản | Dùng persistence primitive từ `vhm-common` |
-| Gọi File/Profile/Market | Search nhiều package/repo, nguy cơ tạo client mới | Tra `vhm-client`, inject typed client |
-| Vá lỗi client | Sửa từng bản copy, đồng bộ thủ công | Sửa library, test một contract, nâng version |
-| Nâng dependency/CVE | Audit và sửa nhiều POM | Version tập trung; dependency riêng vẫn ở đúng service |
+#### Auto-configuration và default
 
-Khác biệt cốt lõi: developer chuyển từ **"tìm một repo để copy"** sang **"dùng một contract có owner và version"**. Với quản lý: đo adoption qua library version thay vì audit thủ công, rollback bằng cách pin lại version trước.
+`CommonAutoConfiguration` là entry point của module và import các config dùng chung. Default nằm
+trong `vhm-common-defaults.yml`, bao gồm:
+
+- virtual threads;
+- datasource, HikariCP, JPA và Liquibase baseline;
+- Kafka producer/consumer và legacy Kafka compatibility;
+- Redis/Redisson;
+- structured logging.
+
+`LibraryDefaultsEnvironmentPostProcessor` nạp default library ở độ ưu tiên thấp để service và
+environment luôn có thể override. Các cipher chỉ được tạo khi có key tương ứng trong
+`vhm.crypto.*`.
+
+#### Dependency nền được cung cấp
+
+Module hiện cung cấp baseline cho validation, actuator, JPA/Liquibase/PostgreSQL, cache/Caffeine,
+Kafka, Redisson, Apache HttpClient 5 và Apache POI. Việc dependency nằm ở common chỉ
+chuẩn hóa implementation/version; nó không phải lý do để đưa mọi code sử dụng dependency đó vào
+common.
+
+#### Không được đặt trong `vhm-common`
+
+- controller, servlet filter, API response hoặc HTTP status mapping;
+- client và DTO của một upstream cụ thể;
+- business error code, domain enum, domain entity và query nghiệp vụ;
+- workflow, scheduler hoặc Kafka listener xử lý nghiệp vụ;
+- secret hay URL của một môi trường cụ thể.
 
 ---
 
-## 6. Kết quả kiểm chứng
+### 3.3. `vhm-web-starter`
 
-Cấu trúc mới đã được dựng và chạy thật, không dừng ở phân tích trên giấy:
+#### Vai trò
 
-| Hạng mục | Kết quả |
+`vhm-web-starter` chuẩn hóa **inbound HTTP boundary** cho Spring MVC service. Nó sở hữu contract web
+chung, exception-to-response mapping, timezone request context, OpenAPI và một security
+configuration thống nhất.
+
+#### Trong library có gì?
+
+| Package | Thành phần | Trách nhiệm |
+|---|---|---|
+| `vn.vinhomes.web.controller` | `BaseController`, `HttpResponse`, health endpoint | Primitive/controller chung cho HTTP boundary |
+| `vn.vinhomes.web.dto` | `ApiResponse`, metadata, paging, `ServiceResponse` | Envelope và pagination contract chuẩn |
+| `vn.vinhomes.web.exception` | generic exceptions, error payload, global handler | Chuyển lỗi thành HTTP response nhất quán |
+| `vn.vinhomes.web.config` | `SecurityConfig`, timezone-aware Jackson | Wiring web dùng chung |
+| `vn.vinhomes.web.security.realm` | realm properties, CIDR filter | Basic-auth realm và network allowlist |
+| `vn.vinhomes.web.security.internal` | HMAC filter, replay guard, actor context | Xác thực request nội bộ và chống replay |
+| `vn.vinhomes.web.security.upstream` | BFF registry/filter, current actor, data scope | Nhận identity từ BFF và chống giả mạo header chéo IdP |
+| `vn.vinhomes.web.timezone` | filter và request timezone context | Chuẩn hóa timezone theo request |
+| `vn.vinhomes.web.util` | `IpUtil` | Xử lý IP phục vụ web/security |
+
+#### Một `SecurityConfig`, khác biệt đi qua YAML
+
+Service không tạo thêm một `SecurityConfig` cạnh config của starter. Realm, path, CIDR, internal
+signature, actor context và upstream BFF được khai báo bằng property:
+
+```yaml
+security:
+  basic: ...
+  realms: ...
+  internal-signature: ...
+  internal-actor-context: ...
+
+vhm:
+  web:
+    openapi: ...
+    security:
+      upstream-bff: ...
+  cors: ...
+```
+
+Chỉ override bean khi service có một security mechanism thực sự khác contract chung. Feature mở
+rộng phải có `enabled` hoặc property rõ ràng, không fork/copy toàn bộ config.
+
+`WebAutoConfiguration` cung cấp OpenAPI metadata/group, CORS, global exception handler, timezone
+configuration và các web bean mặc định. Bean có `@ConditionalOnMissingBean` có thể được thay thế có
+kiểm soát; feature có `@ConditionalOnProperty` chỉ bật khi YAML yêu cầu.
+
+#### Ranh giới exception
+
+Starter sở hữu **cơ chế** và generic HTTP exceptions như bad request, forbidden, invalid state và
+resource not found. Service sở hữu **vocabulary lỗi nghiệp vụ** và điều kiện ném lỗi. Ví dụ
+`CampaignErrorCode` hoặc `DossierApprovalException` phải nằm ở service, dù global handler của starter
+chịu trách nhiệm serialize response.
+
+#### Không được đặt trong `vhm-web-starter`
+
+- outbound REST/Thrift client;
+- JPA entity hoặc repository;
+- quyết định phân quyền gắn với workflow domain;
+- request/response DTO chỉ thuộc một API nghiệp vụ;
+- credential thật.
+
+#### Trạng thái hiện tại
+
+`HealthController` vẫn đang được `WebAutoConfiguration` đăng ký. Nếu contract cuối cùng chỉ dùng
+Spring Boot Actuator thì cần xóa class và bean này bằng một thay đổi code riêng; không được giả định
+nó đã bị bỏ.
+
+---
+
+### 3.4. `vhm-client`
+
+#### Vai trò
+
+`vhm-client` là outbound integration layer dùng chung. Module đóng gói cách kết nối,
+authentication, timeout, transport và DTO theo contract của upstream. Service inject typed client,
+quyết định khi nào gọi và map kết quả vào domain của mình.
+
+#### Cấu trúc theo capability
+
+Client, properties, exception và DTO của cùng upstream được đặt cạnh nhau:
+
+```text
+vn.vinhomes.client/
+├── file/                   # File Service public/private + DTO
+├── iam/                    # IAM Workforce Core
+├── incom/                  # Incom API + DTO
+├── market/                 # Market API + properties + DTO
+├── message/                # Message Delivery + properties + DTO
+├── ocr/                    # OCR contract
+│   ├── dto/
+│   ├── provider/dto/
+│   └── vinbigdata/         # VinBigData properties + DTO
+├── profile/                # typed facade gọi Profile
+└── thrift/                 # factory, validator, pool và transport config
+```
+
+Package gốc `vn.vinhomes.client` chỉ chứa infrastructure dùng chung:
+
+- `RestClientSupport` và `RestClients`;
+- basic authentication;
+- `ClientException`;
+- `ClientAutoConfiguration`.
+
+Không tạo lại `client.config` hoặc `client.dto` chứa lẫn thành phần của nhiều upstream. Developer
+phải có thể mở một package capability và thấy client, config, exception cùng DTO liên quan.
+
+Generated Thrift contract nằm dưới `vn.vinhomes.service.agent_profile`. Đây là generated source,
+không phải business code và không chỉnh tay.
+
+#### Cách sử dụng client
+
+1. Cấu hình đúng property group; credential do Vault/environment cung cấp.
+2. Inject typed client.
+3. Gọi operation của upstream.
+4. Map response/exception sang model và outcome của domain trong service.
+
+Ví dụ File client:
+
+```yaml
+vhm:
+  client:
+    file:
+      base-url: ${FILE_CLIENT_BASE_URL}
+      secret-key: ${FILE_CLIENT_SECRET_KEY}
+      username: ${FILE_PRIVATE_CLIENT_USERNAME}
+      password: ${FILE_PRIVATE_CLIENT_PASSWORD}
+      connect-timeout: 3s
+      read-timeout: 20s
+```
+
+```java
+@Service
+final class AttachmentService {
+    private final FileClient fileClient;
+
+    AttachmentService(FileClient fileClient) {
+        this.fileClient = fileClient;
+    }
+}
+```
+
+URL có thể có default local an toàn; username, password, HMAC key và API key thật không commit vào
+repository. Vault hoặc secret manager inject environment variable được YAML tham chiếu.
+
+#### Khi nào một client được đưa vào library?
+
+Một client nên vào `vhm-client` khi:
+
+- contract upstream ổn định;
+- có ít nhất hai consumer thực tế, hoặc là platform capability được nhận ownership;
+- API không lộ model của service đầu tiên;
+- timeout, authentication và error semantics có thể chuẩn hóa.
+
+Client chỉ phục vụ một domain thì ở lại service. Một class có hậu tố `Client` không tự động là
+shared code.
+
+#### Không được đặt trong `vhm-client`
+
+- quyết định khi nào gửi notification, duyệt dossier hoặc chạy campaign;
+- fallback làm thay đổi business outcome;
+- domain entity, controller DTO hoặc inbound HTTP exception;
+- web security filter chain.
+
+## 4. Service repository chịu trách nhiệm gì?
+
+Sau khi dùng platform, service vẫn sở hữu toàn bộ hành vi sản phẩm:
+
+```text
+src/main/java/vn/vinhomes/<domain>/
+├── controller/       # endpoint riêng của domain
+├── dto/              # request/response của domain API
+├── model|entity/     # domain state và persistence model
+├── repository/       # query mang business semantics
+├── service/          # use case và business rules
+├── mapper/           # mapping domain/application
+├── event|kafka/      # event schema/listener/publisher của domain
+├── scheduler/        # job nghiệp vụ
+├── client/           # adapter chỉ service này dùng
+├── config/           # extension thật sự đặc thù
+└── exception/        # business error code/exception
+```
+
+Service cũng sở hữu:
+
+- Liquibase changelog cho schema của mình;
+- topic name, consumer group, concurrency và payload nghiệp vụ;
+- endpoint mapping theo môi trường;
+- permission vocabulary, feature flag và rate limit của domain;
+- test cho use case, migration và integration boundary;
+- Dockerfile và deployment manifest riêng.
+
+Platform cung cấp Kafka/Redis machinery; service sở hữu topic và cách xử lý message. Platform cung
+cấp security mechanism; service sở hữu permission và policy nghiệp vụ. Platform cung cấp client;
+service sở hữu quyết định gọi client và xử lý kết quả.
+
+## 5. Bảng quyết định đặt code
+
+Áp dụng theo thứ tự và dừng ở điều kiện đầu tiên khớp:
+
+| Câu hỏi | Vị trí |
 |---|---|
-| Libraries reactor | `mvn clean install` — thành công, gồm test từng module |
-| OCR/eKYC | Full `mvn verify` — thành công |
-| OCR persistence | PostgreSQL Testcontainers + Liquibase — thành công |
-| Dossier | `mvn -DskipTests package` — thành công với dependency mới |
-| Dependency direction | `vhm-client` không còn phụ thuộc `vhm-web-starter` |
-| Capability isolation | OCR không khởi tạo Thrift/Profile pool khi capability tắt |
-| Business leakage audit | Library production source không còn tham chiếu dossier/NOXH/OCR-eKYC/PTT |
+| Có thuật ngữ, trạng thái hoặc quyết định của một domain? | Service sở hữu domain |
+| Mô tả contract/transport của upstream dùng chung? | `vhm-client/<capability>` |
+| Xử lý inbound HTTP giống nhau giữa các service? | `vhm-web-starter` |
+| Là primitive kỹ thuật, không phụ thuộc HTTP và không có business rule? | `vhm-common` |
+| Chỉ quản version, plugin hoặc build baseline? | `vhm-spring-boot-parent` |
+| Chưa có consumer thứ hai và không phải platform capability? | Giữ tại service |
 
-**Ba lưu ý khi đọc số liệu §1:**
+Ví dụ cụ thể:
 
-1. Code không "biến mất": phần dùng chung chuyển sang libraries, phần trùng lặp bị loại bỏ.
-2. POM dossier cố ý giữ 51 dòng để khai báo minh bạch dependency riêng (Syncfusion, POI, Thymeleaf phục vụ xuất báo cáo). Đưa chúng vào parent chỉ để POM ngắn hơn sẽ làm **mọi** service mang classpath không cần thiết.
-3. `vhm-client` có LOC lớn do code sinh từ Thrift — không dùng con số này để đánh giá độ phức tạp do developer tự viết.
+| Thành phần | Vị trí đúng | Lý do |
+|---|---|---|
+| `UUIDv7Generator` | `vhm-common` | Primitive persistence |
+| `CampaignStatus` | campaign service | Trạng thái nghiệp vụ |
+| `RestControllerExceptionHandler` | `vhm-web-starter` | HTTP mapping dùng chung |
+| `CampaignErrorCode` | campaign service | Vocabulary lỗi domain |
+| `FileClient` và File DTO | `vhm-client/file` | Upstream contract dùng chung |
+| Chọn loại tài liệu dossier cần upload | dossier service | Quyết định nghiệp vụ |
+| Kafka producer factory | `vhm-common` | Infrastructure chung |
+| Notification topic/listener | campaign service | Event contract và workflow domain |
+| HMAC signer | `vhm-common.crypto` | Crypto primitive |
+| Servlet HMAC authentication filter | `vhm-web-starter.security` | Inbound web security |
+
+Một class trùng tên ở hai service chưa đủ điều kiện để share. Chỉ gom khi semantics, lifecycle và
+owner thực sự giống nhau.
+
+## 6. Cấu hình và ownership
+
+Cấu hình được chia thành ba lớp ưu tiên:
+
+```text
+Vault / Kubernetes Secret / environment variable    ưu tiên cao nhất
+                    ↓
+application.yml hoặc application-<profile>.yml      service/environment
+                    ↓
+vhm-*-defaults.yml trong library                    default thấp nhất
+```
+
+Nguyên tắc:
+
+- Library default phải an toàn và không chứa secret.
+- Service chỉ override phần khác biệt, không copy toàn bộ default library.
+- Secret dùng `${ENV_NAME}` và được Vault/deployment inject.
+- Feature tùy chọn phải có `enabled` hoặc điều kiện bean rõ ràng.
+- Local profile nằm ở service nếu nó mô tả port/database/schema local của service.
+- Không sửa changeset Liquibase đã chạy; tạo changeset mới. Việc tắt Liquibase local không sửa được
+  checksum ở môi trường dùng chung.
+
+Namespace ownership:
+
+| Namespace | Owner |
+|---|---|
+| `spring.datasource`, `spring.jpa`, `spring.liquibase` | common cung cấp baseline; service cung cấp URL/schema |
+| `kafka.*`, `redisson.config.*` | `vhm-common` |
+| `vhm.crypto.*` | `vhm-common.crypto` |
+| `security.*`, `vhm.web.*`, `vhm.cors.*`, `springdoc.*` | `vhm-web-starter` |
+| `vhm.client.<capability>.*`, Thrift properties | `vhm-client` |
+| `campaign.*`, `dossier.*`, `segment.*`, ... | service tương ứng |
+
+## 7. Auto-configuration và mở rộng
+
+Các runtime library đăng ký entry point qua Spring Boot
+`META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports`:
+
+- `CommonAutoConfiguration`;
+- `WebAutoConfiguration`;
+- `ClientAutoConfiguration` và Thrift auto-configuration.
+
+Khi thêm bean vào library:
+
+1. Dùng `@ConditionalOnClass` nếu capability cần dependency tùy chọn.
+2. Dùng `@ConditionalOnProperty` nếu capability có thể bật/tắt.
+3. Dùng `@ConditionalOnMissingBean` khi service được phép thay implementation.
+4. Validate property bắt buộc khi feature bật; lỗi phải nêu đúng tên property thiếu.
+5. Không mở connection, pool hoặc thread khi capability tắt.
+6. Test cả trạng thái bật và tắt.
+
+Service nên ưu tiên cấu hình YAML trước khi override bean. Override là escape hatch cho behavior thực
+sự khác, không phải cách cấu hình thông thường.
+
+## 8. JavaDoc cho public library API
+
+Public class trong library phải có JavaDoc đủ để developer sử dụng mà không cần đọc implementation.
+JavaDoc cần trả lời:
+
+- class giải quyết và không giải quyết việc gì;
+- property bắt buộc/tùy chọn và nguồn secret;
+- cách inject hoặc khởi tạo;
+- ví dụ gọi ngắn;
+- điều kiện auto-configuration;
+- lỗi quan trọng, thread-safety hoặc lifecycle nếu có.
+
+Ví dụ JavaDoc cho File client:
+
+```java
+/**
+ * Xin presigned URL từ File Service; không upload/download byte thay caller.
+ *
+ * <p>Cấu hình {@code vhm.client.file.base-url}; inject secret bằng
+ * {@code FILE_CLIENT_SECRET_KEY}. Private API cần thêm
+ * {@code FILE_PRIVATE_CLIENT_USERNAME/PASSWORD} từ Vault.
+ *
+ * <pre>{@code
+ * @Service
+ * final class AttachmentService {
+ *     AttachmentService(FileClient fileClient) { ... }
+ *     // fileClient.prepareUpload(...)
+ * }
+ * }</pre>
+ */
+```
+
+Tài liệu kiến trúc như file này giải thích boundary. JavaDoc cạnh class giải thích cách dùng chính
+class đó. Không cần duy trì một `GUIDE.md` lặp lại API của từng class.
+
+## 9. Publish và sử dụng giữa các Git repository
+
+Library và service nằm ở các Git repository độc lập, vì vậy quy trình đúng là:
+
+1. Build và test platform libraries.
+2. Publish parent POM cùng các JAR lên Maven repository nội bộ.
+3. Service pin một platform version đã publish và dùng `<relativePath/>` rỗng.
+4. CI service nhận credential đọc Maven registry qua `settings.xml` hoặc CI variable.
+5. Build service trong môi trường sạch.
+6. Nâng library version qua merge request có changelog và compatibility test.
+
+Local development có thể chạy `mvn install` để đưa snapshot vào `~/.m2`, nhưng đây không phải cơ
+chế CI/CD. Build chỉ chạy trên máy đã install local mà chưa publish artifact là build không tái lập.
+
+Với release, không dùng version mutable. Với snapshot, Maven repository cần snapshot policy rõ ràng.
+
+## 10. Quy trình thêm shared capability
+
+Trước khi move code từ service vào library:
+
+1. Xác định consumer thực tế và owner bảo trì.
+2. Chứng minh API không lộ business model của service đầu tiên.
+3. Chọn đúng library bằng bảng ở mục 5.
+4. Thiết kế namespace property và default an toàn.
+5. Thêm auto-configuration có điều kiện nếu cần.
+6. Viết unit/integration test và JavaDoc hướng dẫn dùng.
+7. Kiểm tra dependency direction, compatibility và classpath impact.
+8. Publish version mới và migrate từng consumer.
+9. Chỉ xóa implementation cũ sau khi service build/test thành công.
+
+## 11. Kết quả refactor đã đo
+
+| Chỉ số | Trước | Sau | Thay đổi |
+|---|---:|---:|---:|
+| Dossier Java files (`src/main`) | 310 | 221 | −89 |
+| Dossier Java LOC | 26.463 | 21.611 | −18% |
+| Dossier POM | 436 dòng | 51 dòng | −88% |
+| OCR/eKYC Java files | 106 | 66 | −40 |
+| OCR/eKYC Java LOC | 5.695 | 4.206 | −26% |
+| OCR/eKYC POM | 124 dòng | 19 dòng | −85% |
+| Thrift generated code trong mỗi service dùng Profile | khoảng 66.500 dòng | 0 | chuyển về `vhm-client` |
+
+LOC giảm là kết quả của việc bỏ duplication, không phải mục tiêu độc lập. `vhm-client` vẫn có LOC
+lớn do generated Thrift contract; không dùng con số đó để đánh giá độ phức tạp code viết tay.
+
+Đã kiểm chứng trong workspace:
+
+- libraries reactor build/install thành công;
+- service resolve parent từ Maven repository thử nghiệm mà không cần relative path;
+- `vhm-client` không phụ thuộc `vhm-web-starter`;
+- namespace shared code thống nhất dưới `vn.vinhomes.*`;
+- OCR/eKYC load local profile và datasource khi có cấu hình.
+
+## 12. Technical debt phát hiện khi review
+
+Tài liệu mô tả code hiện tại và ghi nhận rõ các điểm chưa đạt kiến trúc đích:
+
+1. **Parent đang kéo mọi runtime library.** Phù hợp với HTTP service hiện tại nhưng chưa tối ưu cho
+   worker; cân nhắc BOM + opt-in starter khi có consumer thực tế.
+2. **`HealthController` vẫn còn trong `vhm-web-starter`.** Nếu Actuator là health contract duy nhất,
+   cần xóa class và bean đăng ký.
+3. **`logback-spring.xml` vẫn còn trong `vhm-common`.** Nếu logging chỉ cấu hình bằng
+   YAML/deployment, cần bỏ resource và test lại precedence.
+4. **`LegacyKafkaConfig` vẫn tồn tại.** Cần deadline migrate consumer rồi xóa legacy path để đạt mục
+   tiêu một Kafka configuration chuẩn.
+5. **Classpath common khá rộng** do JPA, Liquibase, Kafka, Redis, POI và HTTP client. Nếu service nhẹ
+   bị ảnh hưởng, tách starter theo capability thay vì tiếp tục đưa mọi dependency vào common.
+
+Technical debt phải được quản lý công khai để platform không quay lại trạng thái “mọi thứ đều là
+common”.
+
+## 13. Definition of Done cho service đã migrate
+
+Một service chỉ được xem là migrate hoàn tất khi:
+
+- parent dùng version đã publish và `<relativePath/>` rỗng;
+- không còn dependency `tvhbds-common_java25spr`;
+- không copy base entity, UUID generator, Kafka/Redis config, web exception handler hoặc shared
+  security config;
+- client/DTO upstream dùng chung đến từ `vhm-client` và được nhóm theo capability;
+- service chỉ giữ business exception, model, repository, workflow và adapter đặc thù;
+- cấu hình mở rộng đi qua YAML/property, secret đến từ Vault/environment;
+- package shared dùng `vn.vinhomes.*`;
+- public library API có JavaDoc hướng dẫn cấu hình và sử dụng;
+- `mvn verify` chạy thành công trong môi trường sạch.
+
+Kết quả mong muốn là developer chuyển từ **“tìm một repository để copy”** sang **“dùng một contract
+có owner, version và hướng dẫn sử dụng”**.
