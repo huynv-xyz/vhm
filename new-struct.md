@@ -5,6 +5,25 @@
 > Tài liệu này mô tả cấu trúc mới, vai trò của từng library, ranh giới ownership và cách
 > quyết định một thành phần nên nằm trong library hay service.
 
+## Phạm vi đối chiếu
+
+Phân tích cấu trúc cũ và số liệu refactor trong tài liệu được đối chiếu từ ba repository service
+trước khi migrate:
+
+| Domain | Repository code cũ |
+|---|---|
+| OCR/eKYC | [`vinhomes/agent/ocr-ekyc`](https://gitlab.vinsmartfuture.tech/vsf-qtvhbds/vinhomes/agent/ocr-ekyc) |
+| Dossier | [`dossier-services/vhm-dossier-core`](https://gitlab.vinsmartfuture.tech/vsf-qtvhbds/vinhomes/agent/dossier-services/vhm-dossier-core) |
+| Campaign | [`campaign-services/vhm-campaign-core`](https://gitlab.vinsmartfuture.tech/vsf-qtvhbds/vinhomes/agent/campaign-services/vhm-campaign-core) |
+
+Trong tài liệu:
+
+- **Code cũ** là source tại các repository GitLab trên, trước khi tách platform library.
+- **Code mới** là source đã refactor trong `new-structure`, sử dụng
+  `vhm-spring-boot-parent`, `vhm-common`, `vhm-web-starter` và `vhm-client`.
+- Các con số file/LOC/POM là snapshot tại thời điểm thực hiện refactor; chúng dùng để chứng minh xu
+  hướng giảm duplication, không phải chỉ tiêu chất lượng cố định cho các lần phát hành sau.
+
 ## 1. Vì sao cần platform dùng chung?
 
 ### 1.1. Hiện trạng của cấu trúc cũ
