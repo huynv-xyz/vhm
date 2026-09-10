@@ -3,6 +3,203 @@
 > Tài liệu phân tích cho `BDSKD-8791`. Phạm vi gồm API danh sách/chi tiết/duyệt
 > hồ sơ NOXH đi qua `vhm-agent-api` (BFF) và `vhm-dossier-core` (Core).
 
+## Đọc phần này trước: mô hình từ nguyên lý đầu tiên
+
+Phân quyền danh sách không bắt đầu từ câu hỏi "role 910 gọi API nào?". Nó bắt
+đầu từ câu hỏi đơn giản hơn:
+
+> Với một người dùng và một hồ sơ cụ thể, hệ thống dựa vào bằng chứng nào để
+> quyết định cho phép hồ sơ đó xuất hiện trong kết quả?
+
+Hệ thống cần bốn nhóm dữ liệu độc lập:
+
+1. **Người dùng là ai?** — `userId` từ phiên đăng nhập.
+2. **Người dùng mang quyền gì?** — tập role ID, ví dụ `{910}`.
+3. **Người dùng có quan hệ gì với hồ sơ?** — người tạo, Sale phụ trách hay
+   reviewer được giao duyệt.
+4. **Hồ sơ có thuộc tab đang xem không?** — trạng thái và stage có thuộc
+   `PKD_ALL` hay không.
+
+Một hồ sơ chỉ xuất hiện khi tất cả điều kiện bắt buộc cùng đúng:
+
+```text
+VISIBLE
+= đúng queue
+AND đúng phạm vi dữ liệu của user
+AND đúng các filter người dùng nhập
+AND request có actor context hợp lệ
+```
+
+```mermaid
+flowchart TD
+    U["Ai đăng nhập?<br/>userId"] --> D{"Hồ sơ có được trả về?"}
+    R["Có role gì?<br/>role IDs"] --> D
+    L["Quan hệ với hồ sơ?<br/>created_by / owner / reviewer_id"] --> D
+    Q["Thuộc tab nào?<br/>status / current_stage_code"] --> D
+    F["Filter màn hình?<br/>project / keyword / date"] --> D
+    D -->|Tất cả đúng| YES["Có trong items[]"]
+    D -->|Có điều kiện sai| NO["Không có trong kết quả"]
+```
+
+### Ba sự thật gốc cần nhớ
+
+#### Role không phải câu SQL
+
+`910` chỉ là mã quyền. Trước khi query DB, BFF phải dịch nó thành:
+
+```text
+910
+→ công việc PKD (pipelineRole=PKD)
+→ chỉ dữ liệu được giao (visibility=ASSIGNED)
+→ danh tính cần so khớp (userId=sale_4)
+```
+
+Nếu bước dịch này sai thì mọi API phía sau đều nhận sai phạm vi.
+
+#### "Liên quan tới hồ sơ" có ba nghĩa khác nhau
+
+```text
+created_by  = người khởi tạo hồ sơ
+owner       = Sale phụ trách khách hàng/hồ sơ
+reviewer_id = người được giao duyệt ở một stage
+```
+
+Ba field có thể chứa ba user khác nhau. Không được suy luận `owner = reviewer_id`.
+
+#### Xem được và thao tác được là hai quyết định riêng
+
+```mermaid
+flowchart LR
+    REQUEST["User mở hồ sơ"] --> READ{"Read visibility đúng?"}
+    READ -->|Không| FORBIDDEN["403 / không có trong list"]
+    READ -->|Có| DETAIL["Trả detail"]
+    DETAIL --> ACTION{"Bấm APPROVE"}
+    ACTION --> ROLE_OK{"Có pipeline role đúng?"}
+    ROLE_OK --> OWNER_OK{"Đúng reviewer/ownership rule?"}
+    OWNER_OK --> STATE_OK{"Action hợp lệ ở state hiện tại?"}
+    STATE_OK -->|Có| MUTATE["Cập nhật trạng thái"]
+    ROLE_OK -->|Không| DENY["Từ chối action"]
+    OWNER_OK -->|Không| DENY
+    STATE_OK -->|Không| DENY
+```
+
+Role 910 có capability phê duyệt, nhưng không được duyệt hồ sơ chưa giao cho
+mình hoặc hồ sơ đang ở stage không cho phép `APPROVE`.
+
+## Dòng chảy dữ liệu hoàn chỉnh của một request
+
+Theo một request cụ thể:
+
+```http
+GET /api/v2/social-housing/registrations?page=1&pageSize=20&queue=PKD_ALL
+```
+
+Người đăng nhập:
+
+```text
+userId = sale_4
+roles  = {910}
+```
+
+### Bước 1 — FE chỉ gửi ý định màn hình
+
+FE nói: "Tôi muốn xem tab `PKD_ALL`, trang 1". FE không gửi và không được tự
+quyết định security scope như `everReviewerId=sale_4`.
+
+### Bước 2 — BFF lấy identity đã xác thực
+
+| Dữ liệu | Nguồn | FE được sửa? |
+|---|---|:---:|
+| `userId=sale_4` | Access token/security context | Không |
+| `roleIds={910}` | Profile/auth service | Không |
+| `queue=PKD_ALL` | Query string | Có |
+
+### Bước 3 — BFF dịch role thành scope
+
+`DossierScopeResolver` tạo dữ liệu dẫn xuất:
+
+```json
+{
+  "level": "ASSIGNED",
+  "userId": "sale_4",
+  "pipelineRoles": ["PKD"],
+  "trackHistoricalAssignment": true,
+  "allowedDepartments": ["PKD", "PTT"]
+}
+```
+
+Object này không phải row DB. Nó là quyết định authorization được tính lại từ
+identity ở mỗi request.
+
+### Bước 4 — Scope tạo hai đầu ra
+
+```mermaid
+flowchart TD
+    S["DossierScope của sale_4"]
+    S --> Q["Query filter<br/>everReviewerId=sale_4"]
+    S --> A["Signed actor context<br/>pipelineRoles={PKD}<br/>visibility=ASSIGNED"]
+    Q --> CORE["dossier-core"]
+    A --> CORE
+```
+
+- Query filter mô tả tập dữ liệu BFF muốn lấy.
+- Signed actor context để Core tự enforce security, kể cả khi query string bị sửa.
+
+### Bước 5 — Core biến queue thành điều kiện dữ liệu
+
+`PKD_ALL` không có nghĩa "mọi row trong bảng". Nó là tập trạng thái/stage được
+định nghĩa trong `DossierQueue`. Core nối queue với visibility bằng `AND`.
+
+### Bước 6 — Core tìm bằng chứng assignment
+
+Với role 910, bằng chứng được giao hiện lấy từ
+`dossier_stage_reviewer.reviewer_id`:
+
+```sql
+SELECT d.*
+FROM dossier d
+WHERE <d thuộc PKD_ALL>
+  AND EXISTS (
+      SELECT 1
+      FROM dossier_stage_reviewer sr
+      WHERE sr.dossier_id = d.id
+        AND sr.reviewer_id = 'sale_4'
+  );
+```
+
+### Bước 7 — Dựng response
+
+```mermaid
+sequenceDiagram
+    participant DB
+    participant CORE as dossier-core
+    participant BFF as agent-api
+    participant FE
+
+    DB-->>CORE: Các dossier thỏa toàn bộ predicate
+    CORE->>CORE: Load reviewer timeline, notes, owner profile
+    Note over CORE: Mask PII theo viewer/owner
+    CORE-->>BFF: PageDto DossierView
+    BFF->>BFF: Map sang RegistrationDto
+    BFF-->>FE: totalRecords, totalPages, items[]
+```
+
+Không có reviewer row cho `sale_4` thì DB trả zero row. Response `200` với
+`items=[]` nghĩa là scope hợp lệ nhưng không có dữ liệu phù hợp.
+
+## Data lineage: một giá trị đi từ đâu đến đâu
+
+| Giá trị | Nơi sinh | Qua BFF | Sang Core | Cuối cùng dùng vào |
+|---|---|---|---|---|
+| `sale_4` | Auth context | `scope.userId` | Actor context + `everReviewerId` | So với `reviewer_id` |
+| `910` | Profile/auth | Input scope resolver | Không gửi role số | Dịch thành `PKD` + `ASSIGNED` |
+| `PKD` | BFF resolver | `pipelineRoles` | Signed actor context | Gate action PKD |
+| `ASSIGNED` | BFF resolver | `visibility.level` | Signed actor context | Core bắt buộc reviewer scope |
+| `PKD_ALL` | FE | Validate audience | Query param | Queue predicate |
+| `reviewer_id` | Pipeline ASSIGN/REASSIGN | Không đi qua BFF | Đọc từ DB | Bằng chứng hồ sơ đã giao |
+| `owner` | API đổi Sale phụ trách | Trả trong DTO | Đọc từ DB | Không chứng minh reviewer assignment |
+| `items[]` | Kết quả dẫn xuất | BFF map DTO | Core dựng từ DB rows | Hiển thị bảng FE |
+
 ## 1. Mục tiêu
 
 Tài liệu trả lời bốn câu hỏi:
