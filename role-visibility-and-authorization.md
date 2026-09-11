@@ -302,22 +302,50 @@ flowchart TD
 
 ## 4. Ma trận nghiệp vụ kỳ vọng
 
-Ma trận dưới đây là yêu cầu nghiệp vụ của ticket, không phải khẳng định rằng
-code hiện tại đã enforce đúng hoàn toàn.
+Ma trận dưới đây được chép lại từ ảnh PO cung cấp ngày **11/09/2026** với tiêu
+đề **“Phân bổ lại role cho NOXH”** (`image (29).png`). Đây là nguồn yêu cầu
+nghiệp vụ tại thời điểm ghi nhận, không phải khẳng định rằng code hiện tại đã
+enforce đúng hoàn toàn.
+
+> **Quy tắc đọc bảng:** dấu ✓ chỉ xác nhận role có capability tương ứng. Bảng
+> không định nghĩa row-level scope, không nói “hồ sơ được phân công” là
+> `dossier.owner` hay `dossier_stage_reviewer.reviewer_id`, và không nói owner
+> có quyền phê duyệt. Không được tự suy diễn các ý này chỉ từ dấu ✓.
 
 | Role | Tên | Tạo | Xem | Phân công | Phê duyệt | Xem báo cáo | Xuất báo cáo | Phân quyền dự án |
 |---:|---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
-| 900 | Region Management | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| 901 | Region Viewer |  | ✓ |  |  |  |  |  |
-| 902 | Region Distribute |  | ✓ | ✓ |  |  |  |  |
-| 903 | Department Management | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| 904 | Department Viewer |  | ✓ |  |  |  |  |  |
-| 905 | Department Distribute |  | ✓ | ✓ |  |  |  |  |
-| 906 | Team Management | ✓ | ✓ | ✓ | ✓ | ✓ |  | ✓ |
-| 907 | Team Viewer |  | ✓ |  |  |  |  |  |
-| 908 | Team Distribute |  | ✓ | ✓ |  |  |  |  |
-| 909 | Creator | ✓ | ✓ |  |  |  |  |  |
-| 910 | Member |  | ✓ |  | ✓ |  |  |  |
+| 900 | `social_housing_profile_region_management` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| 901 | `social_housing_profile_region_viewer` |  | ✓ |  |  |  |  |  |
+| 902 | `social_housing_profile_region_distribute` |  | ✓ | ✓ |  |  |  |  |
+| 903 | `social_housing_profile_department_management` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| 904 | `social_housing_profile_department_viewer` |  | ✓ |  |  |  |  |  |
+| 905 | `social_housing_profile_department_distribute` |  | ✓ | ✓ |  |  |  |  |
+| 906 | `social_housing_profile_team_management` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| 907 | `social_housing_profile_team_viewer` |  | ✓ |  |  |  |  |  |
+| 908 | `social_housing_profile_team_distribute` |  | ✓ | ✓ |  |  |  |  |
+| 909 | `social_housing_profile_creator` | ✓ | ✓ |  |  |  |  |  |
+| 910 | `social_housing_profile_member` |  | ✓ |  | ✓ |  |  |  |
+
+### Điều bảng PO xác nhận và không xác nhận về role 910
+
+PO xác nhận role 910 có capability **Xem danh sách hồ sơ** và **Phê duyệt**.
+Ảnh không có câu “xem/phê duyệt hồ sơ được phân công cho chính mình”. Phạm vi
+dòng dữ liệu của role 910 hiện là quyết định của implementation:
+
+```text
+role 910
+  ├─ capability từ bảng PO: VIEW + APPROVE
+  └─ row scope trong code: ASSIGNED theo reviewer_id
+```
+
+Do đó khi phân tích bug phải ghi riêng ba câu hỏi:
+
+1. Role có capability xem/phê duyệt không?
+2. User có quan hệ `owner` với dossier không?
+3. User có quan hệ `reviewer` với stage không?
+
+Capability `APPROVE` không có nghĩa mọi owner được duyệt. Action vẫn phải qua
+đúng stage, pipeline role và reviewer/ownership guard.
 
 Code còn khai báo hai role PTT ngoài bảng ticket:
 
@@ -433,6 +461,16 @@ flowchart TD
 Việc chỉ cập nhật `owner` không tự tạo reviewer assignment. Vì vậy một user role
 910 có thể được hiển thị là "Sale phụ trách" nhưng vẫn không thấy hồ sơ trong
 danh sách ASSIGNED.
+
+`dossier.owner` là cột bổ sung để lưu **Sale phụ trách hồ sơ**. Schema không có
+foreign key, trigger hay quan hệ JPA nào nối cột này với
+`dossier_stage_reviewer`. Endpoint đổi owner cũng không được phép âm thầm đổi
+reviewer, vì hai quan hệ mang quyền nghiệp vụ khác nhau:
+
+```text
+owner    → phụ trách khách hàng/hồ sơ; ứng viên cho quyền đọc
+reviewer → xử lý/phê duyệt tại stage; căn cứ cho quyền action
+```
 
 ## 7. Phân tích chi tiết role 910
 
