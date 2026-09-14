@@ -1,363 +1,505 @@
-# BDSKD-6590 — Mapping nhóm dự án OCP 2+3 cho Sale đại lý
+# BDSKD-6590 - Các thay đổi trong vhm-cobroker-core
 
-> Trạng thái tài liệu: Dev-ready draft — cần BA xác nhận các điểm tại mục 13  
-> Jira: [BDSKD-6590](https://vin3s.atlassian.net/browse/BDSKD-6590)  
-> SRS liên quan: [FRS — Quản lý định danh và kiểm soát tài khoản Sale đại lý](https://vin3s.atlassian.net/wiki/spaces/BMAS/pages/2874024939/FRS+-+Qu+n+l+nh+danh+v+ki+m+so+t+t+i+kho+n+Sale+i+l)  
-> Tài liệu UC-05 đã chuẩn hóa: [uc05-sale-account-management-spec.md](./uc05-sale-account-management-spec.md)
+## 1. Phạm vi
 
-## 1. Mục tiêu
+Tài liệu này chỉ mô tả code đã sửa trong repository `vhm-cobroker-core`.
 
-Cho phép người dùng chọn một option logic **“Vinhomes Ocean Park 2+3”** khi thiết lập dự án cho Sale. Hệ thống phải:
+Mục tiêu:
 
-- Tính option này là **01 lượt/slot đăng ký**.
-- Ghi nhận Sale có phạm vi tham gia hiệu lực tại cả **OCP2** và **OCP3**.
-- Không tạo trùng OCP2 hoặc OCP3 nếu Sale đã có một trong hai dự án.
-- Áp dụng thống nhất cho nhập trên giao diện, import file, cấu hình đợt bán hàng, bộ lọc, báo cáo và xuất dữ liệu.
+```text
+Input logic: OCP
+Output vật lý: OCP2 + OCP3
+```
 
-## 2. Quan hệ với SRS quản lý Sale đại lý
+OCP1 là dự án độc lập, không thuộc mapping.
 
-| Use case SRS | Quan hệ với BDSKD-6590 | Yêu cầu bổ sung |
+## 2. Database
+
+### File
+
+```text
+src/main/resources/db.changelog/ddl/changelog-0051-project-mapping.sql
+```
+
+### Bảng mới
+
+```sql
+CREATE TABLE cobroker_db.project_mapping (
+    code VARCHAR(64) PRIMARY KEY,
+    name VARCHAR(255) NOT NULL UNIQUE,
+    target_project_ids VARCHAR[] NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT ck_project_mapping_targets_not_empty
+        CHECK (cardinality(target_project_ids) > 0)
+);
+```
+
+### Dữ liệu seed staging
+
+```sql
+INSERT INTO cobroker_db.project_mapping (code, name, target_project_ids)
+VALUES (
+    'OCP',
+    'Vinhomes Ocean Park 2+3',
+    ARRAY[
+        '1706151042103_2822',
+        '1707589000350_2804'
+    ]::VARCHAR[]
+);
+```
+
+| Dự án | ID staging | Xử lý |
 |---|---|---|
-| UC-05 — CRUD/quản lý Sale | Tạo, cập nhật và import Sale có dữ liệu dự án | Input phải nhận option OCP 2+3 và áp dụng cùng một rule mapping |
-| UC-10 — Thiết lập dự án đồng loạt | Phạm vi chính của ticket | Tính quota theo lựa chọn logic, resolve phạm vi theo dự án vật lý |
-| UC-11 — Thống kê đại lý đăng ký quỹ theo dự án | Consumer downstream | Sale chọn combo phải xuất hiện ở thống kê OCP2 và OCP3 |
-| Cấu hình đợt bán hàng | Consumer downstream | Sale chọn combo đủ điều kiện cho đợt OCP2 lẫn OCP3 |
-| Export | Consumer downstream | Xuất OCP2 và OCP3, không tạo dự án trùng |
+| OCP1 | `1706151042103_1784` | Không mapping |
+| OCP2 | `1706151042103_2822` | Target của OCP |
+| OCP3 | `1707589000350_2804` | Target của OCP |
 
-Ticket này không thay đổi thông tin định danh, tài khoản, trạng thái làm việc hoặc phân quyền quản lý Sale trong UC-05.
+## 3. Các class mới
 
-## 3. Thuật ngữ
+### `ProjectMappingEntity`
 
-| Thuật ngữ | Định nghĩa |
-|---|---|
-| Lựa chọn logic | Option người dùng chọn và được dùng để tính quota. Ví dụ `OCP23_GROUP` |
-| Dự án hiệu lực | Dự án thực tế dùng cho phân quyền tham gia, đợt bán hàng, lọc và báo cáo |
-| Nhóm OCP 2+3 | Một lựa chọn logic được resolve thành hai dự án hiệu lực OCP2 và OCP3 |
-| Quota/slot | Số lượng lựa chọn dự án được phép theo SRS/catalog |
-| Deduplicate | Loại bỏ dự án vật lý trùng nhau sau khi resolve mapping |
+```text
+src/main/java/vn/vinhomes/cobroker/core/entity/projectassignment/ProjectMappingEntity.java
+```
 
-## 4. Quy tắc nghiệp vụ
+Map với bảng `project_mapping`:
 
-| ID | Quy tắc |
-|---|---|
-| BR-01 | `Vinhomes Ocean Park 2+3` là một lựa chọn logic và chiếm 01 slot. |
-| BR-02 | Lựa chọn OCP 2+3 được resolve thành hai dự án hiệu lực OCP2 và OCP3. |
-| BR-03 | Danh sách dự án hiệu lực không được có project ID trùng. |
-| BR-04 | Sale chọn riêng OCP2 rồi chọn OCP 2+3 vẫn hợp lệ; kết quả hiệu lực là OCP2 và OCP3. |
-| BR-05 | Sale chọn riêng OCP3 rồi chọn OCP 2+3 vẫn hợp lệ; kết quả hiệu lực là OCP2 và OCP3. |
-| BR-06 | Quota được tính trên danh sách lựa chọn logic, không tính trên danh sách dự án hiệu lực đã mở rộng. |
-| BR-07 | Cùng một rule mapping phải dùng cho UI, API đơn, API batch và import file. |
-| BR-08 | Query theo OCP2 hoặc OCP3 đều phải tìm thấy Sale đã chọn OCP 2+3. |
-| BR-09 | Sale chọn OCP 2+3 phải được xác định đủ điều kiện tham gia đợt OCP2 và đợt OCP3. |
-| BR-10 | Export phải thể hiện OCP2 và OCP3 nhưng không xuất trùng cùng một project ID. |
-| BR-11 | Mapping phải thực hiện tại backend hoặc domain dùng chung; không chỉ triển khai ở FE. |
-| BR-12 | Thay đổi phải giữ được audit: lựa chọn trước, lựa chọn sau và phạm vi hiệu lực sau resolve. |
+```java
+private String code;
+private String name;
+private List<String> targetProjectIds;
+private Instant createdAt;
+private Instant updatedAt;
+```
 
-## 5. Mô hình xử lý
+### `ProjectMappingRepository`
+
+```text
+src/main/java/vn/vinhomes/cobroker/core/repository/ProjectMappingRepository.java
+```
+
+Dùng JPA để đọc cấu hình mapping từ PostgreSQL.
+
+### `ProjectMappingService`
+
+```text
+src/main/java/vn/vinhomes/cobroker/core/service/projectassignment/ProjectMappingService.java
+```
+
+Khai báo các nghiệp vụ:
+
+```java
+findAll();
+findByCode(code);
+resolveMetadata(selections);
+logicalSelections(metadata);
+preserveProjectMappings(physical, previousMetadata);
+```
+
+### `ProjectMappingServiceImpl`
+
+```text
+src/main/java/vn/vinhomes/cobroker/core/service/projectassignment/ProjectMappingServiceImpl.java
+```
+
+Đây là nơi xử lý mapping chính.
+
+## 4. Luồng resolve OCP
+
+```mermaid
+flowchart TD
+    INPUT[Input projectId OCP] --> SERVICE[ProjectMappingService]
+    SERVICE --> DB[(project_mapping)]
+    DB --> TARGETS[Đọc target_project_ids]
+    TARGETS --> OCP2[1706151042103_2822]
+    TARGETS --> OCP3[1707589000350_2804]
+    OCP2 --> META[Physical metadata]
+    OCP3 --> META
+```
+
+Input:
+
+```json
+{
+  "projectId": "OCP",
+  "type": "ASSIGNED"
+}
+```
+
+Output của `resolveMetadata()`:
+
+```json
+[
+  {
+    "projectId": "1706151042103_2822",
+    "type": "ASSIGNED",
+    "projectMapping": "OCP"
+  },
+  {
+    "projectId": "1707589000350_2804",
+    "type": "ASSIGNED",
+    "projectMapping": "OCP"
+  }
+]
+```
+
+Service hỗ trợ tìm mapping bằng:
+
+```text
+code: OCP
+name: Vinhomes Ocean Park 2+3
+```
+
+Giá trị được trim và so sánh không phân biệt chữ hoa, chữ thường.
+
+## 5. Metadata đã sửa
+
+### File
+
+```text
+src/main/java/vn/vinhomes/cobroker/core/model/jsonb/AgencyCobrokerProjectJsonb.java
+```
+
+Field mới:
+
+```java
+private String projectMapping;
+```
+
+Ý nghĩa:
+
+```text
+projectMapping = OCP
+```
+
+cho biết OCP2 và OCP3 được sinh ra từ một lựa chọn logic OCP.
+
+Dự án được chọn riêng không có field này:
+
+```json
+{
+  "projectId": "1706151042103_1784",
+  "type": "ASSIGNED"
+}
+```
+
+## 6. API batch trong core
+
+### Endpoint
+
+```http
+PUT /internal/v1/agencies/{agencyId}/project-assignments/batch
+```
+
+### Controller
+
+```text
+src/main/java/vn/vinhomes/cobroker/core/controller/ProjectAssignmentCommandController.java
+```
+
+### DTO
+
+```text
+src/main/java/vn/vinhomes/cobroker/core/dto/projectassignment/ProjectAssignmentCommandDtos.java
+```
+
+```java
+public record BatchRequest(
+    List<String> usernames,
+    List<String> assignedProjects,
+    List<String> additionalProjects
+) {}
+```
+
+Ví dụ request:
+
+```json
+{
+  "usernames": ["sale01"],
+  "assignedProjects": ["OCP"],
+  "additionalProjects": []
+}
+```
+
+### Luồng code
+
+```mermaid
+flowchart TD
+    CONTROLLER[ProjectAssignmentCommandController] --> COMMAND[ProjectAssignmentCommandService]
+    COMMAND --> NORMALIZE[ProjectAssignmentCommandNormalizer]
+    NORMALIZE --> MUTATION[ProjectAssignmentMutationService]
+    MUTATION --> MAPPING[ProjectMappingService]
+    MAPPING --> SCOPE[ProjectAssignmentScopeStore]
+    SCOPE --> DB[(user_registered_scope)]
+    MUTATION --> META[(agency_cobroker.project_metadata)]
+    MUTATION --> AUDIT[(audit_log)]
+```
+
+## 7. `ProjectAssignmentCommandService`
+
+### File
+
+```text
+src/main/java/vn/vinhomes/cobroker/core/service/projectassignment/ProjectAssignmentCommandService.java
+```
+
+Trách nhiệm:
+
+1. Normalize username.
+2. Normalize danh sách project.
+3. Kiểm tra quyền thao tác với đại lý.
+4. Kiểm tra thời gian/policy phân dự án.
+5. Tìm Sale theo username.
+6. Gọi `ProjectAssignmentMutationService.replace()` cho từng Sale.
+
+Batch chạy trong một transaction. Một Sale lỗi thì toàn bộ batch rollback.
+
+## 8. `ProjectAssignmentMutationService`
+
+### File
+
+```text
+src/main/java/vn/vinhomes/cobroker/core/service/projectassignment/ProjectAssignmentMutationService.java
+```
+
+Thay đổi đã thực hiện:
+
+```java
+List<AgencyCobrokerProjectJsonb> afterMetadata =
+        projectMappingService.resolveMetadata(toMetadata(desired));
+```
+
+Thứ tự xử lý:
+
+```text
+1. Validate danh sách logic
+2. Resolve OCP thành OCP2 và OCP3
+3. Chuyển kết quả thành danh sách project vật lý
+4. Replace scope
+5. Lưu project_metadata
+6. Lưu audit log
+```
+
+## 9. Xử lý limit
+
+Code mapping không thay đổi giá trị limit hiện có.
+
+Limit nằm tại:
+
+```text
+src/main/java/vn/vinhomes/cobroker/core/config/ProjectAssignmentProperties.java
+```
+
+```java
+private int maxAssignedProjectsPerUser = 20;
+private int maxAdditionalProjectsPerUser = 1;
+```
+
+Code kiểm tra nằm tại:
+
+```text
+src/main/java/vn/vinhomes/cobroker/core/service/projectassignment/ProjectAssignmentCommandNormalizer.java
+```
+
+Điểm thay đổi liên quan BDSKD-6590 là thứ tự xử lý:
 
 ```mermaid
 flowchart LR
-    INPUT[Input từ UI/API/File] --> NORMALIZE[Chuẩn hóa alias và project ID]
-    NORMALIZE --> LOGICAL[Danh sách lựa chọn logic]
-    LOGICAL --> QUOTA[Validate quota theo số lựa chọn]
-    QUOTA --> RESOLVE[Resolve group mapping]
-    RESOLVE --> EFFECTIVE[Danh sách dự án hiệu lực]
-    EFFECTIVE --> DEDUP[Deduplicate theo project ID]
-    DEDUP --> STORE[(Lưu dữ liệu + audit)]
-
-    STORE --> ROUND[Cấu hình đợt bán hàng]
-    STORE --> FILTER[Bộ lọc Sale]
-    STORE --> REPORT[Thống kê UC-11]
-    STORE --> EXPORT[Export]
+    INPUT[OCP] --> LIMIT[Validate logical list]
+    LIMIT -->|OCP bằng 1 slot| RESOLVE[Resolve mapping]
+    RESOLVE --> OCP2[OCP2]
+    RESOLVE --> OCP3[OCP3]
 ```
 
-### Ví dụ
+Ví dụ hợp lệ:
+
+```json
+{
+  "assignedProjects": [],
+  "additionalProjects": ["OCP"]
+}
+```
 
 ```text
-Lựa chọn logic:   [OCP23_GROUP, PROJECT_X]
-Quota sử dụng:    2
-
-Resolve:
-OCP23_GROUP       -> [OCP2, OCP3]
-PROJECT_X         -> [PROJECT_X]
-
-Dự án hiệu lực:   [OCP2, OCP3, PROJECT_X]
+Số lựa chọn additional = 1
+Limit additional = 1
+Kết quả = hợp lệ
 ```
 
-## 6. Bảng quyết định
+Sau khi validate mới resolve thành hai project vật lý. Không kiểm tra lại limit trên OCP2/OCP3 vì chúng cùng đại diện cho một lựa chọn OCP.
 
-Giả định quota của loại dự án đang thao tác là 2 lựa chọn, phù hợp mô tả ticket “combo + thêm 01 dự án khác”.
+Ví dụ không hợp lệ:
 
-| Dữ liệu hiện tại | Lựa chọn mới | Lựa chọn logic sau cập nhật | Dự án hiệu lực | Quota dùng | Kết quả |
-|---|---|---|---|---:|---|
-| Rỗng | OCP 2+3 | OCP 2+3 | OCP2, OCP3 | 1 | Thành công; còn 1 slot |
-| Rỗng | OCP2 | OCP2 | OCP2 | 1 | Thành công; còn 1 slot |
-| OCP2 | OCP 2+3 | OCP2, OCP 2+3 | OCP2, OCP3 | 2 | Thành công; hết slot |
-| OCP3 | OCP 2+3 | OCP3, OCP 2+3 | OCP2, OCP3 | 2 | Thành công; hết slot |
-| OCP 2+3 | Project X | OCP 2+3, Project X | OCP2, OCP3, Project X | 2 | Thành công; hết slot |
-| Project X, Project Y | OCP 2+3 | Không đổi | Không đổi | 3 | Từ chối vượt quota |
-| OCP2 | OCP2 | OCP2 | OCP2 | 1 | Idempotent; không tạo trùng |
-| OCP 2+3 | OCP 2+3 | OCP 2+3 | OCP2, OCP3 | 1 | Idempotent; không tạo trùng |
+```json
+{
+  "assignedProjects": [],
+  "additionalProjects": ["OCP", "PROJECT-X"]
+}
+```
 
-## 7. Luồng cập nhật từ UI/API
+```text
+Số lựa chọn additional = 2
+Limit additional = 1
+Kết quả = PROJECT_ASSIGNMENT_PROJECT_LIMIT_EXCEEDED
+```
+
+Lưu ý: hai giá trị limit hiện dùng default trong Java; thay đổi BDSKD-6590 chưa thêm property tương ứng vào `application.properties` và chưa thêm API trả limit cho FE.
+
+## 10. Luồng tạo hoặc cập nhật dữ liệu Sale
+
+### `AgencyProfileServiceImpl`
+
+```text
+src/main/java/vn/vinhomes/cobroker/core/service/impl/AgencyProfileServiceImpl.java
+```
+
+Hai hàm đã gọi mapping:
+
+```java
+buildProjectMetadata(data);
+projectIdsByType(data, type);
+```
+
+`buildProjectMetadata()` resolve dữ liệu trước khi lưu `agency_cobroker.project_metadata`.
+
+`projectIdsByType()` resolve dữ liệu trước khi gửi `assignedProjects` và `additionalProjects` sang Profile MW.
+
+### `ProjectScopeLifecycleService`
+
+```text
+src/main/java/vn/vinhomes/cobroker/core/service/projectassignment/ProjectScopeLifecycleService.java
+```
+
+Thứ tự xử lý:
+
+```text
+requested metadata
+  -> logicalSelections
+  -> validate limit trên logical list
+  -> resolveMetadata
+  -> lưu physical scope
+  -> lưu physical metadata
+```
+
+## 11. Khôi phục lựa chọn logic
+
+`logicalSelections()` chuyển:
+
+```text
+OCP2 projectMapping=OCP
+OCP3 projectMapping=OCP
+```
+
+thành:
+
+```text
+OCP
+```
+
+Mục đích:
+
+- Tính lại đúng một slot.
+- Không hiểu nhầm OCP2 và OCP3 là hai lựa chọn riêng.
+- Giữ được lựa chọn logic khi cập nhật lại Sale.
+
+## 12. Giữ mapping khi rebuild metadata
+
+### Các file
+
+```text
+src/main/java/vn/vinhomes/cobroker/core/service/projectassignment/ProjectAssignmentMetadataService.java
+src/main/java/vn/vinhomes/cobroker/core/service/projectassignment/CobrokerProjectMetadataSyncer.java
+```
+
+`user_registered_scope` chỉ lưu project ID vật lý, không lưu `projectMapping`.
+
+Khi rebuild metadata từ scope, code gọi:
+
+```java
+projectMappingService.preserveProjectMappings(
+    physicalMetadata,
+    previousMetadata
+);
+```
+
+Luồng:
 
 ```mermaid
-sequenceDiagram
-    actor U as Người quản lý Sale
-    participant FE as Web Agent/BFF
-    participant CORE as Cobroker Core
-    participant MAP as Project Group Resolver
-    participant DB as PostgreSQL
-    participant PMW as Profile MW
-
-    U->>FE: Chọn Vinhomes Ocean Park 2+3
-    FE->>CORE: Gửi optionId OCP23_GROUP
-    CORE->>CORE: Kiểm tra quyền và scope đại lý
-    CORE->>MAP: Resolve logical selections
-    MAP-->>CORE: effectiveProjects = OCP2, OCP3
-    CORE->>CORE: Validate quota theo logical selections
-    CORE->>CORE: Deduplicate effective project IDs
-    CORE->>DB: Lưu lựa chọn + phạm vi hiệu lực + audit
-    CORE->>PMW: Đồng bộ assigned/additional projects hiệu lực
-    CORE-->>FE: Trả logical selections và effective projects
-    FE-->>U: Hiển thị combo là 1 lựa chọn
+flowchart TD
+    SCOPE[Scope OCP2 và OCP3] --> REBUILD[Rebuild physical metadata]
+    OLD[Metadata cũ có projectMapping OCP] --> PRESERVE[preserveProjectMappings]
+    REBUILD --> PRESERVE
+    PRESERVE --> RESULT[Metadata mới vẫn có projectMapping OCP]
 ```
 
-## 8. Contract đề xuất
+## 13. Dữ liệu cuối cùng được lưu
 
-### 8.1. Catalog dự án
-
-Catalog nên trả rõ option nhóm thay vì bắt FE suy ra từ tên hiển thị:
+### `agency_cobroker.project_metadata`
 
 ```json
-{
-  "id": "OCP23_GROUP",
-  "name": "Vinhomes Ocean Park 2+3",
-  "type": "PROJECT_GROUP",
-  "members": ["OCP2", "OCP3"],
-  "quotaCost": 1,
-  "active": true
-}
-```
-
-Không dùng chuỗi tên `Vinhomes Ocean Park 2+3` làm khóa mapping vì tên có thể thay đổi và file import dễ phát sinh sai khác dấu cách/hoa thường.
-
-### 8.2. Command cập nhật dự án
-
-Khuyến nghị request truyền lựa chọn logic:
-
-```json
-{
-  "assignedSelections": [],
-  "additionalSelections": ["OCP23_GROUP", "PROJECT_X"]
-}
-```
-
-Response trả cả hai lớp để FE và consumer không phải tự suy luận:
-
-```json
-{
-  "assignedSelections": [],
-  "additionalSelections": ["OCP23_GROUP", "PROJECT_X"],
-  "assignedProjects": [],
-  "additionalProjects": ["OCP2", "OCP3", "PROJECT_X"],
-  "quota": {
-    "additionalUsed": 2,
-    "additionalMax": 2
+[
+  {
+    "projectId": "1706151042103_2822",
+    "type": "ASSIGNED",
+    "projectMapping": "OCP"
+  },
+  {
+    "projectId": "1707589000350_2804",
+    "type": "ASSIGNED",
+    "projectMapping": "OCP"
   }
-}
+]
 ```
 
-### 8.3. Import file
+### `user_registered_scope`
 
-File có thể nhận một trong các giá trị được catalog công bố:
+```text
+scope_type = PROJECT
+scope_id = 1706151042103_2822
 
-- Mã chuẩn: `OCP23_GROUP` — khuyến nghị.
-- Tên hiển thị: `Vinhomes Ocean Park 2+3` — chỉ dùng nếu template nghiệp vụ bắt buộc.
-
-Backend phải chuẩn hóa về `OCP23_GROUP` trước khi validate quota và resolve OCP2/OCP3. Giá trị không nhận diện được phải trả lỗi theo dòng, không được silently ignore.
-
-## 9. Lưu trữ dữ liệu
-
-### 9.1. Hiện trạng code
-
-`AgencyCobrokerProjectJsonb` hiện chỉ lưu:
-
-```json
-{
-  "projectId": "OCP2",
-  "type": "ADDITIONAL_REGISTERED"
-}
+scope_type = PROJECT
+scope_id = 1707589000350_2804
 ```
 
-Nếu chỉ lưu OCP2 và OCP3, hệ thống không biết chúng đến từ combo hay hai lựa chọn riêng; do đó không thể tính lại quota chính xác khi chỉnh sửa.
+Không lưu `scope_id = OCP`.
 
-### 9.2. Phương án khuyến nghị
+## 14. Các file đã sửa
 
-Lưu lựa chọn logic cùng nguồn mapping, đồng thời duy trì projection dự án hiệu lực phục vụ query:
-
-```json
-{
-  "selectionId": "OCP23_GROUP",
-  "type": "ADDITIONAL_REGISTERED",
-  "effectiveProjectIds": ["OCP2", "OCP3"],
-  "mappingVersion": 1
-}
-```
-
-Có thể triển khai bằng một trong hai cách:
-
-1. Mở rộng `project_metadata` để lưu selection/group và rebuild projection scope.
-2. Tạo bảng selection riêng, giữ `project_metadata`/registered scope là projection vật lý.
-
-Ưu tiên cách 2 nếu mapping sẽ mở rộng cho nhiều nhóm dự án hoặc cần version/audit độc lập. Không khuyến nghị hard-code OCP23 rải rác trong validator, report và exporter.
-
-## 10. Tác động code trong repository hiện tại
-
-| Thành phần | Hiện trạng | Thay đổi cần thiết |
-|---|---|---|
-| Project catalog | Trả project vật lý | Bổ sung group option/mapping hoặc adapter đọc cấu hình |
-| `ProjectAssignmentProjectCapValidator` | Đếm distinct project ID đầu vào | Đếm `quotaCost` của logical selection |
-| `ProjectAssignmentCommandNormalizer` | Trim, distinct, chống overlap trên project ID | Chuẩn hóa selection trước; chống trùng/overlap sau resolve theo rule đã chốt |
-| `ProjectAssignmentMutationService` | Lưu flat OCP2/OCP3 vào `project_metadata` | Lưu được nguồn selection hoặc tham chiếu selection store |
-| `ProjectAssignmentScopeStore` | Replace scope theo project vật lý | Nhận effective projects sau resolve |
-| `ProjectAssignmentLists` | Projection distinct project ID | Tiếp tục dùng cho effective projects; bổ sung projection logical selections |
-| Luồng tạo/cập nhật Sale UC-05 | Nhận `projects` dạng flat | Dùng chung resolver với project-assignment command |
-| Import Sale | Chưa thấy endpoint trong module agency | Khi xây dựng phải gọi cùng normalizer/resolver, không tự mapping riêng |
-| Sale report/UC-11 | Query theo project scope | Xác nhận query dùng effective OCP2/OCP3 |
-| Export | Chưa có rule combo trong core | Xuất distinct effective project IDs |
-| Audit | Có audit project assignment | Bổ sung before/after của logical selections và effective projects |
-
-## 11. Acceptance Criteria viết lại
-
-### AC-01 — Chọn combo lần đầu
-
-**Given** Sale chưa có dự án trong nhóm tương ứng  
-**When** người dùng chọn `Vinhomes Ocean Park 2+3` và lưu  
-**Then** hệ thống lưu một lựa chọn logic, tính một slot và tạo phạm vi hiệu lực cho OCP2 và OCP3.
-
-### AC-02 — Import combo
-
-**Given** dòng import có giá trị `OCP23_GROUP` hoặc alias hợp lệ  
-**When** hệ thống xử lý dòng  
-**Then** kết quả giống hoàn toàn luồng nhập trên UI: một slot, hai dự án hiệu lực.
-
-### AC-03 — Combo cộng một dự án khác
-
-**Given** quota tối đa là hai lựa chọn và Sale đã chọn OCP 2+3  
-**When** chọn thêm Project X  
-**Then** hệ thống cho phép, quota đã dùng là hai và phạm vi hiệu lực gồm OCP2, OCP3, Project X.
-
-### AC-04 — Đã có OCP2 rồi chọn combo
-
-**Given** Sale đã chọn riêng OCP2  
-**When** chọn thêm OCP 2+3  
-**Then** hệ thống cho phép, tính hai lựa chọn, dự án hiệu lực là OCP2 và OCP3, OCP2 chỉ xuất hiện một lần.
-
-### AC-05 — Đã có OCP3 rồi chọn combo
-
-**Given** Sale đã chọn riêng OCP3  
-**When** chọn thêm OCP 2+3  
-**Then** hệ thống cho phép, tính hai lựa chọn, dự án hiệu lực là OCP2 và OCP3, OCP3 chỉ xuất hiện một lần.
-
-### AC-06 — Chặn vượt quota
-
-**Given** Sale đã sử dụng hết quota lựa chọn  
-**When** người dùng chọn thêm OCP 2+3  
-**Then** hệ thống từ chối trước khi thay đổi DB/Profile MW và trả lỗi vượt giới hạn dự án.
-
-### AC-07 — Tham gia đợt OCP2
-
-**Given** Sale có lựa chọn OCP 2+3 và đang ACTIVE  
-**When** hệ thống tìm Sale đủ điều kiện cho đợt OCP2  
-**Then** Sale được trả về đúng một lần.
-
-### AC-08 — Tham gia đợt OCP3
-
-**Given** Sale có lựa chọn OCP 2+3 và đang ACTIVE  
-**When** hệ thống tìm Sale đủ điều kiện cho đợt OCP3  
-**Then** Sale được trả về đúng một lần.
-
-### AC-09 — Bộ lọc và thống kê
-
-**Given** Sale có lựa chọn OCP 2+3  
-**When** lọc hoặc thống kê theo OCP2 hay OCP3  
-**Then** Sale được tính trong từng dự án tương ứng, không nhân đôi trong cùng một dự án.
-
-### AC-10 — Export
-
-**Given** Sale có OCP2 riêng và OCP 2+3  
-**When** xuất dữ liệu  
-**Then** kết quả thể hiện OCP2 và OCP3; OCP2 không bị xuất trùng.
-
-### AC-11 — Idempotency
-
-**Given** Sale đã có OCP 2+3  
-**When** cùng command được gửi lại  
-**Then** dữ liệu không thay đổi, không tạo scope trùng và không ghi audit thay đổi giả.
-
-### AC-12 — Đồng nhất giữa các kênh
-
-**Given** cùng một bộ lựa chọn  
-**When** cập nhật qua form đơn, batch hoặc import  
-**Then** quota và effective projects phải giống nhau.
-
-## 12. Test matrix tối thiểu
-
-| Nhóm test | Trường hợp bắt buộc |
+| File | Nội dung thay đổi |
 |---|---|
-| Resolver unit test | Combo → OCP2/OCP3; project thường → chính nó; mapping không tồn tại |
-| Quota unit test | Combo tính 1; combo + X tính 2; vượt quota bị chặn |
-| Deduplicate unit test | OCP2 + combo; OCP3 + combo; combo gửi lặp |
-| Overlap test | Combo ở assigned và OCP2/OCP3 ở additional theo quyết định BA |
-| Mutation integration test | Lưu selection và effective scopes atomically |
-| Retry/idempotency test | Gửi lại command không tạo scope/audit trùng |
-| Import test | Alias hợp lệ, sai alias, mixed valid/invalid rows |
-| Query test | Lọc OCP2/OCP3 đều tìm thấy Sale combo |
-| Batch eligibility test | Sale combo tham gia đúng đợt OCP2 và OCP3 |
-| Report test | UC-11 đếm đúng theo từng dự án và tổng Sale |
-| Export test | OCP2/OCP3 đầy đủ, không trùng |
-| Migration test | Dữ liệu OCP2/OCP3 cũ không bị tự động suy nhầm thành combo |
+| `changelog-0051-project-mapping.sql` | Tạo bảng và seed mapping OCP |
+| `ProjectMappingEntity.java` | Entity cho bảng mapping |
+| `ProjectMappingRepository.java` | Repository đọc mapping |
+| `ProjectMappingService.java` | Interface nghiệp vụ mapping |
+| `ProjectMappingServiceImpl.java` | Resolve, deduplicate, logical selection và preserve marker |
+| `AgencyCobrokerProjectJsonb.java` | Thêm `projectMapping` |
+| `AgencyProfileServiceImpl.java` | Resolve khi tạo/lưu Sale và đồng bộ Profile MW |
+| `ProjectAssignmentMutationService.java` | Resolve trước khi replace scope |
+| `ProjectScopeLifecycleService.java` | Validate logical list và lưu physical list |
+| `ProjectAssignmentMetadataService.java` | Giữ mapping khi rebuild metadata |
+| `CobrokerProjectMetadataSyncer.java` | Giữ mapping khi sync metadata |
+| Các unit/integration test | Kiểm tra resolve, deduplicate, schema và seed |
 
-## 13. Điểm BA/PO phải xác nhận trước khi dev chốt thiết kế
+## 15. Những gì không thay đổi
 
-1. Combo áp dụng cho **Dự án phụ trách**, **Dự án đăng ký thêm**, hay cả hai?
-2. SRS UC-10 hiện ghi “Dự án phụ trách tối đa 2, dự án đăng ký thêm tối đa 1”, nhưng ticket nói combo vẫn được đăng ký thêm một dự án khác. Quota chính xác của từng loại là bao nhiêu?
-3. Khi OCP2 nằm ở `assigned` còn combo nằm ở `additional`, đây là hợp lệ hay vi phạm rule “không trùng giữa hai loại”?
-4. Nếu người dùng bỏ OCP2 riêng nhưng giữ combo, quota phải giảm từ 2 xuống 1 và effective OCP2/OCP3 vẫn được giữ — cần xác nhận.
-5. ID chuẩn của OCP2, OCP3 và combo trong catalog từng môi trường là gì?
-6. Mapping là cấu hình động hay cố định? Ai có quyền thay đổi và mapping có hiệu lực từ thời điểm nào?
-7. Export cần hai dòng, hai cột hay một cell chứa hai project ID?
-8. UC-11: tổng số Sale phải distinct theo Sale, còn cột OCP2/OCP3 mỗi cột đều tăng 1 — cần xác nhận.
-9. Có backfill dữ liệu cũ hay chỉ áp dụng cho cập nhật mới? Không được suy rằng mọi Sale có đồng thời OCP2 và OCP3 đều từng chọn combo.
+- Không thêm OCP1 vào mapping.
+- Không hard-code OCP2/OCP3 trong Java.
+- Không thay schema `user_registered_scope`.
+- Không thêm cột riêng vào `agency_cobroker`.
+- Không thay giá trị limit `20/1`.
+- Không thêm API config trả limit cho FE.
+- Không backfill dữ liệu OCP2/OCP3 cũ.
 
-## 14. Definition of Done
+## 16. Tóm tắt
 
-- BA xác nhận toàn bộ câu hỏi blocking tại mục 13.
-- Có một resolver/mapping dùng chung ở backend cho single, batch và import.
-- Quota được tính theo logical selections; quyền tham gia được tính theo effective projects.
-- Lưu giữ được nguồn lựa chọn để chỉnh sửa và tính quota về sau.
-- Filter, cấu hình đợt, UC-11 và export đọc đúng effective projects.
-- Không có project scope trùng; thao tác retry idempotent.
-- Có migration/backfill strategy được phê duyệt.
-- Hoàn thành unit test, integration test và regression test theo mục 12.
-- API contract/OpenAPI và tài liệu SRS UC-05/UC-10/UC-11 được cập nhật đồng bộ.
-
-## 15. Traceability tới code hiện tại
-
-| Trách nhiệm | File |
-|---|---|
-| API batch/dynamic project assignment | `ProjectAssignmentCommandController.java` |
-| Chuẩn hóa và giới hạn | `ProjectAssignmentCommandNormalizer.java` |
-| Đọc quota từ catalog | `ProjectAssignmentProjectCapValidator.java` |
-| Ghi project metadata/scope/audit | `ProjectAssignmentMutationService.java` |
-| Project metadata hiện tại | `AgencyCobrokerProjectJsonb.java` |
-| Projection assigned/additional | `ProjectAssignmentLists.java` |
-| Đồng bộ Profile MW | `AsaAccountProvisioner.java` |
-| Báo cáo đăng ký dự án | `SaleReportServiceImpl.java` |
-
----
-
-### Tóm tắt cho developer
-
-Không triển khai ticket bằng cách đơn thuần thay `OCP 2+3` thành mảng `[OCP2, OCP3]`. Cách đó đáp ứng quyền tham gia nhưng làm mất thông tin combo và có thể tính quota sai. Thiết kế cần giữ **lựa chọn logic** để tính slot/hiển thị, đồng thời sinh **dự án hiệu lực** để phục vụ scope, đợt bán hàng, filter, báo cáo và export.
+```mermaid
+flowchart TD
+    REQUEST[Core nhận OCP] --> VALIDATE[Validate OCP bằng 1 lựa chọn]
+    VALIDATE --> READ[Đọc project_mapping]
+    READ --> EXPAND[Resolve OCP2 và OCP3]
+    EXPAND --> DEDUP[Loại project trùng]
+    DEDUP --> META[Lưu project_metadata có projectMapping OCP]
+    DEDUP --> SCOPE[Lưu hai project scope vật lý]
+    META --> AUDIT[Lưu audit]
+```
