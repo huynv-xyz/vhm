@@ -58,7 +58,7 @@ erDiagram
 
     COBROKER_PROFILES {
         uuid id PK
-        uuid account_id REF
+        uuid account_id "REF"
         varchar cobroker_id UK
         varchar identity_no
         varchar full_name
@@ -70,8 +70,8 @@ erDiagram
     AGENCY_COBROKER {
         uuid id PK
         int organization_id
-        uuid agency_profile_id REF
-        uuid cobroker_profile_id REF
+        uuid agency_profile_id "REF"
+        uuid cobroker_profile_id "REF"
         varchar_array role_type
         varchar agent_profile_id UK
         varchar status
@@ -88,7 +88,7 @@ erDiagram
     AGENCY_BRANCH {
         uuid id PK
         int organization_id
-        uuid agency_profile_id REF
+        uuid agency_profile_id "REF"
         varchar branch_type
         varchar name
         varchar address
@@ -99,7 +99,7 @@ erDiagram
     UPDATE_REQUESTS {
         uuid id PK
         int organization_id
-        uuid agency_profile_id REF
+        uuid agency_profile_id "REF"
         varchar requester_user
         varchar status
         jsonb receiver_metadata
@@ -112,7 +112,7 @@ erDiagram
     UPDATE_REQUEST_RESPONSES {
         uuid id PK
         int organization_id
-        uuid update_request_id REF
+        uuid update_request_id "REF"
         int seq
         text content
         varchar responder_user
@@ -121,9 +121,9 @@ erDiagram
     AUDIT_LOGS {
         uuid id PK
         int organization_id
-        uuid agency_profile_id REF
+        uuid agency_profile_id "REF"
         varchar entity_type
-        uuid entity_id REF
+        uuid entity_id "REF"
         varchar actor
         varchar action
         varchar field
@@ -135,7 +135,7 @@ erDiagram
     COBROKER_APPLICANT_AGENCIES_SUBMISSION {
         uuid id PK
         varchar submission_code UK
-        uuid cobroker_profile_id REF
+        uuid cobroker_profile_id "REF"
         varchar agent_profile_id
         varchar identity_no
         varchar phone
@@ -221,7 +221,7 @@ erDiagram
         jsonb additional_projects
         jsonb filter_snapshot
         uuid accepted_policy_id FK
-        uuid matched_window_id REF
+        uuid matched_window_id "REF"
         jsonb accepted_limits
         int resolved_count
         int processed_count
@@ -234,7 +234,7 @@ erDiagram
         uuid id PK
         uuid job_id FK
         uuid agency_cobroker_id FK
-        uuid cobroker_profile_id REF
+        uuid cobroker_profile_id "REF"
         varchar username
         varchar status
         varchar error_code
@@ -245,8 +245,8 @@ erDiagram
     USER_REGISTERED_SCOPE {
         uuid id UK
         int organization_id
-        uuid cobroker_profile_id REF
-        uuid agency_profile_id REF
+        uuid cobroker_profile_id "REF"
+        uuid agency_profile_id "REF"
         varchar username
         varchar registration_type
         varchar scope_type
@@ -293,15 +293,15 @@ erDiagram
 
     SALE_BATCH_UNITS {
         uuid id PK
-        uuid batch_id REF
+        uuid batch_id "REF"
         varchar unit_id
         varchar unit_code
         varchar project_id
         varchar basket_id
         varchar category
         varchar allocation_status
-        uuid allocated_by_item_id REF
-        uuid allocated_to_agency_id REF
+        uuid allocated_by_item_id "REF"
+        uuid allocated_to_agency_id "REF"
         timestamptz allocated_at
         timestamptz sold_at
         bigint version
@@ -309,7 +309,7 @@ erDiagram
 
     SALE_BATCH_AGENCIES {
         uuid id PK
-        uuid batch_id REF
+        uuid batch_id "REF"
         uuid agency_profile_id FK
         varchar participation_status
         int sales_count
@@ -323,8 +323,8 @@ erDiagram
 
     SALE_BATCH_AGENCY_ROOMS {
         uuid id PK
-        uuid batch_id REF
-        uuid agency_profile_id REF
+        uuid batch_id "REF"
+        uuid agency_profile_id "REF"
         varchar project_id
         int entitled
         int remaining
@@ -335,8 +335,8 @@ erDiagram
 
     ROOM_LEDGER {
         uuid id PK
-        uuid batch_id REF
-        uuid agency_profile_id REF
+        uuid batch_id "REF"
+        uuid agency_profile_id "REF"
         varchar project_id
         int delta
         varchar reason
@@ -349,7 +349,7 @@ erDiagram
         varchar code UK
         uuid batch_id FK
         uuid batch_agency_id FK
-        uuid agency_profile_id REF
+        uuid agency_profile_id "REF"
         varchar project_id
         varchar request_type
         varchar status
@@ -368,14 +368,14 @@ erDiagram
         varchar line_status
         numeric score
         varchar return_unit_code
-        uuid return_batch_unit_id REF
+        uuid return_batch_unit_id "REF"
         boolean active
         timestamptz allocated_at
     }
 
     UNIT_ALLOCATION_REQUEST_HISTORY {
         uuid id PK
-        uuid request_id REF
+        uuid request_id "REF"
         varchar action
         varchar status_before
         varchar status_after
@@ -385,8 +385,8 @@ erDiagram
 
     SALE_BATCH_UNIT_HISTORY {
         uuid id PK
-        uuid batch_unit_id REF
-        uuid batch_id REF
+        uuid batch_unit_id "REF"
+        uuid batch_id "REF"
         varchar action
         varchar status_before
         varchar status_after
@@ -395,7 +395,7 @@ erDiagram
 
     ALLOCATION_PROCESS_QUEUE {
         uuid id PK
-        uuid request_id REF
+        uuid request_id "REF"
         varchar status
         int retry_count
         timestamptz next_retry_at
@@ -431,8 +431,8 @@ erDiagram
 
     AGENCY_SCORE_STATE_HISTORY {
         uuid id PK
-        uuid agency_score_state_id REF
-        uuid agency_profile_id REF
+        uuid agency_score_state_id "REF"
+        uuid agency_profile_id "REF"
         varchar period_key
         jsonb snapshot
         timestamptz captured_at
@@ -441,7 +441,7 @@ erDiagram
     AGENCY_POINT_LEDGER {
         uuid id PK
         int organization_id
-        uuid agency_profile_id REF
+        uuid agency_profile_id "REF"
         varchar type
         varchar content_code
         numeric delta
@@ -472,8 +472,8 @@ erDiagram
 
     SALE_BATCH_AGENCY_SCORES {
         uuid id PK
-        uuid batch_id REF
-        uuid agency_profile_id REF
+        uuid batch_id "REF"
+        uuid agency_profile_id "REF"
         int sale_count
         numeric capability_score
         numeric compliance_score
@@ -566,8 +566,8 @@ erDiagram
 
     DISTRIBUTION_REMINDER_LOG {
         uuid id PK
-        uuid batch_id REF
-        uuid agency_profile_id REF
+        uuid batch_id "REF"
+        uuid agency_profile_id "REF"
         varchar reminder_type
         varchar recipient
         timestamptz sent_at
