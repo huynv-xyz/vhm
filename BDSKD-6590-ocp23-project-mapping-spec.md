@@ -109,7 +109,7 @@ src/main/java/vn/vinhomes/cobroker/core/service/projectassignment/ProjectMapping
 
 ```mermaid
 flowchart TD
-    INPUT[Input projectId OCP] --> SERVICE[ProjectMappingService]
+    INPUT[Input projectId 1706151042103_2822 OCP2] --> SERVICE[ProjectMappingService]
     SERVICE --> DB[(project_mapping)]
     DB --> TARGETS[Đọc target_project_ids]
     TARGETS --> OCP2[1706151042103_2822]
@@ -122,7 +122,7 @@ Input:
 
 ```json
 {
-  "projectId": "OCP",
+  "projectId": "1706151042103_2822",
   "type": "ASSIGNED"
 }
 ```
@@ -217,7 +217,7 @@ Ví dụ request:
 ```json
 {
   "usernames": ["sale01"],
-  "assignedProjects": ["OCP"],
+  "assignedProjects": ["1706151042103_2822"],
   "additionalProjects": []
 }
 ```
@@ -317,7 +317,7 @@ Ví dụ hợp lệ:
 ```json
 {
   "assignedProjects": [],
-  "additionalProjects": ["OCP"]
+  "additionalProjects": ["1706151042103_2822"]
 }
 ```
 
@@ -334,7 +334,7 @@ Ví dụ không hợp lệ:
 ```json
 {
   "assignedProjects": [],
-  "additionalProjects": ["OCP", "PROJECT-X"]
+  "additionalProjects": ["1706151042103_2822", "PROJECT-X"]
 }
 ```
 
