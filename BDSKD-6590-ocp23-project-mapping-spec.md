@@ -134,12 +134,12 @@ Output của `resolveMetadata()`:
   {
     "projectId": "1706151042103_2822",
     "type": "ASSIGNED",
-    "projectMapping": "OCP"
+    "code_mapping": "OCP"
   },
   {
     "projectId": "1707589000350_2804",
     "type": "ASSIGNED",
-    "projectMapping": "OCP"
+    "code_mapping": "OCP"
   }
 ]
 ```
@@ -164,13 +164,14 @@ src/main/java/vn/vinhomes/cobroker/core/model/jsonb/AgencyCobrokerProjectJsonb.j
 Field mới:
 
 ```java
-private String projectMapping;
+@JsonProperty("code_mapping")
+private String codeMapping;
 ```
 
 Ý nghĩa:
 
 ```text
-projectMapping = OCP
+code_mapping = OCP
 ```
 
 cho biết OCP2 và OCP3 được sinh ra từ một lựa chọn logic OCP.
@@ -387,8 +388,8 @@ requested metadata
 `logicalSelections()` chuyển:
 
 ```text
-OCP2 projectMapping=OCP
-OCP3 projectMapping=OCP
+OCP2 code_mapping=OCP
+OCP3 code_mapping=OCP
 ```
 
 thành:
@@ -412,7 +413,7 @@ src/main/java/vn/vinhomes/cobroker/core/service/projectassignment/ProjectAssignm
 src/main/java/vn/vinhomes/cobroker/core/service/projectassignment/CobrokerProjectMetadataSyncer.java
 ```
 
-`user_registered_scope` chỉ lưu project ID vật lý, không lưu `projectMapping`.
+`user_registered_scope` chỉ lưu project ID vật lý, không lưu `code_mapping`.
 
 Khi rebuild metadata từ scope, code gọi:
 
@@ -428,9 +429,9 @@ Luồng:
 ```mermaid
 flowchart TD
     SCOPE[Scope OCP2 và OCP3] --> REBUILD[Rebuild physical metadata]
-    OLD[Metadata cũ có projectMapping OCP] --> PRESERVE[preserveProjectMappings]
+    OLD[Metadata cũ có code_mapping OCP] --> PRESERVE[preserveProjectMappings]
     REBUILD --> PRESERVE
-    PRESERVE --> RESULT[Metadata mới vẫn có projectMapping OCP]
+    PRESERVE --> RESULT[Metadata mới vẫn có code_mapping OCP]
 ```
 
 ## 13. Dữ liệu cuối cùng được lưu
@@ -442,12 +443,12 @@ flowchart TD
   {
     "projectId": "1706151042103_2822",
     "type": "ASSIGNED",
-    "projectMapping": "OCP"
+    "code_mapping": "OCP"
   },
   {
     "projectId": "1707589000350_2804",
     "type": "ASSIGNED",
-    "projectMapping": "OCP"
+    "code_mapping": "OCP"
   }
 ]
 ```
@@ -473,7 +474,7 @@ Không lưu `scope_id = OCP`.
 | `ProjectMappingRepository.java` | Repository đọc mapping |
 | `ProjectMappingService.java` | Interface nghiệp vụ mapping |
 | `ProjectMappingServiceImpl.java` | Resolve, deduplicate, logical selection và preserve marker |
-| `AgencyCobrokerProjectJsonb.java` | Thêm `projectMapping` |
+| `AgencyCobrokerProjectJsonb.java` | Thêm field Java `codeMapping`, serialize thành `code_mapping` |
 | `AgencyProfileServiceImpl.java` | Resolve khi tạo/lưu Sale và đồng bộ Profile MW |
 | `ProjectAssignmentMutationService.java` | Resolve trước khi replace scope |
 | `ProjectScopeLifecycleService.java` | Validate logical list và lưu physical list |
@@ -530,7 +531,8 @@ Không biết OCP2/OCP3 được chọn riêng hay được sinh ra từ OCP.
  public class AgencyCobrokerProjectJsonb {
      private String projectId;
      private CobrokerProjectType type;
-+    private String projectMapping;
++    @JsonProperty("code_mapping")
++    private String codeMapping;
  }
 ```
 
@@ -540,7 +542,7 @@ Kết quả lưu:
 {
   "projectId": "1706151042103_2822",
   "type": "ASSIGNED",
-  "projectMapping": "OCP"
+  "code_mapping": "OCP"
 }
 ```
 
@@ -695,7 +697,7 @@ Kết quả:
 ```text
 Validate limit: dùng OCP, tính 1 slot
 Lưu scope: dùng OCP2 và OCP3
-Lưu metadata: dùng OCP2/OCP3 kèm projectMapping=OCP
+Lưu metadata: dùng OCP2/OCP3 kèm code_mapping=OCP
 ```
 
 ### 15.7. `ProjectAssignmentMetadataService.rebuild()`
@@ -728,7 +730,7 @@ link.setProjectMetadata(metadata);
  link.setProjectMetadata(metadata);
 ```
 
-Marker `projectMapping = OCP` được giữ lại sau khi rebuild.
+Marker `code_mapping = OCP` được giữ lại sau khi rebuild.
 
 ### 15.8. `CobrokerProjectMetadataSyncer`
 
@@ -831,7 +833,7 @@ flowchart TD
     VALIDATE --> READ[Đọc project_mapping]
     READ --> EXPAND[Resolve OCP2 và OCP3]
     EXPAND --> DEDUP[Loại project trùng]
-    DEDUP --> META[Lưu project_metadata có projectMapping OCP]
+    DEDUP --> META[Lưu project_metadata có code_mapping OCP]
     DEDUP --> SCOPE[Lưu hai project scope vật lý]
     META --> AUDIT[Lưu audit]
 ```
