@@ -1,7 +1,7 @@
 # Database ERD — vhm-cobroker-core
 
-> As-built từ Liquibase migrations và JPA entities, ngày 14/09/2026.  
-> PostgreSQL schema: `cobroker_db`.  
+> As-built từ `pg_catalog` của staging, đối chiếu Liquibase migrations và JPA entities, ngày 14/09/2026.  
+> PostgreSQL 17.7, database `vhmmarket_db`, schema `cobroker_db`, 42 bảng ứng dụng/nghiệp vụ (không tính 2 bảng Liquibase).  
 > Đây là logical ERD của schema cuối cùng sau toàn bộ changelog; bảng đã bị drop không xuất hiện.
 
 ## Quy ước
@@ -276,7 +276,7 @@ erDiagram
     SALE_BATCH_UNITS o|--o{ UNIT_ALLOCATION_REQUEST_ITEMS : "FK batch_unit_id"
     UNIT_ALLOCATION_REQUESTS ||--o{ UNIT_ALLOCATION_REQUEST_HISTORY : "request history"
     SALE_BATCH_UNITS ||--o{ SALE_BATCH_UNIT_HISTORY : "unit history"
-    UNIT_ALLOCATION_REQUESTS ||--o{ ALLOCATION_PROCESS_QUEUE : "processing queue"
+    UNIT_ALLOCATION_REQUESTS ||--o{ UNIT_ALLOCATION_PROCESS_QUEUE : "processing queue"
 
     SALE_BATCHES {
         uuid id PK
@@ -393,7 +393,7 @@ erDiagram
         jsonb snapshot
     }
 
-    ALLOCATION_PROCESS_QUEUE {
+    UNIT_ALLOCATION_PROCESS_QUEUE {
         uuid id PK
         uuid request_id "REF"
         varchar status
@@ -592,9 +592,10 @@ Các bảng outbox độc lập, không nên nối FK tới aggregate nghiệp v
 | Applicant/IV | `cobroker_applicant_agencies_submission`, `outbox_cobroker_applicant` |
 | Change/Audit | `update_requests`, `update_request_responses`, `audit_logs` |
 | Project assignment | `project_assignment_policy`, `project_assignment_policy_agency`, `project_assignment_window`, `project_assignment_job`, `project_assignment_job_item`, `user_registered_scope` |
-| Distribution | `sale_batches`, `sale_batch_units`, `sale_batch_agencies`, `sale_batch_agency_rooms`, `room_ledger`, `unit_allocation_requests`, `unit_allocation_request_items`, `allocation_request_history`, `sale_batch_unit_history`, `allocation_process_queue` |
+| Distribution | `sale_batches`, `sale_batch_units`, `sale_batch_agencies`, `sale_batch_agency_rooms`, `room_ledger`, `unit_allocation_requests`, `unit_allocation_request_items`, `unit_allocation_request_history`, `sale_batch_unit_history`, `unit_allocation_process_queue` |
 | Scoring | `agency_score_states`, `agency_score_state_history`, `agency_point_ledger`, `agency_scoring_configs`, `agency_scoring_config_history`, `sale_batch_agency_scores`, `sale_batch_scoring_configs` |
 | Jobs/Integration | `import_job`, `import_job_item`, `async_job`, `notification_outbox`, `process_sync_outbox`, `historical_outbox`, `distribution_reminder_log`, `shedlock` |
+| Auth/OAuth | `account`, `oauth2_authorization`, `oauth2_registered_client` |
 
 ## 8. Bảng đã retired
 
@@ -607,7 +608,7 @@ Các bảng dưới đây có migration tạo trong lịch sử nhưng đã bị
 | `team_projection` | Đã drop sau khi chuyển sang agency source |
 | `agency_participation_logs` | Đã drop; thay bằng state history/ledger tương ứng |
 
-## 9. Lưu ý dành cho BDSKD-6590
+## 9. Lưu ý và giải pháp tối ưu cho BDSKD-6590
 
 Hiện schema chỉ thể hiện dự án Sale qua hai projection:
 
@@ -623,45 +624,46 @@ Hai nguồn này chỉ lưu dự án vật lý, chưa có nơi biểu diễn rõ
 - Sale chọn hai dự án riêng; và
 - Sale chọn một combo chiếm một slot.
 
-ERD đề xuất bổ sung:
+Kết quả kiểm tra dữ liệu staging:
+
+- `agency_cobroker`: khoảng 971 dòng; 901 dòng có `project_metadata` dạng array.
+- Có 2.934 phần tử project metadata và toàn bộ chỉ sử dụng hai key `projectId`, `type`.
+- `user_registered_scope`: khoảng 6.004 dòng; dữ liệu dự án thuộc nguồn `ASSIGNMENT_API`, owner `COBROKER`.
+- `project_assignment_job`: đã có `assigned_projects`, `additional_projects` và `accepted_limits` dạng JSONB.
+- Chưa có dữ liệu/mã project chứa alias OCP trong ba nguồn trên tại thời điểm kiểm tra.
+
+### Phương án tối ưu: mở rộng JSONB, không tạo bảng/cột SQL
+
+Khi chọn combo, lưu hai project vật lý và gắn cùng một group trong `agency_cobroker.project_metadata`:
+
+```json
+[
+  {
+    "type": "ADDITIONAL_REGISTERED",
+    "projectId": "<OCP2_PROJECT_ID>",
+    "projectGroup": "OCP23"
+  },
+  {
+    "type": "ADDITIONAL_REGISTERED",
+    "projectId": "<OCP3_PROJECT_ID>",
+    "projectGroup": "OCP23"
+  }
+]
+```
+
+`user_registered_scope` tiếp tục lưu hai scope vật lý, không đổi schema:
 
 ```mermaid
 erDiagram
-    AGENCY_COBROKER ||--o{ COBROKER_PROJECT_SELECTION : "logical selections"
-    COBROKER_PROJECT_SELECTION ||--o{ USER_REGISTERED_SCOPE : "resolve effective scopes"
-    PROJECT_GROUP_MAPPING ||--o{ PROJECT_GROUP_MEMBER : "group definition"
-    PROJECT_GROUP_MAPPING ||--o{ COBROKER_PROJECT_SELECTION : "selection group"
+    AGENCY_COBROKER ||--o{ USER_REGISTERED_SCOPE : "resolve effective scopes"
 
-    COBROKER_PROJECT_SELECTION {
+    AGENCY_COBROKER {
         uuid id PK
-        int organization_id
-        uuid agency_cobroker_id FK
-        varchar selection_id
-        varchar assignment_type
-        int mapping_version
-        timestamptz created_at
-        varchar created_by
-    }
-
-    PROJECT_GROUP_MAPPING {
-        uuid id PK
-        int organization_id
-        varchar group_code UK
-        varchar display_name
-        int quota_cost
-        int version
-        boolean active
-    }
-
-    PROJECT_GROUP_MEMBER {
-        uuid id PK
-        uuid group_id FK
-        varchar project_id
-        int sort_order
+        jsonb project_metadata "projectId + type + projectGroup"
     }
 
     USER_REGISTERED_SCOPE {
-        uuid id PK
+        uuid id UK
         uuid agency_profile_id
         uuid cobroker_profile_id
         varchar registration_type
@@ -670,7 +672,19 @@ erDiagram
     }
 ```
 
-Đây là schema đề xuất, chưa tồn tại trong migrations hiện tại.
+Luồng ghi tối thiểu:
+
+```text
+Input OCP23
+  -> tính quota = 1 input
+  -> resolve thành OCP2 + OCP3
+  -> ghi 2 phần tử project_metadata có projectGroup=OCP23
+  -> ghi 2 scope vật lý OCP2/OCP3 vào user_registered_scope
+```
+
+`project_assignment_job.assigned_projects/additional_projects` có thể giữ mã combo `OCP23` trong request snapshot. Worker resolve mã này trước khi gọi `ProjectAssignmentScopeStore`. Không cần thêm cột vào job.
+
+Không backfill tự động các dòng cũ có cả OCP2 và OCP3 vì không thể biết người dùng từng chọn combo hay chọn hai dự án riêng.
 
 ## 10. Nguồn đối chiếu
 
