@@ -755,7 +755,498 @@ Profile MW không cần hiểu `OCP` hoặc đọc bảng `project_mapping`.
 7. Thêm mapping mới bằng Liquibase; không thêm constant hoặc `if OCP` trong Java.
 8. Import nghiệp vụ mới phải tái sử dụng service chung, không tự viết mapping riêng.
 
-## 20. Tóm tắt
+## 20. Đối chiếu với repo vhm-cobroker-api
+
+Repo đã kiểm tra:
+
+```text
+/home/huynv106/Documents/o2o/vhm-cobroker-api
+```
+
+### 20.1. Kết luận
+
+`vhm-cobroker-api` hiện không expose và không gọi các API ghi project sau của core:
+
+```text
+POST /internal/v1/agencies/{agencyId}/cobrokers
+POST /internal/v1/agencies/cobrokers
+PUT  /internal/v1/agencies/{agencyId}/project-assignments/batch
+POST /internal/v1/project-assignments/dynamic-range
+```
+
+Do đó BDSKD-6590 chưa cần sửa DTO hoặc controller trong `vhm-cobroker-api` để thực hiện mapping. Các API quản lý Sale/phân dự án nhiều khả năng được gọi từ BFF quản trị khác, không phải BFF mobile này.
+
+### 20.2. API có liên quan gián tiếp
+
+`vhm-cobroker-api` có API đọc hồ sơ Sale:
+
+```http
+GET /v1/profile
+Authorization: Bearer <token>
+```
+
+Luồng gọi thực tế:
+
+```mermaid
+sequenceDiagram
+    participant Mobile
+    participant Public as vhm-cobroker-api
+    participant Service as CoBrokerServiceImpl
+    participant Client as CoBrokerClient
+    participant Core as vhm-cobroker-core
+    participant DB
+
+    Mobile->>Public: GET /v1/profile
+    Public->>Service: getCoBrokerProfile
+    Service->>Client: getCoBrokerProfile
+    Client->>Client: Read accountId from JWT subject
+    Client->>Core: GET /internal/v1/cobrokers/profile?accountId=...
+    Core->>DB: Read profile and physical projects
+    DB-->>Core: OCP2 and OCP3
+    Core-->>Client: CoBrokerProfileResponse
+    Client-->>Service: CoBrokerProfileDto
+    Service-->>Public: CoBrokerProfileResponse
+    Public-->>Mobile: assignedProjects and additionalProjects
+```
+
+Mapping endpoint:
+
+| vhm-cobroker-api | vhm-cobroker-core |
+|---|---|
+| `GET /v1/profile` | `GET /internal/v1/cobrokers/profile?accountId={jwtSub}` |
+
+Code path phía API:
+
+```text
+CoBrokerProfileController.getProfile
+  -> CoBrokerServiceImpl.getCoBrokerProfile
+  -> CoBrokerClient.getCoBrokerProfile
+  -> RestClientCommon.exchange
+```
+
+URL core được khai báo trong `CoBrokerClient`:
+
+```java
+private static final String URI_GET_CO_BROKER_PROFILE =
+        "/internal/v1/cobrokers/profile";
+```
+
+Base URL và Basic Auth lấy từ cấu hình:
+
+```properties
+integration.co-broker-core-service.endpoint=${INTEGRATION_COBROKER_CORE_ENDPOINT}
+integration.co-broker-core-service.username=${INTEGRATION_COBROKER_CORE_USERNAME}
+integration.co-broker-core-service.password=${INTEGRATION_COBROKER_CORE_PASSWORD}
+```
+
+`CoBrokerClient` lấy subject từ JWT làm `accountId` rồi gọi:
+
+```text
+{INTEGRATION_COBROKER_CORE_ENDPOINT}
+    + /internal/v1/cobrokers/profile
+    + ?accountId={JWT_SUB}
+```
+
+### 20.3. DTO giữa hai service
+
+DTO nhận dữ liệu core trong `vhm-cobroker-api` là `CoBrokerProfileDto`:
+
+```java
+public class CoBrokerProfileDto {
+    private List<String> assignedProjects;
+    private List<String> additionalProjects;
+}
+```
+
+Hai danh sách này nhận project ID vật lý:
+
+```json
+{
+  "assignedProjects": [
+    "1706151042103_2822",
+    "1707589000350_2804"
+  ],
+  "additionalProjects": []
+}
+```
+
+`vhm-cobroker-api` không nhận `projectMapping = OCP` và không tự resolve OCP. Việc resolve đã hoàn tất ở core trước khi dữ liệu được ghi và đọc lại.
+
+### 20.4. Các API khác của vhm-cobroker-api
+
+Repo này chủ yếu gọi các API core sau:
+
+| Public API | Core API |
+|---|---|
+| `GET /v1/profile` | `GET /internal/v1/cobrokers/profile` |
+| `GET /v1/onboarding/config` | `GET /internal/v1/cobrokers/onboarding/config` |
+| `POST /v1/onboarding/prepare-upload` | `POST /internal/v1/cobrokers/onboarding/{accountId}/prepare-upload` |
+| `POST /v1/onboarding/validate-identity-document` | `POST /internal/v1/cobrokers/onboarding/{accountId}/validate-identity-document` |
+| `PATCH /v1/onboarding/identity-data` | `PATCH /internal/v1/cobrokers/onboarding/{accountId}/identity-data` |
+| `PATCH /v1/onboarding/broker-license` | `PATCH /internal/v1/cobrokers/onboarding/{accountId}/broker-license` |
+| `PATCH /v1/onboarding/avatar` | `PATCH /internal/v1/cobrokers/onboarding/{accountId}/avatar` |
+| `POST /v1/onboarding/submit` | `POST /internal/v1/cobrokers/onboarding/{accountId}/submit` |
+| `PATCH /v1/onboarding/team` | `POST /internal/v1/cobrokers/onboarding/{accountId}/team` |
+| `GET /v1/teams` | `GET /internal/v1/cobrokers/teams` |
+
+Không API nào trong nhóm onboarding trên gửi `projects` hoặc gọi `ProjectMappingService`.
+
+### 20.5. Nếu muốn mobile hiển thị lại lựa chọn OCP
+
+Hiện mobile chỉ nhận OCP2 và OCP3 dưới dạng project ID vật lý. Nếu yêu cầu UI cần hiển thị lại đúng một lựa chọn `Vinhomes Ocean Park 2+3`, có hai phương án:
+
+1. Core bổ sung logical project selections vào response profile.
+2. BFF gọi một catalog/mapping API và tự dựng display model.
+
+Khuyến nghị phương án 1: core trả thêm field read-only, ví dụ `projectSelections`, vì core đang sở hữu `projectMapping` và có thể khôi phục chính xác bằng `logicalSelections()`. Không nên để mobile suy luận rằng cứ có cả OCP2 và OCP3 thì người dùng từng chọn OCP; hai project đó có thể đã được chọn riêng.
+
+## 21. Đối chiếu với repo vhm-agent-api
+
+Repo đã kiểm tra:
+
+```text
+/home/huynv106/Documents/o2o/noxh/social-housing/vhm-agent-api
+```
+
+### 21.1. Kết luận
+
+`vhm-agent-api` là BFF quản trị đang expose và gọi trực tiếp các API của BDSKD-6590 trong `vhm-cobroker-core`.
+
+```mermaid
+flowchart LR
+    FE[Web Agent] --> API[vhm-agent-api]
+    API --> CLIENT[CoBrokerHttpClient]
+    CLIENT --> CORE[vhm-cobroker-core]
+    CORE --> MAPPING[ProjectMappingService]
+    MAPPING --> DB[(project_mapping)]
+```
+
+Các DTO project-assignment của hai repo đang tương thích về tên field:
+
+```text
+assignedProjects
+additionalProjects
+usernames
+filter
+```
+
+### 21.2. API batch assignment
+
+Public API trên `vhm-agent-api`:
+
+```http
+PUT /v1/agencies/{agencyId}/project-assignments/batch
+```
+
+API core được gọi:
+
+```http
+PUT /internal/v1/agencies/{agencyId}/project-assignments/batch
+```
+
+Code path:
+
+```text
+ProjectAssignmentCommandController.batch
+  -> ProjectAssignmentServiceImpl.batch
+  -> CoBrokerHttpClient.batchProjectAssignments
+  -> vhm-cobroker-core ProjectAssignmentCommandController.batch
+  -> ProjectAssignmentCommandService.batch
+  -> ProjectAssignmentMutationService.replace
+  -> ProjectMappingService.resolveMetadata
+```
+
+Payload đi xuyên suốt không đổi:
+
+```json
+{
+  "usernames": ["sale01", "sale02"],
+  "assignedProjects": ["OCP"],
+  "additionalProjects": []
+}
+```
+
+`vhm-agent-api` không resolve `OCP`. Core chịu trách nhiệm mở rộng thành OCP2 và OCP3.
+
+### 21.3. API dynamic-range assignment
+
+Public API:
+
+```http
+POST /v1/project-assignments/dynamic-range
+Idempotency-Key: <key>
+```
+
+API core:
+
+```http
+POST /internal/v1/project-assignments/dynamic-range
+Idempotency-Key: <key>
+```
+
+Code path:
+
+```text
+ProjectAssignmentCommandController.dynamicRange
+  -> ProjectAssignmentServiceImpl.dynamicRange
+  -> CoBrokerHttpClient.assignProjectDynamicRange
+  -> core đăng ký project_assignment_job
+  -> async worker xử lý từng item
+  -> ProjectAssignmentMutationService.replace
+  -> ProjectMappingService.resolveMetadata
+```
+
+Nếu client không gửi `Idempotency-Key`, BFF hiện tự sinh UUID. BFF trả HTTP `202` khi job còn `PENDING` hoặc `IN_PROGRESS`.
+
+### 21.4. API tạo CVKD
+
+Public API:
+
+```http
+POST /v1/agencies/{agencyId}/cobrokers
+```
+
+API core:
+
+```http
+POST /internal/v1/agencies/{agencyId}/cobrokers
+```
+
+Code path:
+
+```text
+CoBrokerAgencyController.createCobroker
+  -> AgencyManagementServiceImpl.createCobroker
+  -> CobrokerProjectValidator.validate
+  -> CoBrokerHttpClient.createAgencyCobroker
+  -> core AgencyProfileInternalController.createCobroker
+  -> AgencyProfileServiceImpl.createCobroker
+  -> ProjectMappingService.resolveMetadata
+```
+
+DTO BFF:
+
+```java
+public class CreateCobrokerRequest {
+    private AgencyCobrokerRoleType roleType;
+    private List<AgencyCobrokerProject> projects;
+}
+```
+
+Project DTO:
+
+```java
+public class AgencyCobrokerProject {
+    private String projectId;
+    private AgencyCobrokerProjectType type;
+}
+```
+
+Payload cho OCP:
+
+```json
+{
+  "roleType": "SALE_MEMBER",
+  "fullName": "Nguyễn Văn A",
+  "phone": "+84901234567",
+  "email": "sale@example.com",
+  "identityNo": "001234567890",
+  "dateOfBirth": "1995-01-01",
+  "projects": [
+    {
+      "projectId": "OCP",
+      "type": "ASSIGNED"
+    }
+  ]
+}
+```
+
+### 21.5. API tạo CVKD theo team
+
+Public API:
+
+```http
+POST /v1/agencies/cobrokers
+```
+
+API core:
+
+```http
+POST /internal/v1/agencies/cobrokers
+```
+
+Luồng này dùng cùng `CreateCobrokerRequest` và cùng `CobrokerProjectValidator`.
+
+### 21.6. API stage tạo CVKD
+
+Public API:
+
+```http
+POST /v1/agencies/{agencyId}/cobrokers?requestId={requestId}
+```
+
+API core:
+
+```http
+POST /internal/v1/agencies/{agencyId}/cobrokers?requestId={requestId}
+```
+
+Code path:
+
+```text
+CoBrokerAgencyController.stageCvkdCreate
+  -> AgencyManagementServiceImpl.stageCvkdCreate
+  -> CobrokerProjectValidator.validate
+  -> CoBrokerHttpClient.stageAgencyCvkdCreate
+  -> core stage request
+  -> ARM approve
+  -> core doCreateCvkd
+  -> ProjectMappingService.resolveMetadata
+```
+
+Request DTO là `AgencyCobrokerOpData`, field dự án:
+
+```java
+private List<AgencyCobrokerProject> projects;
+```
+
+### 21.7. Điểm chặn tại CobrokerProjectValidator
+
+Ba luồng sau đều chạy `CobrokerProjectValidator` trước khi gọi core:
+
+```text
+createCobroker
+createCobrokerByTeam
+stageCvkdCreate
+```
+
+Validator đọc catalog `profile-mw` theo hai alias:
+
+```text
+ASSIGNED              -> assigned_projects
+ADDITIONAL_REGISTERED -> additional_projects
+```
+
+Sau đó validator yêu cầu từng `projectId` phải khớp chính xác với:
+
+```text
+extraData.data_type_define.options[].internal_value
+```
+
+Luồng hiện tại:
+
+```mermaid
+flowchart TD
+    REQUEST[Request projectId OCP] --> VALIDATOR[CobrokerProjectValidator]
+    VALIDATOR --> CATALOG[Đọc catalog profile-mw]
+    CATALOG --> CHECK{Catalog có internal_value OCP?}
+    CHECK -->|Có| FORWARD[Forward request xuống core]
+    CHECK -->|Không| REJECT[Trả lỗi dự án không nằm trong danh sách cho phép]
+    FORWARD --> RESOLVE[Core resolve OCP thành OCP2 và OCP3]
+```
+
+Đây là điểm còn thiếu quan trọng. Nếu catalog staging chưa công bố option `OCP`, request tạo/stage CVKD sẽ bị chặn ở BFF và không bao giờ tới `ProjectMappingService`.
+
+### 21.8. Cách xử lý validator đề xuất
+
+Phương án ưu tiên là bổ sung option logic vào catalog `profile-mw`:
+
+```json
+{
+  "internal_value": "OCP",
+  "display_value": "Vinhomes Ocean Park 2+3"
+}
+```
+
+Option này phải tồn tại trong catalog tương ứng với loại dự án mà UI cho phép chọn:
+
+```text
+assigned_projects
+additional_projects
+```
+
+Ưu điểm:
+
+- UI lấy được option OCP từ cùng catalog hiện có.
+- `CobrokerProjectValidator` tự chấp nhận OCP.
+- OCP chỉ chiếm một phần tử khi validator kiểm tra `max_size`.
+- BFF không cần hard-code OCP2/OCP3.
+- Core vẫn là nơi duy nhất resolve sang project vật lý.
+
+Nếu không thể sửa catalog, BFF phải đọc mapping logic từ core rồi hợp nhất với catalog trước khi validate. Không nên thêm ngoại lệ kiểu:
+
+```java
+if ("OCP".equals(projectId)) {
+    return true;
+}
+```
+
+vì cách này tạo thêm một nguồn cấu hình hard-code và sẽ phải sửa Java mỗi khi có mapping mới.
+
+### 21.9. Project-assignment không bị validator này chặn
+
+Hai API sau không gọi `CobrokerProjectValidator`:
+
+```text
+PUT  /v1/agencies/{agencyId}/project-assignments/batch
+POST /v1/project-assignments/dynamic-range
+```
+
+Chúng forward `assignedProjects` và `additionalProjects` trực tiếp xuống core. Vì vậy `OCP` sẽ được core nhận và resolve, miễn là policy/quota hiện hành cho phép request.
+
+### 21.10. DTO projectMapping ở BFF
+
+`AgencyCobrokerProject` của BFF hiện chỉ có:
+
+```text
+projectId
+type
+```
+
+Thiết kế này đúng cho request. Không cần bổ sung `projectMapping` vào request DTO vì field đó là metadata nội bộ do core sinh ra.
+
+Các response đang trả `assignedProjects` và `additionalProjects` dưới dạng project ID vật lý. Chỉ cần thêm DTO logical selection nếu UI có yêu cầu hiển thị lại combo OCP như một lựa chọn duy nhất.
+
+### 21.11. Header và kết nối xuống core
+
+`CoBrokerHttpClient` có base path:
+
+```java
+@HttpExchange(url = "/internal/v1")
+```
+
+Base URL lấy từ:
+
+```properties
+client.co-broker-core-service.base-url=${INTEGRATION_COBROKER_CORE_ENDPOINT}
+```
+
+HTTP client tự gắn:
+
+- Basic Auth giữa BFF và core.
+- Identity của người thao tác.
+- `X-User-Type` tương ứng ARM hoặc ASA.
+- `X-Organization-Id` từ cấu hình single-org.
+
+### 21.12. Kết luận triển khai liên repository
+
+```text
+Web Agent
+  -> gửi projectId OCP
+vhm-agent-api
+  -> validate OCP phải tồn tại trong catalog profile-mw
+  -> forward nguyên OCP
+vhm-cobroker-core
+  -> đọc project_mapping
+  -> resolve OCP thành OCP2 và OCP3
+  -> lưu physical scope và project metadata
+Profile MW và báo cáo
+  -> nhận project ID vật lý OCP2 và OCP3
+```
+
+Phần cần xác nhận trước khi release là catalog `assigned_projects` và `additional_projects` trên staging có `internal_value = OCP` hay chưa.
+
+## 22. Tóm tắt
 
 ```text
 Người dùng chọn OCP
