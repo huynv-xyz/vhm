@@ -481,7 +481,339 @@ Không lưu `scope_id = OCP`.
 | `CobrokerProjectMetadataSyncer.java` | Giữ mapping khi sync metadata |
 | Các unit/integration test | Kiểm tra resolve, deduplicate, schema và seed |
 
-## 15. Những gì không thay đổi
+## 15. So sánh code cũ và code mới
+
+Các đoạn dưới đây so sánh `origin/main` với code BDSKD-6590 hiện tại.
+
+### 15.1. Database mapping
+
+#### Code cũ
+
+Không có bảng cấu hình mapping. Nếu muốn hỗ trợ OCP thì phải hard-code trong Java hoặc chỉ lưu trực tiếp OCP2/OCP3.
+
+#### Code mới
+
+```diff
++ CREATE TABLE cobroker_db.project_mapping (
++     code VARCHAR(64) PRIMARY KEY,
++     name VARCHAR(255) NOT NULL UNIQUE,
++     target_project_ids VARCHAR[] NOT NULL,
++     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
++     updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
++     CONSTRAINT ck_project_mapping_targets_not_empty
++         CHECK (cardinality(target_project_ids) > 0)
++ );
+
++ INSERT INTO cobroker_db.project_mapping (code, name, target_project_ids)
++ VALUES ('OCP', 'Vinhomes Ocean Park 2+3',
++         ARRAY['1706151042103_2822', '1707589000350_2804']::VARCHAR[]);
+```
+
+Kết quả: thêm mapping mới bằng dữ liệu DB, không sửa Java.
+
+### 15.2. `AgencyCobrokerProjectJsonb`
+
+#### Code cũ
+
+```java
+public class AgencyCobrokerProjectJsonb {
+    private String projectId;
+    private CobrokerProjectType type;
+}
+```
+
+Không biết OCP2/OCP3 được chọn riêng hay được sinh ra từ OCP.
+
+#### Code mới
+
+```diff
+ public class AgencyCobrokerProjectJsonb {
+     private String projectId;
+     private CobrokerProjectType type;
++    private String projectMapping;
+ }
+```
+
+Kết quả lưu:
+
+```json
+{
+  "projectId": "1706151042103_2822",
+  "type": "ASSIGNED",
+  "projectMapping": "OCP"
+}
+```
+
+### 15.3. `AgencyProfileServiceImpl.buildProjectMetadata()`
+
+#### Code cũ
+
+```java
+private List<AgencyCobrokerProjectJsonb> buildProjectMetadata(CobrokerOpData data) {
+    return CollectionUtils.isEmpty(data.getProjects())
+            ? null
+            : data.getProjects();
+}
+```
+
+Input được lưu nguyên trạng. Gửi `OCP` thì metadata cũng lưu `OCP`.
+
+#### Code mới
+
+```diff
+ private List<AgencyCobrokerProjectJsonb> buildProjectMetadata(CobrokerOpData data) {
+-    return CollectionUtils.isEmpty(data.getProjects()) ? null : data.getProjects();
++    if (CollectionUtils.isEmpty(data.getProjects())) {
++        return null;
++    }
++    return projectMappingService.resolveMetadata(data.getProjects());
+ }
+```
+
+Input `OCP` được resolve thành metadata OCP2 và OCP3 trước khi lưu.
+
+### 15.4. `AgencyProfileServiceImpl.projectIdsByType()`
+
+#### Code cũ
+
+```java
+List<String> ids = data.getProjects().stream()
+        .filter(p -> p.getType() == type && StringUtils.hasText(p.getProjectId()))
+        .map(AgencyCobrokerProjectJsonb::getProjectId)
+        .toList();
+```
+
+Profile MW có thể nhận `OCP`, trong khi `OCP` không phải project ID vật lý.
+
+#### Code mới
+
+```diff
+- List<String> ids = data.getProjects().stream()
++ List<String> ids = projectMappingService.resolveMetadata(data.getProjects()).stream()
+         .filter(p -> p.getType() == type && StringUtils.hasText(p.getProjectId()))
+         .map(AgencyCobrokerProjectJsonb::getProjectId)
++        .distinct()
+         .toList();
+```
+
+Profile MW chỉ nhận project ID vật lý và không nhận ID trùng.
+
+### 15.5. `ProjectAssignmentMutationService.replace()`
+
+#### Code cũ
+
+```java
+ProjectLists desired = normalizer.normalizeProjects(assigned, additional);
+
+Replacement replacement = scopeStore.replace(
+        link, username, desired, actor, now);
+
+List<AgencyCobrokerProjectJsonb> afterMetadata = toMetadata(desired);
+```
+
+Input được dùng trực tiếp để lưu scope. Nếu input là `OCP`, scope có nguy cơ lưu `OCP` thay vì OCP2/OCP3.
+
+#### Code mới
+
+```diff
+ ProjectLists desired = normalizer.normalizeProjects(assigned, additional);
+
++ List<AgencyCobrokerProjectJsonb> afterMetadata =
++         projectMappingService.resolveMetadata(toMetadata(desired));
+
++ desired = ProjectAssignmentLists
++         .fromMetadata(afterMetadata)
++         .toCommandLists();
+
+ Replacement replacement = scopeStore.replace(
+         link, username, desired, actor, now);
+
+- List<AgencyCobrokerProjectJsonb> afterMetadata = toMetadata(desired);
+```
+
+Khác biệt quan trọng:
+
+```text
+Code cũ: normalize -> lưu scope
+Code mới: normalize logical -> resolve mapping -> lưu physical scope
+```
+
+### 15.6. `ProjectScopeLifecycleService`
+
+#### Code cũ
+
+```java
+if (!properties.isCobrokerProjectScopeOwnershipEnabled()) {
+    link.setProjectMetadata(requestedMetadata);
+    return;
+}
+
+for (AgencyCobrokerProjectJsonb project : requestedMetadata) {
+    // tạo assigned/additional trực tiếp từ requested metadata
+}
+
+ProjectLists desired = normalizer.normalizeProjects(assigned, additional);
+scopeStore.replace(link, link.getAgentProfileId(), desired, actor, clock.instant());
+link.setProjectMetadata(ProjectAssignmentMetadataService.fromProjectLists(desired));
+```
+
+Code cũ không có khái niệm logical selection và physical project.
+
+#### Code mới
+
+```diff
++ List<AgencyCobrokerProjectJsonb> logicalMetadata =
++         projectMappingService.logicalSelections(requestedMetadata);
+
++ List<AgencyCobrokerProjectJsonb> resolvedMetadata =
++         projectMappingService.resolveMetadata(logicalMetadata);
+
+ if (!properties.isCobrokerProjectScopeOwnershipEnabled()) {
+-    link.setProjectMetadata(requestedMetadata);
++    link.setProjectMetadata(requestedMetadata == null ? null : resolvedMetadata);
+     return;
+ }
+
+- for (AgencyCobrokerProjectJsonb project : requestedMetadata) {
++ for (AgencyCobrokerProjectJsonb project : logicalMetadata) {
+     // tạo assigned/additional để validate logical limit
+ }
+
+ ProjectLists desired = normalizer.normalizeProjects(assigned, additional);
+
+- scopeStore.replace(link, link.getAgentProfileId(), desired, actor, clock.instant());
+- link.setProjectMetadata(ProjectAssignmentMetadataService.fromProjectLists(desired));
++ ProjectLists effective = ProjectAssignmentLists
++         .fromMetadata(resolvedMetadata)
++         .toCommandLists();
++ scopeStore.replace(link, link.getAgentProfileId(), effective, actor, clock.instant());
++ link.setProjectMetadata(resolvedMetadata);
+```
+
+Kết quả:
+
+```text
+Validate limit: dùng OCP, tính 1 slot
+Lưu scope: dùng OCP2 và OCP3
+Lưu metadata: dùng OCP2/OCP3 kèm projectMapping=OCP
+```
+
+### 15.7. `ProjectAssignmentMetadataService.rebuild()`
+
+#### Code cũ
+
+```java
+List<AgencyCobrokerProjectJsonb> metadata = derive(
+        link.getOrganizationId(),
+        link.getAgencyProfileId(),
+        link.getCobrokerProfileId());
+
+link.setProjectMetadata(metadata);
+```
+
+`derive()` đọc từ scope nên chỉ trả OCP2/OCP3. Marker OCP bị mất.
+
+#### Code mới
+
+```diff
+ List<AgencyCobrokerProjectJsonb> metadata = derive(
+         link.getOrganizationId(),
+         link.getAgencyProfileId(),
+         link.getCobrokerProfileId());
+
++ metadata = projectMappingService.preserveProjectMappings(
++         metadata,
++         link.getProjectMetadata());
+
+ link.setProjectMetadata(metadata);
+```
+
+Marker `projectMapping = OCP` được giữ lại sau khi rebuild.
+
+### 15.8. `CobrokerProjectMetadataSyncer`
+
+#### Code cũ
+
+```java
+List<AgencyCobrokerProjectJsonb> desired =
+        ProfileProjectionMapper.extractProjectMetadata(props);
+
+if (Objects.equals(normalize(link.getProjectMetadata()), desired)) {
+    return false;
+}
+```
+
+Dữ liệu trả từ Profile MW chỉ có project vật lý nên có thể ghi đè và làm mất marker OCP.
+
+#### Code mới
+
+```diff
+ List<AgencyCobrokerProjectJsonb> desired =
+         ProfileProjectionMapper.extractProjectMetadata(props);
+
++ desired = projectMappingService.preserveProjectMappings(
++         desired,
++         link.getProjectMetadata());
+
+ if (Objects.equals(normalize(link.getProjectMetadata()), desired)) {
+     return false;
+ }
+```
+
+### 15.9. Các class hoàn toàn mới
+
+Các class sau không có code cũ tương ứng trên `origin/main`:
+
+```text
+ProjectMappingEntity
+ProjectMappingRepository
+ProjectMappingService
+ProjectMappingServiceImpl
+ProjectAssignmentLists
+```
+
+Quan hệ giữa các class mới:
+
+```mermaid
+flowchart LR
+    CALLER[Mutation hoặc lifecycle] --> SERVICE[ProjectMappingService]
+    SERVICE --> REPOSITORY[ProjectMappingRepository]
+    REPOSITORY --> ENTITY[ProjectMappingEntity]
+    ENTITY --> DB[(project_mapping)]
+    SERVICE --> LISTS[ProjectAssignmentLists]
+```
+
+### 15.10. Limit trước và sau khi sửa
+
+#### Code cũ
+
+```java
+ProjectLists desired = normalizer.normalizeProjects(assigned, additional);
+```
+
+#### Code mới
+
+```java
+ProjectLists desired = normalizer.normalizeProjects(assigned, additional);
+List<AgencyCobrokerProjectJsonb> afterMetadata =
+        projectMappingService.resolveMetadata(toMetadata(desired));
+```
+
+Code kiểm tra limit không bị thay đổi. Điểm mới là mapping chạy **sau** bước kiểm tra limit.
+
+```text
+OCP được validate là 1 lựa chọn
+Sau đó mới resolve thành 2 project vật lý
+```
+
+Giá trị limit vẫn là:
+
+```java
+private int maxAssignedProjectsPerUser = 20;
+private int maxAdditionalProjectsPerUser = 1;
+```
+
+## 16. Những gì không thay đổi
 
 - Không thêm OCP1 vào mapping.
 - Không hard-code OCP2/OCP3 trong Java.
@@ -491,7 +823,7 @@ Không lưu `scope_id = OCP`.
 - Không thêm API config trả limit cho FE.
 - Không backfill dữ liệu OCP2/OCP3 cũ.
 
-## 16. Tóm tắt
+## 17. Tóm tắt
 
 ```mermaid
 flowchart TD
