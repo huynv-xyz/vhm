@@ -607,21 +607,247 @@ OPENAI_API_KEY, JWT, Authorization header,
 full prompt, raw customer data, raw OpenAI response
 ```
 
-## 13. Frontend design tối thiểu
+## 13. UI và luồng nghiệp vụ
 
-Một page mới `/ai-assistant`:
+### 13.1 Mục đích màn hình
 
-- Textarea nhập câu hỏi.
-- Nút gửi.
-- User/assistant message list trong memory.
-- Loading state.
-- Hiển thị `answer`, `sources`, `warnings`.
-- Không lưu LocalStorage trong MVP.
-- Dùng Axios client/JWT hiện có.
-- Chỉ hiện menu khi có `ai.executive/chat`; backend vẫn kiểm tra lại.
-- Render plain text hoặc Markdown đã sanitize, không render raw HTML.
+Màn hình `/ai-assistant` là nơi lãnh đạo hỏi nhanh số liệu điều hành. UI không thay thế các màn báo cáo chi tiết. Nó phải giúp người dùng:
 
-Frontend API:
+1. Biết hệ thống có thể trả lời chủ đề nào.
+2. Đặt câu hỏi bằng tiếng Việt mà không cần biết tên bảng hoặc bộ lọc kỹ thuật.
+3. Nhìn thấy kết luận, số liệu chính, khoảng thời gian và nguồn báo cáo.
+4. Nhận biết rõ khi dữ liệu thiếu, chưa chốt hoặc truy vấn thất bại.
+5. Có thể chuyển sang báo cáo chi tiết để kiểm tra khi cần.
+
+### 13.2 Vị trí trong hệ thống
+
+- Route: `vl-cms/src/routes/_authenticated/ai-assistant/index.tsx`.
+- Feature: `vl-cms/src/features/ai-chat/`.
+- Sidebar thêm mục **Trợ lý điều hành** với icon chat/sparkles.
+- Sidebar mapping dùng permission `ai.executive.chat`, phù hợp cơ chế `filterSidebarByPermissions` hiện tại.
+- Route vẫn phải được permission guard; ẩn menu không thay thế kiểm tra backend.
+
+### 13.3 Bố cục desktop
+
+```text
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ Header hiện tại của VLife                                                   │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ Trợ lý điều hành                                         [Xóa hội thoại]    │
+│ Hỏi nhanh về doanh thu và công nợ                                           │
+├──────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│  Khi chưa hỏi:                                                               │
+│  ┌────────────────────────────────────────────────────────────────────────┐  │
+│  │ Tôi có thể hỗ trợ                                                     │  │
+│  │                                                                        │  │
+│  │ [Doanh thu tháng này] [So với tháng trước]                            │  │
+│  │ [Công nợ hiện tại]    [Công nợ tháng này]                             │  │
+│  └────────────────────────────────────────────────────────────────────────┘  │
+│                                                                              │
+│  Sau khi hỏi:                                                                │
+│                           ┌──────────────────────────────────────────────┐     │
+│                           │ Doanh thu tháng 9 năm 2026 là bao nhiêu?   │     │
+│                           └──────────────────────────────────────────────┘     │
+│                                                                              │
+│  ┌────────────────────────────────────────────────────────────────────────┐  │
+│  │ Doanh thu thực từ 01/09/2026 đến 30/09/2026 là 12,4 tỷ đồng.          │  │
+│  │                                                                        │  │
+│  │ Nguồn: Tổng hợp doanh thu                                              │  │
+│  │ Kỳ dữ liệu: 01/09/2026 – 30/09/2026                                   │  │
+│  │ Lấy lúc: 10:30 20/09/2026                                             │  │
+│  └────────────────────────────────────────────────────────────────────────┘  │
+│                                                                              │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ ┌──────────────────────────────────────────────────────────────────┐ [Gửi]  │
+│ │ Nhập câu hỏi về doanh thu hoặc công nợ...                        │         │
+│ └──────────────────────────────────────────────────────────────────┘         │
+│ Enter để gửi · Shift+Enter để xuống dòng · tối đa 2.000 ký tự                │
+└──────────────────────────────────────────────────────────────────────────────┘
+```
+
+MVP dùng một cột hội thoại, không cần sidebar lịch sử conversation vì backend chưa lưu conversation.
+
+### 13.4 Luồng nghiệp vụ chính
+
+```mermaid
+flowchart TD
+    OPEN[Mở Trợ lý điều hành] --> PERM{Có ai.executive/chat?}
+    PERM -- Không --> FORBIDDEN[Trang 403]
+    PERM -- Có --> EMPTY[Hiện capability + câu hỏi gợi ý]
+    EMPTY --> TYPE[Nhập/chọn câu hỏi]
+    TYPE --> VALID{Hợp lệ?}
+    VALID -- Không --> INLINE[Hiện lỗi ngay dưới ô nhập]
+    VALID -- Có --> SEND[Gửi /ai/chat]
+    SEND --> WAIT[Đang phân tích dữ liệu]
+    WAIT --> RESULT{Kết quả}
+    RESULT -- Thành công --> ANSWER[Câu trả lời + nguồn + cảnh báo]
+    RESULT -- 403 --> FORBIDDEN
+    RESULT -- 429 --> RATE[Thông báo thử lại sau]
+    RESULT -- Timeout/5xx --> RETRY[Lỗi có request_id + nút thử lại]
+    ANSWER --> TYPE
+    RETRY --> TYPE
+```
+
+### 13.5 Trạng thái nghiệp vụ
+
+| Trạng thái | UI hiển thị | Hành vi |
+|---|---|---|
+| Initial | Giới thiệu ngắn + suggestion chips | Chọn chip sẽ điền và gửi câu hỏi |
+| Typing | Textarea + bộ đếm ký tự khi gần giới hạn | Enter gửi, Shift+Enter xuống dòng |
+| Submitting | Bubble câu hỏi xuất hiện ngay | Disable gửi trùng |
+| Loading | Skeleton/bubble “Đang tổng hợp dữ liệu…” | Không hiển thị tên tool/bảng |
+| Success | Answer + source card + warning | Scroll tới câu trả lời mới |
+| Empty data | “Không tìm thấy dữ liệu trong kỳ…” | Không hiển thị số 0 nếu 0 chưa được xác nhận là dữ liệu thật |
+| Permission error | Thông báo không có quyền | Không retry tự động |
+| Rate limited | “Bạn gửi quá nhanh…” | Disable đến `retry_after` nếu API có trả |
+| Timeout/upstream | Thông báo tạm thời + request ID | Cho phép retry thủ công một lần |
+| Offline | “Không thể kết nối máy chủ” | Giữ nội dung input |
+
+### 13.6 Câu hỏi gợi ý theo capability
+
+UI chỉ hiển thị gợi ý tương ứng permission trả về từ `/auth/me/permissions` hoặc endpoint `/ai/capabilities` sau này.
+
+Nếu có `ai.sales/view`:
+
+- “Doanh thu tháng này là bao nhiêu?”
+- “Doanh thu tháng trước là bao nhiêu?”
+- “Doanh thu quý này tính đến hôm nay?”
+
+Nếu có `ai.receivables/view`:
+
+- “Tổng công nợ tháng này là bao nhiêu?”
+- “Tình hình phát sinh công nợ trong tháng trước?”
+
+Không hiển thị suggestion về tồn kho, lương hoặc chủ đề chưa có tool.
+
+### 13.7 Hiển thị câu trả lời
+
+`AssistantMessage` gồm ba vùng:
+
+1. **Answer**: nội dung chính từ API.
+2. **Warnings**: cảnh báo do backend/model trả, nền vàng và icon cảnh báo.
+3. **Sources**: card có report label, khoảng ngày và thời điểm sinh dữ liệu.
+
+Ví dụ:
+
+```text
+Doanh thu thực từ 01/09/2026 đến 30/09/2026 là 12,4 tỷ đồng.
+
+⚠ Kỳ tháng 9 chưa kết thúc; số liệu tính đến thời điểm truy vấn.
+
+Nguồn dữ liệu
+• Tổng hợp doanh thu
+• 01/09/2026 – 30/09/2026
+• Cập nhật lúc 10:30, 20/09/2026
+```
+
+Quy tắc hiển thị:
+
+- Không parse lại hoặc tự tính số từ `answer` ở frontend.
+- Không tự đổi đơn vị tiền; model/backend chịu trách nhiệm nội dung answer.
+- Ngày nguồn format `dd/MM/yyyy`, API vẫn dùng ISO.
+- `generated_at` format theo `Asia/Ho_Chi_Minh`.
+- Không hiện SQL, tool arguments, token count hoặc model ID cho user nghiệp vụ.
+- `answer` render plain text trước; nếu dùng Markdown chỉ allowlist paragraph, list và bold, tuyệt đối không raw HTML.
+
+### 13.8 Cách xử lý hội thoại trong MVP
+
+Backend MVP không có `conversation_id`, vì vậy mỗi câu hỏi là độc lập. UI vẫn giữ danh sách message trong React state để người dùng nhìn lại trong phiên hiện tại.
+
+- Refresh trang: mất lịch sử — chấp nhận trong MVP.
+- Không lưu `localStorage`/`sessionStorage` để tránh dữ liệu nghiệp vụ nằm lâu trên máy người dùng.
+- Nút **Xóa hội thoại** chỉ clear React state.
+- Không cho phép câu hỏi phụ kiểu “thế tháng trước thì sao?” trong MVP vì backend không có context. Placeholder cần nhắc người dùng ghi đủ kỳ trong mỗi câu hỏi.
+
+Khi cần hội thoại nối tiếp ở phase sau, bổ sung `conversation_id` và thiết kế lưu context ở server; không gửi toàn bộ lịch sử do browser tự quản lý.
+
+### 13.9 Component tree
+
+```text
+AiChatPage
+├── PageHeader
+│   ├── Title / Description
+│   └── ClearChatButton
+├── AiCapabilityIntro               // chỉ khi chưa có message
+│   └── SuggestionChip[]
+├── MessageList
+│   ├── UserMessage
+│   ├── AssistantLoadingMessage
+│   └── AssistantMessage
+│       ├── AnswerText
+│       ├── WarningList
+│       └── SourceList
+│           └── SourceCard
+└── ChatComposer
+    ├── Textarea
+    ├── ValidationMessage
+    └── SendButton
+```
+
+File đề xuất:
+
+```text
+vl-cms/src/features/ai-chat/
+  index.tsx
+  api/ai-chat-api.ts
+  components/
+    ai-capability-intro.tsx
+    message-list.tsx
+    user-message.tsx
+    assistant-message.tsx
+    source-card.tsx
+    chat-composer.tsx
+  hooks/
+    use-ai-chat.ts
+  schemas/
+    ai-chat-schema.ts
+  types/
+    ai-chat-types.ts
+```
+
+### 13.10 State model
+
+Không cần Zustand cho MVP; state thuộc page/hook:
+
+```ts
+type ChatMessage =
+  | {
+      id: string
+      role: 'user'
+      content: string
+      createdAt: Date
+    }
+  | {
+      id: string
+      role: 'assistant'
+      content: string
+      sources: AiSource[]
+      warnings: string[]
+      requestId: string
+      createdAt: Date
+    }
+
+type AiChatState = {
+  messages: ChatMessage[]
+  draft: string
+  isSending: boolean
+}
+```
+
+`useMutation` của TanStack Query phù hợp vì đây là command, không phải query cache:
+
+```text
+mutationFn: sendAiMessage
+onMutate: append user message, set loading
+onSuccess: append assistant message
+onError: append/display typed error, keep request ID
+onSettled: clear loading
+```
+
+Không optimistic tạo assistant answer. Cần chống double-submit bằng `isPending` và backend rate limit.
+
+### 13.11 Frontend API types
 
 ```ts
 export type AiChatRequest = {
@@ -643,6 +869,54 @@ export type AiChatResponse = {
   request_id: string
 }
 ```
+
+`ai-chat-api.ts` dùng API helper/Axios instance hiện có để tự gắn JWT:
+
+```ts
+export function sendAiMessage(input: AiChatRequest) {
+  return apiPost<AiChatResponse>('/ai/chat', input)
+}
+```
+
+### 13.12 Validation frontend
+
+Dùng Zod:
+
+```ts
+export const aiChatRequestSchema = z.object({
+  message: z
+    .string()
+    .trim()
+    .min(1, 'Vui lòng nhập câu hỏi')
+    .max(2000, 'Câu hỏi tối đa 2.000 ký tự'),
+})
+```
+
+Backend luôn validate lại; frontend validation chỉ phục vụ UX.
+
+### 13.13 Responsive và accessibility
+
+- Desktop: content width khoảng `960px`, composer sticky dưới viewport.
+- Mobile/tablet: một cột, source card xếp dọc, composer không che answer.
+- Focus textarea khi mở trang và sau khi nhận response.
+- Loading/answer mới dùng `aria-live="polite"`.
+- Nút icon có label/tooltip.
+- Màu warning/error phải kèm icon và text.
+- `Escape` không được làm mất draft.
+- Khi lỗi, focus vào error message hoặc composer hợp lý.
+
+### 13.14 UI acceptance criteria
+
+- [ ] Menu chỉ hiện khi user có `ai.executive/chat`.
+- [ ] User có sales chỉ thấy suggestion sales; tương tự receivables.
+- [ ] Không gửi message rỗng hoặc trên 2.000 ký tự.
+- [ ] Không gửi hai request đồng thời từ cùng page.
+- [ ] Loading, success, empty, 403, 429, timeout và offline đều có UI riêng.
+- [ ] Answer hiển thị source và warning đúng API response.
+- [ ] Refresh không khôi phục dữ liệu chat cũ.
+- [ ] Không render raw HTML từ model.
+- [ ] Desktop/mobile và keyboard navigation sử dụng được.
+- [ ] Các trang hiện hữu không bị ảnh hưởng khi API AI lỗi.
 
 ## 14. Tests bắt buộc trước deploy
 
@@ -774,4 +1048,3 @@ Sau khi chốt hai điểm này có thể code backend MVP mà không cần thê
 
 - Function calling: <https://developers.openai.com/api/docs/guides/function-calling>
 - Responses API: <https://developers.openai.com/api/reference/resources/responses/methods/create>
-
