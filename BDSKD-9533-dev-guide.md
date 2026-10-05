@@ -1,241 +1,299 @@
-# BDSKD-9533 — Phân tích yêu cầu theo dõi kết quả bán hàng
+# BDSKD-9533 — Phân tích yêu cầu theo dõi chu kỳ bán hàng
 
-> Tài liệu phân tích yêu cầu để PO, dev và AI agent cùng hiểu nghiệp vụ trước khi thiết kế và triển khai.
-> Nguồn chính: PRD phiên bản 0.1, ngày 23/09/2026, đang chờ phê duyệt.
-> Đối chiếu: code staging tại commit `31444ce6` và schema DB staging `cobroker_db`, kiểm tra ngày 05/10/2026.
+**Nguồn yêu cầu:** [SRS trên Confluence](https://vin3s.atlassian.net/wiki/spaces/BMAS/pages/3174532173), bản 7, cập nhật 01/10/2026; đọc lại ngày 05/10/2026, gồm US-01 đến US-06 và các ảnh thiết kế nhúng. Nội dung SRS đang **Under approve**; trạng thái trang `current` không có nghĩa yêu cầu đã được phê duyệt.
 
-## 1. PO đang muốn làm gì?
+**Hiện trạng đối chiếu:** code `staging` tại commit `31444ce6` và schema DB staging `cobroker_db`, kiểm tra chỉ đọc ngày 05/10/2026. Chưa kiểm tra DB CMS, SAP và Housing.
 
-PO muốn biết từng sale có bán hàng hiệu quả trong khoảng thời gian được giao hay không. Kết quả này dùng để nhắc nhở sale, hỗ trợ quản lý đôn đốc và xác định sale còn được tính vào hạn mức căn của đại lý.
+Guide giải thích nghiệp vụ trước, sau đó đối chiếu hệ thống và chỉ ra các điểm cần xác nhận. Chưa chốt schema, API hoặc phương án triển khai. Những yêu cầu đã có trong SRS không được coi là câu hỏi còn mở; ghi chú chờ BO và các mâu thuẫn được nêu riêng ở mục 9.
 
-Mỗi sale được theo dõi qua hai giai đoạn:
+## 1. Chức năng này giải quyết việc gì?
 
-- **Bán chính thức:** sale có thời gian để đạt chỉ tiêu giao dịch. Nếu đạt, sale tiếp tục một chu kỳ bán chính thức mới.
-- **Cảnh báo:** sale chưa đạt trong giai đoạn chính thức được thêm thời gian để bán, nhưng không được tính vào room. Nếu bán được thì trở lại chính thức; nếu hết thời gian vẫn không bán được thì thuộc diện đề xuất ngừng hợp tác.
+Hệ thống theo dõi từng sale có đạt số giao dịch tối thiểu trong thời gian quy định hay không. Kết quả dùng để quản lý đôn đốc, gửi nhắc nhở và xác định sale còn được tính để cấp hạn mức căn (room).
 
-Phạm vi áp dụng gồm sale Đại lý, O2O và Tự doanh. Mỗi nhóm có thể có chính sách khác nhau.
+Sale trải qua hai loại chu kỳ:
 
-Đây là chức năng đánh giá hiệu quả bán hàng theo chu kỳ. Nó cần dữ liệu giao dịch của **từng sale**, không chỉ dữ liệu một đại lý đã bán bao nhiêu căn.
+- **Bán chính thức:** có thời gian đạt chỉ tiêu và duy trì điều kiện được tính vào room. Đạt thì tiếp tục chu kỳ chính thức mới.
+- **Thử thách:** chưa đạt ở chính thức được thêm cơ hội bán, nhưng không được tính để cấp room. Đạt chỉ tiêu thì trở lại chính thức; hết thử thách không đạt thì đề xuất chấm dứt hợp tác.
 
-## 2. Một ví dụ để hiểu toàn bộ luồng
+“Chu kỳ cảnh báo” trong PRD và một số ảnh SRS là cách gọi khác của “Chu kỳ thử thách”. Guide dùng tên **Chu kỳ thử thách** theo phần nguyên tắc SRS.
 
-Giả sử sale đại lý bắt đầu bán ngày 01/01/2026. Chính sách là 4 tháng bán chính thức, 6 tháng cảnh báo và cần 1 giao dịch.
+**Trạng thái hoạt động tài khoản và phân loại chu kỳ là hai thông tin riêng.** SRS yêu cầu chu kỳ vẫn chạy dù trạng thái hoạt động sale thay đổi. Không dùng trạng thái ngưng hoạt động để thay cho thử thách.
 
-| Thời điểm | Tình huống | Kết quả theo hướng mô tả trong PRD |
+## 2. Sale nào được theo dõi, ai được xem?
+
+### Sale thuộc phạm vi — US-01
+
+| Nhóm | Điều kiện SRS |
+| --- | --- |
+| Đại lý | Thuộc một đại lý cụ thể, có role Sale member (21) |
+| O2O | Thuộc khối O2O, có role 21, 20, 23 hoặc 60 |
+| Tự doanh | Thuộc khối Tự doanh, có role 21, 20, 23 hoặc 60 |
+
+Role 20/23/60 tương ứng Trưởng nhóm/Giám đốc phòng/Giám đốc miền. Các cấp quản lý O2O/Tự doanh cũng được theo dõi, không chỉ sale member. Chưa rõ GD của họ là GD cá nhân hay GD đội.
+
+SRS dẫn khối O2O `1060` và Tự doanh `1132` trên CMS staging. Phải xác minh mapping trước khi dùng ở môi trường khác.
+
+### Phạm vi xem báo cáo — US-01/02
+
+| Người dùng | Phạm vi xem |
+| --- | --- |
+| Admin hệ thống (11) / Quản lý đại lý (100) | Toàn bộ sale Vinhomes |
+| Admin đại lý (64) | Sale thuộc đại lý mình quản lý |
+| Quản lý vùng chủ quản đại lý | Sale thuộc các đại lý mình quản lý |
+| Giám đốc miền (60) | Sale thuộc miền mình quản lý |
+| Giám đốc phòng (23) | Sale thuộc phòng mình quản lý |
+| Trưởng nhóm (20) | Sale thuộc nhóm mình quản lý |
+
+SRS đã nêu phần lớn role và phạm vi. Những ghi chú còn mở là tái sử dụng role 100 hay thêm role mới, cách xác định vùng chủ quản và quyền export có cần `USER_EXPORTER (25)` không.
+
+## 3. Ngày bắt đầu bán được ghi nhận thế nào? — US-06
+
+Ngày này mở chu kỳ chính thức đầu tiên, không mặc định là ngày tạo account hoặc ngày thêm sale vào đại lý.
+
+| Đối tượng | Ghi nhận và chỉnh sửa |
+| --- | --- |
+| Sale đại lý mới | Tự ghi ngày hoàn thành OCR/eKYC trên Agent, chuyển sang “Đã xác thực” |
+| Sale đại lý | Admin hệ thống (11) / Quản lý đại lý (100) được sửa trên profile |
+| Admin đại lý (64) | Chỉ được xem |
+| O2O/Tự doanh | QL KD cung cấp để IT vận hành nhập trên CMS; cập nhật trên CMS profile |
+| Tài khoản đã tồn tại | Chính sách cung cấp dữ liệu để IT import một lần |
+
+Ảnh US-06 bổ sung trường ngày vào màn chỉnh sửa và màn chi tiết sale đại lý. Phần CMS dẫn ảnh “Ngày BC” nhưng vẫn ghi chú cần kiểm tra ý nghĩa và khả năng tái sử dụng. Chưa được coi field này là nguồn đã chốt.
+
+**Khi ngày bắt đầu bán thay đổi, SRS yêu cầu tự tính lại chu kỳ.** Phạm vi hồi tố GD, room và thông báo đã gửi chưa được mô tả đầy đủ.
+
+## 4. Chu kỳ chạy như thế nào? — US-01
+
+### 4.1. Mốc thời gian
+
+SRS đã quy định:
+
+```text
+Ngày bắt đầu chu kỳ đầu tiên = Ngày bắt đầu bán
+Ngày kết thúc = Ngày bắt đầu + Số tháng cấu hình - 1 ngày
+Ngày bắt đầu chu kỳ tiếp = Ngày kết thúc chu kỳ trước + 1 ngày
+Số ngày còn lại = Ngày kết thúc - Ngày hiện tại
+```
+
+Ví dụ: chính thức 3 tháng bắt đầu 01/01/2026 kết thúc 31/03/2026. Ngày kết thúc vẫn thuộc chu kỳ; chuyển giai đoạn vào hôm sau. “Số ngày còn lại = 0” không có nghĩa chuyển thử thách ngay đầu ngày kết thúc.
+
+Công thức đã có. Cách cộng tháng khi bắt đầu ngày 29/30/31, timezone và số ngày còn lại của chu kỳ đã qua cần thống nhất thêm.
+
+### 4.2. Trong chu kỳ chính thức
+
+- GD < chỉ tiêu: **Chu kỳ bán - Chưa đạt yêu cầu**.
+- GD >= chỉ tiêu: **Chu kỳ bán - Đạt yêu cầu**.
+
+Phần nguyên tắc SRS nói đạt giữa kỳ vẫn bán đến hết ngày kết thúc. Nếu cuối kỳ đạt, hôm sau mở chính thức mới.
+
+**Lưu ý nguồn:** SRS vẫn còn ghi chú BO xác nhận reset ngay hay giữ đến hết kỳ. Guide mô tả theo phần nguyên tắc hiện có; cần giải quyết ghi chú để coi luật là cuối cùng.
+
+### 4.3. Chuyển thử thách
+
+Hết chính thức mà GD < chỉ tiêu thì hôm sau mở thử thách. Sale tiếp tục bán nhưng không được tính để cấp room.
+
+### 4.4. Đạt trong thử thách
+
+SRS quy định **đủ số GD yêu cầu** thì đóng thử thách trong ngày đạt. Hôm sau mở chính thức mới, đếm lại từ đầu và khôi phục điều kiện được tính để lấy room.
+
+Không hiểu là bất kỳ 1 GD nào cũng đủ. Với chỉ tiêu 2, điều kiện đạt trong nguyên tắc là GD >= 2.
+
+### 4.5. Hết thử thách không đạt
+
+Bảng phân loại nói hết thử thách chưa đạt số GD tối thiểu thì **Đề xuất chấm dứt hợp tác**, không tự reset/sinh thêm chu kỳ.
+
+Đoạn nguyên tắc 4 lại viết “vẫn không có GD”. Trường hợp có 1 GD nhưng chỉ tiêu 2 chưa được diễn đạt nhất quán; cần BO xác nhận thất bại khi GD < chỉ tiêu.
+
+SRS mô tả nhãn đề xuất và thông báo thuộc diện xem xét. Không có yêu cầu tự khóa account hoặc tự chấm dứt hợp đồng.
+
+### 4.6. Ví dụ hoàn chỉnh
+
+Giả sử chính sách 4 tháng chính thức, 6 tháng thử thách, mỗi giai đoạn cần 1 GD; bắt đầu bán 01/01/2026.
+
+| Tình huống | Kết quả theo phần nguyên tắc SRS |
+| --- | --- |
+| Chính thức đầu tiên | 01/01–30/04/2026 |
+| Đạt ngày 15/03 | Gán Đạt yêu cầu; giữ kỳ đến 30/04 |
+| Hết 30/04 đã đạt | Chính thức mới 01/05–31/08 |
+| Hết 30/04 chưa đạt | Thử thách 01/05–31/10 |
+| Đạt trong thử thách ngày 10/06 | Đóng thử thách 10/06; chính thức mới từ 11/06 |
+| Hết 31/10 không đạt | Từ 01/11 đề xuất chấm dứt; không tự mở kỳ tiếp |
+
+Ví dụ không phải cấu hình production đã duyệt. Luật đạt giữa kỳ và thử thách có GD nhưng chưa đủ vẫn có lưu ý nguồn nêu trên.
+
+## 5. Báo cáo và thao tác cần có — US-01/02/03
+
+### Thông tin hiển thị
+
+Vào **Quản lý sale → Theo dõi chu kỳ bán hàng**.
+
+| Nhóm | Các cột |
+| --- | --- |
+| Định danh | STT, họ tên, ID hệ thống Agent, mã nhân viên O2O/Tự doanh từ CMS, mã định danh đại lý từ Agent |
+| Liên hệ/tổ chức | SĐT, email, bộ phận KD trực thuộc trực tiếp, vùng quản lý |
+| Theo dõi | Trạng thái hoạt động, ngày bắt đầu bán, loại chu kỳ “x tháng - y tháng” |
+| Chính thức gần nhất | Ngày bắt đầu, ngày kết thúc, số ngày còn lại, số GD |
+| Thử thách gần nhất | Ngày bắt đầu, ngày kết thúc, số ngày còn lại, số GD |
+| Kết quả | Ngày GD gần nhất, phân loại |
+
+Trạng thái hoạt động gồm Đang hoạt động, Ngưng hoạt động, Chờ xác thực, Nháp. Cần mapping với trạng thái hiện tại.
+
+### “Chu kỳ gần nhất” hiển thị thế nào?
+
+| Sale đang ở đâu? | Nhóm chính thức | Nhóm thử thách |
 | --- | --- | --- |
-| 01/01–30/04 | Sale đang bán chính thức | Theo dõi số GD và thời gian còn lại |
-| 15/03 | Sale đạt 1 GD | Đạt yêu cầu; tiếp tục chu kỳ đến hết 30/04 |
-| 01/05 | Chu kỳ trước đã đạt | Mở chu kỳ bán chính thức tiếp theo |
-| 01/05, nếu chu kỳ trước không đạt | Sale chưa có GD | Chuyển sang cảnh báo, không tính vào room |
-| 10/06, trong cảnh báo | Sale có GD đủ điều kiện | Kết thúc cảnh báo; ngày 11/06 bắt đầu chính thức mới |
-| Hết cảnh báo vẫn không đạt | Sale không đáp ứng chính sách | Đưa vào diện đề xuất ngừng hợp tác |
+| Chính thức | Chính thức hiện tại | Dấu `-`, kể cả đã từng thử thách |
+| Thử thách | Chính thức thất bại liền trước | Thử thách hiện tại |
+| Đề xuất chấm dứt | Chính thức cuối cùng | Thử thách cuối cùng |
 
-Ví dụ dùng các tháng có ngày bắt đầu là ngày 1 để tránh giả định về ngày cuối tháng. PRD chưa quy định đầy đủ cách tính ngày kết thúc.
+Đây là báo cáo hiện trạng, không phải màn hình toàn bộ lịch sử.
 
-**Hai quyết định chưa được chốt:** đạt giữa kỳ chính thức có thực sự giữ đến cuối kỳ không; trong cảnh báo chỉ cần 1 GD hay phải đủ chỉ tiêu cấu hình. Không lấy ví dụ này thay cho quyết định của BO.
+### Search/sort/filter và phân trang
 
-## 3. Người dùng cần nhìn thấy và làm được gì?
+- Pin STT/họ tên; mặc định họ tên A–Z; tối đa 20 dòng/trang, có chuyển trang.
+- Search gần đúng theo họ tên, ID hệ thống, mã nhân viên, mã định danh.
+- Sort họ tên, thời gian và số GD theo tăng/giảm; cần xác định cụ thể các cột thời gian.
+- Bộ phận KD: chọn cấp Tất cả/Miền/Phòng/Đội nhóm, rồi chọn nhiều đơn vị. Mặc định theo cấp cao nhất user được xem.
+- Trạng thái hoạt động và phân loại: chọn nhiều, mặc định tất cả.
 
-### Khối Chính sách / Kinh doanh
+SRS còn ghi chú bộ lọc tổ chức chưa hợp lý cho vùng chủ quản đại lý. Tổng quan US-02 nhắc filter thời gian/xếp hạng doanh số/GD, nhưng bảng chi tiết và ảnh không mô tả; cần xác nhận có phải nội dung thừa từ báo cáo xếp hạng.
 
-Xem toàn bộ sale, biết ai đạt, ai chưa đạt, ai đang cảnh báo và ai thuộc diện đề xuất ngừng hợp tác. Có thể lọc và xuất Excel để làm việc với các bộ phận liên quan.
+### Excel
 
-Thiết lập chính sách theo Đại lý, O2O, Tự doanh: thời gian chính thức, thời gian cảnh báo, số GD và ngày hiệu lực. Một nhóm đối tượng không được nằm trong hai khối của cùng cấu hình.
+Xuất **toàn bộ kết quả đang lọc**, đầy đủ cột tương ứng báo cáo, không chỉ trang đang xem. Tối đa 50.000 dòng; SRS yêu cầu tự cắt khi vượt.
 
-### Admin đại lý / Quản lý kinh doanh
+Ảnh US-03 có hộp xác nhận số sale cần xuất, Hủy bỏ/Xác nhận và thông báo lịch sử xuất sẽ được lưu. Đây là yêu cầu thể hiện trên thiết kế; chưa có mô tả nội dung lịch sử phải lưu hoặc màn xem lịch sử.
 
-Xem sale thuộc bộ phận mình quản lý. Dùng số ngày còn lại và số GD để đôn đốc trước khi sale bị chuyển cảnh báo.
+Template dẫn ra ngoài mang tên báo cáo xếp hạng. Chưa kiểm tra file Excel đó, nên chưa xác nhận có đúng các cột tính năng này.
 
-PRD chưa xác định role kỹ thuật, cách xác định tổ chức quản lý và quyền riêng cho xuất báo cáo hoặc cấu hình.
+## 6. Cấu hình cần cho phép gì? — US-04
 
-### Sale
+Admin hệ thống (11) / Quản lý đại lý (100) vào **Cấu hình chu kỳ** để tạo cấu hình và xem lịch sử đã lưu.
 
-Nhận thông báo trên web/app Agent khi sắp hết chu kỳ và khi kết thúc chu kỳ. PRD chưa mô tả một màn hình riêng để sale xem tiến độ của mình.
-
-## 4. Những việc nằm trong yêu cầu PRD
-
-| Phần việc | Yêu cầu cần đáp ứng |
+| Nội dung | Yêu cầu SRS |
 | --- | --- |
-| Báo cáo | Hiển thị chu kỳ chính thức/cảnh báo, số ngày còn lại, số GD và phân loại từng sale |
-| Tìm kiếm và lọc | Khoanh vùng sale theo nhóm/tổ chức, trạng thái hoạt động và phân loại |
-| Xuất Excel | Xuất thông tin báo cáo phục vụ xử lý nghiệp vụ |
-| Chính sách | Cấu hình theo nhóm, có ngày hiệu lực; xem xét cơ chế chuyển luật |
-| Tính kết quả | Tự ghi nhận GD và chuyển giai đoạn theo chính sách |
-| Nhắc nhở | Gửi thông báo trước hạn và khi kết thúc chu kỳ |
-| Ngày bắt đầu bán | Ghi từ hoàn thành xác thực, có phương án nhập tay |
-| Room | Loại sale cảnh báo khỏi điều kiện tính hạn mức căn; khôi phục khi trở lại chính thức |
+| Ngày hiệu lực | UI chỉ chọn tương lai, không chọn hôm nay/quá khứ |
+| Cơ chế áp dụng | Chọn tức thì hoặc tuần tự |
+| Đối tượng | Đại lý/O2O/Tự doanh; mỗi nhóm chỉ thuộc một box trong cấu hình |
+| Loại chu kỳ | Cố định chính thức và thử thách, không thêm loại mới |
+| Thời gian | Số tháng của chu kỳ |
+| Chỉ tiêu | Số GD cần đạt |
+| Nhắc trước hạn | Nhiều mốc ngày nhắc trước và giờ:phút |
+| Báo kết thúc | Giờ:phút gửi ngày sau khi kết thúc |
 
-PRD loại khỏi đợt này việc reset chu kỳ thủ công cho từng sale và màn hình toàn bộ lịch sử chu kỳ. Không vì vậy mà kết luận hệ thống không cần dữ liệu lịch sử để kiểm chứng kết quả.
+**Tức thì:** reset tất cả sale về đầu chu kỳ khi cấu hình mới bắt đầu hiệu lực. Chưa rõ có bao gồm thử thách/đề xuất chấm dứt và giữ GD cũ không.
 
-## 5. Đối chiếu với hệ thống hiện tại
+**Tuần tự:** sale bắt đầu bán sau ngày áp dụng dùng cấu hình mới; sale đã hoạt động hoàn thành kỳ hiện tại rồi dùng luật mới. Cần xác nhận ngày bắt đầu bán đúng ngày hiệu lực và phiên bản dùng khi chính thức thất bại chuyển thử thách.
 
-Đã kiểm tra schema bằng kết nối chỉ đọc, không sửa dữ liệu và không đưa thông tin kết nối vào tài liệu. Các kết luận về DB dưới đây chỉ giới hạn trong schema `cobroker_db` mà tài khoản được cung cấp nhìn thấy. Chưa kiểm tra DB của CMS, SAP hay Housing.
+SRS ghi chú dev cấu hình backdated cho thời gian đã qua; chưa có quy trình vận hành/phạm vi tính lại. Chưa nêu sửa/hủy cấu hình tương lai, nhiều cấu hình cùng ngày, giới hạn tháng/chỉ tiêu hoặc có cho chỉ tiêu 0 không.
 
-### 5.1. Đã có dữ liệu sale và quan hệ với đại lý
+PRD BR-03 chỉ nói tuần tự, SRS có cả tức thì. Guide ghi nhận hai lựa chọn SRS; không loại bỏ tức thì theo PRD. PO cần xác nhận khác biệt.
 
-Hệ thống hiện có:
+## 7. Thông báo gửi thế nào? — US-05
 
-- `cobroker_profiles`: hồ sơ con người, thông tin cá nhân, account và trạng thái profile.
-- `agency_cobroker`: quan hệ làm việc giữa người đó với đại lý, vai trò, trạng thái quan hệ và tài khoản Agent `agent_profile_id`.
-- `agency_profiles`: thông tin đại lý, team và vùng quản lý.
-- `user_registered_scope`: phạm vi/dự án sale đăng ký.
+SRS đã có người nhận, kênh, loại và cách cấu hình lịch. HTML gộp ô lịch/kênh/người nhận cho cả bốn loại; bản Markdown làm các dòng sau trông như sai cột.
 
-Điểm cần hiểu: **một người và tài khoản sale tại đại lý là hai khái niệm khác nhau**. Code hiện tại mô tả chuyển đại lý có thể tạo agent-profile mới, trong khi hồ sơ con người vẫn được giữ.
+| Loại | Thời điểm | Nội dung nghiệp vụ |
+| --- | --- | --- |
+| Nhắc chính thức | Trước hạn theo mốc/giờ cấu hình | Báo ngày kết thúc, nhắc đạt GD tối thiểu |
+| Chính thức kết thúc không đạt | Hôm sau, giờ cấu hình | Báo đã chuyển thử thách do chưa đạt |
+| Nhắc thử thách | Trước hạn theo mốc/giờ cấu hình | Báo ngày kết thúc thử thách, nhắc đạt GD tối thiểu |
+| Thử thách kết thúc không đạt | Hôm sau, giờ cấu hình | Báo thuộc diện xem xét chấm dứt hợp đồng |
 
-Vì vậy PO phải xác định chu kỳ theo người hay theo tài khoản tại đại lý. Nếu theo người, chuyển đại lý có thể giữ kết quả cũ. Nếu theo tài khoản, người đó có thể bắt đầu lại. PRD chưa đưa ra quyết định này.
+**Người nhận:** sale các cấp thuộc đối tượng theo dõi. **Kênh:** web/app Agent.
 
-Tại thời điểm kiểm tra, DB staging có 1.004 quan hệ mang vai trò `SALE_MEMBER`; tất cả các quan hệ này có `agent_profile_id`. Con số này là số quan hệ, không phải kết luận có 1.004 người thuộc phạm vi tính chu kỳ. Cũng không đại diện số liệu production.
+Ví dụ kết thúc 05/10, nhắc trước 3 ngày lúc 09:00 thì gửi 02/10 lúc 09:00; thông báo kết thúc gửi 06/10 vào giờ cấu hình. Mốc nhắc dài hơn chính chu kỳ thì gửi ngày đầu kỳ.
 
-**Đánh giá:** có nền dữ liệu cho sale đại lý. Chưa xác minh nguồn danh sách và tổ chức của O2O/Tự doanh, nên chưa thể kết luận cobroker-core đã có đủ toàn bộ đối tượng PRD.
+Cần bổ sung quy tắc sale chính thức đã đạt có nhận nhắc không, thông báo thành công/thoát thử thách, nhiều mốc dồn về ngày đầu gửi mấy lần và gửi bù nếu hệ thống bỏ lỡ lịch. Các câu hỏi này không phủ nhận bốn loại thông báo đã có.
 
-### 5.2. Có dữ liệu xác thực, nhưng chưa có ngày bắt đầu bán riêng
+## 8. Đối chiếu với hệ thống hiện tại
 
-Trong schema hiện tại, `cobroker_profiles` và `agency_cobroker` chưa có cột riêng cho ngày bắt đầu bán.
+### Hồ sơ sale và tổ chức
 
-Hồ sơ đăng ký `cobroker_applicant_agencies_submission` có trạng thái, `approve_at`, thông tin eKYC và tiến trình xác thực. Bảng `identity_verification_history` có thời điểm sự kiện và các sự kiện OCR/eKYC, duyệt thủ công, từ chối và xử lý lại.
+DB có `cobroker_profiles` cho hồ sơ con người, `agency_cobroker` cho quan hệ đại lý và `agent_profile_id`, `agency_profiles` cho đại lý/team/vùng, `user_registered_scope` cho đăng ký dự án.
 
-**Điều này chưa có nghĩa lấy `approve_at`, ngày tạo hồ sơ hoặc một sự kiện eKYC bất kỳ là đúng ngày bắt đầu bán.** Hoàn thành xác thực có thể gồm nhiều bước và nhiều lần xử lý. PO cần chốt mốc nghiệp vụ trước khi dùng lịch sử để suy ra ngày cho sale cũ.
+Có nền dữ liệu sale đại lý. Danh sách O2O/Tự doanh và org chart phải xác minh thêm ở CMS/profile, không suy ra đầy đủ từ schema co-broke.
 
-Cần xác nhận:
+SRS dùng ID tài khoản Agent trên báo cáo. Code hiện tại mô tả chuyển đại lý có thể tạo agent-profile mới trong khi giữ con người. Cần chốt chu kỳ/GD giữ theo người hay theo tài khoản mới khi chuyển đại lý.
 
-- Hoàn thành OCR và eKYC nghĩa là cả hai đã đạt hay một bước cụ thể?
-- Duyệt thủ công có được coi là hoàn thành không?
-- Xác thực lại có thay đổi ngày bắt đầu bán không?
-- O2O/Tự doanh lấy ngày nào khi không đi cùng luồng onboarding đại lý?
+Profile có DRAFT/ACTIVE/INACTIVE/FROZEN/REQUEST_UPDATE; quan hệ đại lý có ACTIVE/INACTIVE. Không mapping máy móc một enum thành toàn bộ nhãn hoạt động SRS.
 
-**Đánh giá:** có dữ liệu để điều tra và đối soát ngày xác thực; chưa đủ căn cứ để tự động suy ra ngày bắt đầu bán cho toàn bộ sale.
+### Ngày bắt đầu bán
 
-### 5.3. Có luồng nhận giao dịch bán căn, nhưng chưa đủ để tính KPI từng sale
+`cobroker_profiles`/`agency_cobroker` chưa có cột ngày bắt đầu bán riêng trong schema đã kiểm tra.
 
-Code hiện tại có `PropertySoldConsumer` nhận sự kiện sale order từ Housing. `PropertySoldProcessor` chuyển trạng thái căn dựa trên mã giao dịch/trạng thái SAP.
+Có submission với tiến trình xác thực, `approve_at` và `identity_verification_history` với các lần OCR/eKYC/duyệt thủ công. Cần chọn đúng sự kiện chuyển Đã xác thực, không tự lấy ngày tạo hoặc lần eKYC bất kỳ.
 
-Payload được code hiện tại sử dụng có loại giao dịch, trạng thái, mã số thuế đại lý và thời gian ký cọc/HĐMB. Không có field định danh sale trong phần payload đã được ánh xạ vào `SaleOrderChangeEvent`.
+SRS đã chỉ định ngày của tài khoản cũ do Chính sách cung cấp để import. Không mặc định phải suy ra toàn bộ từ lịch sử xác thực. Sau khi có ngày cũ vẫn cần chính sách/GD lịch sử để tính chu kỳ đến hiện tại.
 
-DB có `sale_batch_units` với trạng thái bán, ngày ký/bán và đại lý bán căn. Trong các cột đã kiểm tra, không có cột định danh sale thực hiện giao dịch. Bảng này quản lý căn trong đợt bán, không phải sổ giao dịch KPI cá nhân đầy đủ.
+### Giao dịch từng sale
 
-Tại thời điểm kiểm tra có 243 bản ghi căn mang trạng thái `SOLD`. Không được dùng con số này làm số GD hợp lệ của 9533: chưa biết mốc SAP có khớp PRD không, sale nào được hưởng GD và một căn xuất hiện trong các đợt có gây đếm trùng hay không.
+Có `PropertySoldConsumer` nhận sale-order event từ Housing và `PropertySoldProcessor` ánh xạ SAP sang trạng thái căn. `SaleOrderChangeEvent` hiện dùng loại GD, trạng thái, mã số thuế đại lý, ngày ký cọc/HĐMB; DTO này chưa có định danh sale.
 
-PRD cũng chưa nhất quán về mốc GD: luồng mô tả TTKQ/ĐC, trong khi phần hệ thống liên quan nói thời điểm ký VBCN/HĐMB.
+`sale_batch_units` có trạng thái bán, đại lý bán, ngày ký/bán; các cột đã kiểm tra chưa có định danh sale bán căn. Đây là dữ liệu căn theo đợt, chưa chứng minh là nguồn GD cá nhân cho 9533.
 
-**Đánh giá:** có đường tích hợp trạng thái bán căn, nhưng chưa chứng minh đủ dữ liệu tính GD của từng sale. Cần xác nhận nguồn giao dịch cá nhân và quy tắc ghi nhận; không lấy trạng thái `SOLD` hiện tại thay thế ngay cho KPI.
+**Nghiệp vụ SRS đã xác định:** đếm GD xác nhận TTĐC/TTKQ trên SAP. **Tích hợp cần xác minh:** mã SAP tương ứng, khóa GD chống trùng, định danh sale, ngày nghiệp vụ, nguồn lịch sử. Không tự lấy `SOLD` hoặc người được phân bổ căn làm sale hưởng GD.
 
-### 5.4. Có room tính theo lực lượng sale, nên yêu cầu sẽ ảnh hưởng vận hành thật
+### Room
 
-Room hiện tại có phần tính theo số sale hợp lệ của đại lý trong các dự án thuộc đợt bán. Code kiểm tra quan hệ đại lý đang hoạt động, role `SALE_MEMBER`, trạng thái profile theo chính sách hiện hành và đăng ký dự án đang hoạt động. Sale có nhiều dự án trong cùng đợt được đếm một lần.
+`RoomServiceImpl.computeRoom` có công thức theo số sale hợp lệ. `UserRegisteredScopeRepository.countValidSalesByAgency` kiểm tra quan hệ active, SALE_MEMBER, profile theo chính sách trạng thái hiện hành và đăng ký dự án active thuộc đợt. Một sale nhiều dự án trong đợt đếm một lần.
 
-Điều kiện này chưa có kiểm tra chu kỳ cảnh báo.
+Điều kiện hiện tại chưa xét thử thách. SRS đã yêu cầu loại sale thử thách khỏi số sale tính để cấp room và khôi phục khi trở lại chính thức.
 
-Nếu 9533 loại một sale khỏi số lượng được tính, room đại lý có thể giảm. Tuy nhiên PRD chưa nói rõ phải làm gì nếu đại lý đã sử dụng room hoặc có căn đang phân bổ.
+Phần cần chốt là room/căn đã cấp, room thủ công, chặn thao tác lấy căn trực tiếp và mô hình O2O/Tự doanh. Không đổi status tài khoản thành inactive để mô phỏng thử thách.
 
-Cần tách ba quyết định:
+### Chu kỳ và thông báo
 
-1. Sale cảnh báo bị loại khỏi công thức tính room đại lý hay không?
-2. Sale đó có bị chặn trực tiếp thao tác lấy căn hay không?
-3. Những căn/room đã cấp có bị thu hồi hay được giữ đến khi xử lý xong?
+Chưa thấy bảng chuyên theo dõi chu kỳ/chính sách chu kỳ trong schema đã kiểm tra. Cấu hình điểm đại lý/đợt bán hiện có phục vụ nghiệp vụ khác.
 
-**Đánh giá:** đây là thay đổi điều kiện cấp nguồn lực, cần phối hợp nghiệp vụ Giỏ hàng. Không thể coi là chỉ thêm một nhãn trên báo cáo. Cũng không nên đổi trạng thái tài khoản thành inactive để mô phỏng cảnh báo.
+Có `notification_outbox` và dịch vụ gửi/hủy theo lịch để tham khảo; cần bổ sung nghiệp vụ theo US-04/05.
 
-### 5.5. Chưa thấy dữ liệu theo dõi chu kỳ trong schema đã kiểm tra
+Các kết luận giới hạn trong code/schema đã đọc, không khẳng định service khác thiếu dữ liệu. Không sửa DB trong quá trình review. Số lượng staging không được dùng suy ra production.
 
-Danh sách bảng trong `cobroker_db` chưa có bảng chuyên theo dõi chu kỳ bán/cảnh báo và chính sách chu kỳ của từng sale.
+## 9. Điểm còn cần PO/BO xác nhận
 
-Hệ thống có các cấu hình điểm đại lý và đợt bán, nhưng đó là cấu hình phục vụ nghiệp vụ khác. Chưa có căn cứ coi chúng là chính sách chu kỳ của PRD.
+### Ghi chú và mâu thuẫn trong SRS
 
-**Đánh giá:** phần theo dõi chu kỳ là năng lực cần bổ sung. Chưa cần quyết định schema hoặc API ở bước phân tích này; trước hết cần chốt luật và dữ liệu đầu vào.
+1. **Đạt giữa kỳ:** nguyên tắc giữ đến cuối kỳ, nhưng vẫn có ghi chú BO chọn reset ngay hay không.
+2. **Thử thách chưa đủ:** bảng dùng chưa đạt tối thiểu, đoạn nguyên tắc dùng không có GD; cần thống nhất khi GD > 0 nhưng < chỉ tiêu.
+3. **Đạt/Chưa đạt:** bảng mô tả dữ liệu đảo điều kiện hai nhãn. Nguyên tắc/ảnh dùng Đạt khi GD >= chỉ tiêu; cần sửa lỗi nguồn.
+4. **Ngày ví dụ:** có 31/11/2026 không tồn tại và 4 tháng từ 01/08 kết thúc 31/10 không khớp công thức. Không lấy ví dụ sai làm luật.
+5. **Role/vùng:** tái sử dụng role 100, quản lý vùng và bộ lọc vùng còn ghi chú kiểm tra; export có cần role 25 chưa chốt.
+6. **CMS:** “Ngày BC” chưa xác nhận là ngày bắt đầu bán.
+7. **UI/export:** filter xếp hạng/thời gian ở tổng quan US-02, tên US-03, template xếp hạng và đặc tả lưu lịch sử export cần xác nhận.
 
-### 5.6. Có hạ tầng thông báo và lịch sử để tham khảo
+### Tình huống chưa mô tả đủ
 
-Hệ thống có `notification_outbox` và dịch vụ lập lịch gửi/hủy thông báo. Đây là nền kỹ thuật có thể sử dụng sau khi rõ yêu cầu.
+- GD hủy/bỏ cọc có thu hồi chỉ tiêu không? SRS đã ghi chú câu hỏi này. GD muộn/đổi người bán có sửa chu kỳ, room, thông báo đã chốt không?
+- GD quản lý là cá nhân hay đội? Định danh nào nối SAP với Agent?
+- Reset tức thì áp dụng cho ai và giữ GD cũ không? Tuần tự chọn luật nào khi chính thức thất bại chuyển thử thách?
+- Sửa ngày bắt đầu yêu cầu tính lại chu kỳ, nhưng phạm vi hồi tố room/thông báo và policy lịch sử chưa rõ.
+- Thiếu ngày, ngày tương lai hoặc thiếu cấu hình hiển thị/xử lý thế nào? Không tự kết luận không đạt.
+- Chuyển đại lý/nhóm, xác thực lại hoặc tái gia nhập giữ hay bắt đầu lại kỳ?
+- Ngày 29/30/31, timezone, độ trễ cập nhật GD, số ngày hiển thị sau hết kỳ và thời điểm chốt cần thống nhất.
+- Căn/room đã phân bổ xử lý ra sao? Chưa có yêu cầu thu hồi tự động.
+- Nhắc sale đã đạt/inactive, thông báo thành công, mốc trùng và gửi bù xử lý thế nào?
 
-PRD vẫn cần xác định gửi khi nào, gửi cho ai và trường hợp nào không gửi. Có hạ tầng gửi không đồng nghĩa đã có đầy đủ nghiệp vụ thông báo 9533.
+### Khác biệt với PRD
 
-## 6. Những quyết định nghiệp vụ cần PO/BO trả lời
+PRD chỉ mô tả áp dụng tuần tự; SRS có thêm tức thì. PRD có chữ chấm dứt vĩnh viễn; SRS xác định đề xuất, không tự sinh chu kỳ. Guide theo mô tả chi tiết SRS và giữ các khác biệt để PO xác nhận.
 
-### 6.1. Giao dịch nào được tính cho sale?
+SRS target 31/10/2026 cho phạm vi chung; PRD cho công cụ cấu hình động tới 30/11. Cần chốt bàn giao từng đợt, không tự loại US-04 khỏi tháng 10.
 
-Đây là câu hỏi quan trọng nhất vì mọi phân loại đều dựa vào số GD.
+## 10. Dùng tài liệu này để tiếp tục công việc
 
-Cần thống nhất mốc SAP được tính, khóa duy nhất của GD, ngày nghiệp vụ và định danh sale. Đồng thời xác định quản lý được tính GD cá nhân hay GD của đội; GD chuyển sale, hủy hoặc đồng bộ trễ có làm thay đổi kết quả cũ không.
+Phạm vi gồm sáu US: báo cáo, search/sort/filter, export, cấu hình, thông báo và ngày bắt đầu bán. Luồng chu kỳ và tác động room nằm trong US-01; không bỏ qua khi chỉ làm màn hình.
 
-Ví dụ cần trả lời: GD xác nhận ngày 30/04 nhưng hệ thống nhận ngày 02/05 có được dùng để cứu chu kỳ chính thức kết thúc 30/04 không? Nếu có, kết quả cảnh báo và room đã thay đổi phải xử lý thế nào?
+Dev/AI agent đọc mục 2–7 để hiểu yêu cầu, mục 8 để biết nguồn/phần còn thiếu, mục 9 để xác nhận đúng các điểm chưa chốt. Không ghi yêu cầu SRS đã có thành thiếu đặc tả; không biến ghi chú chờ BO thành luật đã duyệt.
 
-### 6.2. Khi nào mở chu kỳ mới?
+Trước khi chốt thiết kế, cần mẫu GD SAP nối được từng sale và ví dụ BO xác nhận cho đạt giữa kỳ, thử thách chưa đủ, đổi cấu hình, GD hủy/muộn, sửa ngày và dữ liệu cũ. Chưa cần đưa schema/API chi tiết vào tài liệu phân tích này.
 
-PRD có hướng giữ nguyên kỳ chính thức khi sale đạt giữa kỳ, nhưng còn chờ BO xác nhận.
+Tham chiếu code, tính từ gốc repo:
 
-Trong cảnh báo, tài liệu nói có GD thì trở lại chính thức. Nếu chỉ tiêu cấu hình là 2 mà sale mới có 1 GD, chưa rõ phải trở lại chính thức hay tiếp tục cảnh báo.
-
-Cũng cần chốt cách tính tháng, ngày kết thúc và thời điểm chốt GD cuối kỳ, đặc biệt với ngày bắt đầu 29/30/31.
-
-### 6.3. Kết thúc cảnh báo có hành động gì?
-
-PRD có chỗ nói “đề xuất chấm dứt”, có chỗ nói “chấm dứt vĩnh viễn”. Hai cách diễn đạt dẫn đến hành vi khác nhau.
-
-Cần xác nhận đây chỉ là danh sách để BO quyết định hay hệ thống tự khóa tài khoản/chấm dứt hợp tác. Nếu là đề xuất, ai xử lý tiếp? Nếu có GD đến muộn hoặc sale quay lại hợp tác, trạng thái được phục hồi thế nào?
-
-Hiện chưa đủ căn cứ yêu cầu hệ thống tự khóa account hoặc tự chấm dứt hợp đồng.
-
-### 6.4. Chính sách mới áp dụng cho ai và từ lúc nào?
-
-BR-03 yêu cầu hoàn thành chu kỳ đang chạy theo luật cũ rồi dùng luật mới.
-
-Cần xác định “chu kỳ đang chạy” là giai đoạn chính thức hoặc cảnh báo, hay toàn bộ cặp hai giai đoạn. Ví dụ sale kết thúc chính thức không đạt sau ngày luật mới có hiệu lực: cảnh báo sắp mở dùng số tháng/chỉ tiêu cũ hay mới?
-
-Cần chốt cả trường hợp đổi nhóm Đại lý/O2O/Tự doanh, nhiều chính sách tương lai và sửa/hủy cấu hình đã lưu.
-
-### 6.5. Sale hiện có bắt đầu được theo dõi thế nào?
-
-Hệ thống đã có sale đang hoạt động và dữ liệu xác thực nhiều thời điểm. PRD chưa nói khi go-live phải tính lại từ ngày bắt đầu bán cũ hay cho tất cả bắt đầu kỳ mới.
-
-Nếu tính lại lịch sử, phải có đủ GD và chính sách tương ứng. Nếu thiếu ngày bắt đầu hoặc nguồn GD, không nên tự dùng ngày tạo profile hay tự kết luận sale không đạt.
-
-PO cần xác định cách khởi tạo, người cung cấp dữ liệu và cách đối soát trước khi áp dụng tác động room.
-
-## 7. Phạm vi và mốc bàn giao cần làm rõ
-
-PRD dự kiến UAT 25–30/10/2026, go-live 31/10/2026. Riêng công cụ cấu hình động có thể tới 30/11/2026.
-
-Nếu engine và báo cáo chạy trước UI cấu hình, phải xác định chính sách ban đầu được nhập bằng cách nào, ai phê duyệt và cách thay đổi chính sách trong giai đoạn đó.
-
-Cần chốt rõ đợt tháng 10 có những phần nào: báo cáo, thông báo, tính chu kỳ, dữ liệu cũ và tác động room. Không mặc định tất cả đều bàn giao cùng ngày chỉ vì thuộc chung PRD.
-
-## 8. Khi nào có thể coi yêu cầu đủ rõ để dev làm?
-
-PO/BO và nhóm kỹ thuật cần thống nhất được các ví dụ đầu vào/kết quả sau:
-
-| Tình huống | Kết quả phải xác định được |
-| --- | --- |
-| Sale đạt giữa kỳ chính thức | Giữ kỳ hay mở kỳ mới, ngày nào và GD tính vào đâu |
-| Sale hết chính thức không đạt | Khi nào vào cảnh báo và room thay đổi cụ thể thế nào |
-| Sale cảnh báo có GD nhưng chưa đủ chỉ tiêu | Tiếp tục cảnh báo hay trở lại chính thức |
-| Sale hết cảnh báo không đạt | Gán nhãn hay hành động tự động; ai xử lý tiếp |
-| GD đến trễ hoặc bị hủy | Có sửa kết quả cũ và hoàn tác room/thông báo không |
-| Chính sách đổi giữa kỳ | Chính sách nào áp dụng ở giai đoạn kế tiếp |
-| Sale chuyển đại lý/nhóm | Giữ hay bắt đầu lại chu kỳ, GD thuộc tài khoản nào |
-| Sale thiếu ngày bắt đầu hoặc thiếu dữ liệu GD | Hiển thị và xử lý ra sao, không mặc định là không đạt |
-| Sale có lịch sử trước go-live | Cách khởi tạo và đối soát kết quả |
-
-Sau khi chốt các ví dụ này mới đặc tả chi tiết các cột báo cáo, quyền, nội dung thông báo và hợp đồng tích hợp. Đây là thứ tự phân tích, không phải yêu cầu dừng mọi công việc kỹ thuật.
-
-## 9. Kết luận về yêu cầu trên hệ thống hiện tại
-
-Hệ thống có nền dữ liệu và chức năng cho sale đại lý, xác thực, đăng ký dự án, room và gửi thông báo. Có thể dùng các phần đó để phát triển yêu cầu.
-
-Ba khoảng trống cần giải quyết trước là **ngày bắt đầu bán đúng nghiệp vụ**, **giao dịch được ghi nhận cho từng sale** và **luật chuyển chu kỳ/tác động room**. Phạm vi O2O/Tự doanh cũng cần xác minh nguồn dữ liệu ngoài schema đã kiểm tra.
-
-Chưa nên chốt phương án “lấy dữ liệu đang có rồi chạy job đếm ngày”: hiện trạng chưa chứng minh có đầy đủ dữ liệu KPI cá nhân, còn PRD chưa chốt các quy tắc quyết định kết quả.
-
-## 10. Tham chiếu để kiểm chứng hiện trạng
-
-Tài liệu phân tích PRD riêng: [BDSKD-9533-phan-tich-PRD.md](BDSKD-9533-phan-tich-PRD.md).
-
-Các file code đã đối chiếu, đường dẫn tính từ gốc repo:
-
-- Hồ sơ và quan hệ đại lý: `src/main/java/vn/vinhomes/cobroker/core/model/CoBrokerProfile.java`, `AgencyCobroker.java` cùng thư mục.
-- Luồng xác thực: `src/main/java/vn/vinhomes/cobroker/core/service/applicant/ApplicantEkycCompletionService.java`.
-- GD bán căn: `src/main/java/vn/vinhomes/cobroker/core/consumer/PropertySoldConsumer.java`, `src/main/java/vn/vinhomes/cobroker/core/processor/PropertySoldProcessor.java`, `src/main/java/vn/vinhomes/cobroker/core/dto/distribution/event/SaleOrderChangeEvent.java`.
-- Điều kiện đếm sale: `src/main/java/vn/vinhomes/cobroker/core/repository/UserRegisteredScopeRepository.java`, phương thức `countValidSalesByAgency`.
-- Room: `src/main/java/vn/vinhomes/cobroker/core/service/distribution/impl/RoomServiceImpl.java`, phương thức `computeRoom`.
+- Hồ sơ: `src/main/java/vn/vinhomes/cobroker/core/model/CoBrokerProfile.java`, `AgencyCobroker.java` cùng thư mục.
+- Xác thực: `src/main/java/vn/vinhomes/cobroker/core/service/applicant/ApplicantEkycCompletionService.java`.
+- GD: `src/main/java/vn/vinhomes/cobroker/core/consumer/PropertySoldConsumer.java`, `src/main/java/vn/vinhomes/cobroker/core/processor/PropertySoldProcessor.java`, `src/main/java/vn/vinhomes/cobroker/core/dto/distribution/event/SaleOrderChangeEvent.java`.
+- Sale hợp lệ/room: `src/main/java/vn/vinhomes/cobroker/core/repository/UserRegisteredScopeRepository.java`, `src/main/java/vn/vinhomes/cobroker/core/service/distribution/impl/RoomServiceImpl.java`.
 - Thông báo: `src/main/java/vn/vinhomes/cobroker/core/service/notification/outbox/NotificationOutboxService.java`.
 
-Schema và số lượng tổng hợp được đọc ngày 05/10/2026. Số liệu staging có thể thay đổi và không dùng để suy ra số liệu production. Tài liệu không chứa mật khẩu hay thông tin cá nhân của sale.
+[Phân tích PRD riêng](BDSKD-9533-phan-tich-PRD.md) giữ góc nhìn PRD. Guide này đã hiệu chỉnh theo SRS trực tiếp. Chưa đọc demo SharePoint, Excel template hoặc Q&A bên ngoài trang, nên không coi chúng là nguồn đã kiểm chứng.
