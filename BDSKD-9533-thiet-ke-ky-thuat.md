@@ -4,15 +4,17 @@ Cập nhật: 05/10/2026. Phạm vi: sáu US trong [SRS](https://vin3s.atlassian
 
 **Kiến trúc đã chốt:** triển khai một service riêng, tên đề xuất `vhm-sale-cycle`, có repository, artifact, cấu hình, DB, migration và worker riêng. Service không import code/thư viện nghiệp vụ, không gọi API và không đọc/ghi DB của core-broker. Các tài liệu nằm trong repo này chỉ để bàn giao; vị trí file không quyết định nơi triển khai.
 
-**Nguồn tích hợp:** profile/CMS cung cấp sale, tổ chức và ngày bắt đầu; `vhm-sale-pipeline` gửi GD qua Kafka. Hợp đồng API/event profile, topic và payload pipeline chưa được cung cấp. Không coi schema đã khảo sát là API đã tồn tại.
+**Hai nguồn dữ liệu đã chốt:** đọc các bảng `vhm-profile` của profile-mw để lấy sale, role và tổ chức; nhận GD từ `vhm-sale-pipeline` qua Kafka. DB nghiệp vụ chu kỳ vẫn riêng hoàn toàn. Tên topic/payload và mapping field sẽ được đặc tả khi implement; không cần thêm nguồn từ core-broker.
 
-**Đề xuất nền tảng:** PostgreSQL riêng cho dữ liệu chu kỳ; Kafka cho GD và phát kết quả; HTTP cho API báo cáo/cấu hình và tích hợp nguồn. Framework, phiên bản và quy chuẩn response được chọn tại repository mới, không kế thừa mặc định từ core-broker.
+**Cách đọc profile-mw:** datasource nguồn chỉ đọc, tách datasource ghi `sale_cycle_db`. Adapter đọc batch và đồng bộ bản đọc tối thiểu vào DB riêng; không sửa bảng nguồn, không join xuyên DB hoặc tạo FK xuyên DB. Tài khoản datasource cấu hình riêng theo môi trường qua secret, không dùng credential khảo sát trong tài liệu/code.
+
+**Đề xuất nền tảng:** PostgreSQL riêng cho dữ liệu chu kỳ; Kafka cho GD và phát kết quả; HTTP cho API báo cáo/cấu hình; datasource MySQL chỉ đọc cho profile-mw. Framework, phiên bản và quy chuẩn response được chọn tại repository mới, không kế thừa mặc định từ core-broker.
 
 ## 1. Ranh giới và luồng tổng thể
 
 ```mermaid
 flowchart TD
-  Profile[Profile / CMS] -->|API snapshot hoặc event đã thống nhất| Adapter[Adapter hồ sơ và tổ chức]
+  Profile[(DB profile-mw)] -->|Đọc batch với quyền chỉ đọc| Adapter[Adapter hồ sơ và tổ chức]
   Pipeline[vhm-sale-pipeline] -->|Kafka GD| Consumer[Consumer GD]
   BFF[BFF / Gateway] -->|HTTP và identity tin cậy| API[API sale-cycle]
   subgraph Independent[vhm-sale-cycle - triển khai riêng]
@@ -35,27 +37,27 @@ Ví dụ: sale A bắt đầu 01/01, chính thức 4 tháng và cần 1 GD. Serv
 
 | Dữ liệu | Hệ thống sở hữu | Service mới nhận và lưu gì? |
 | --- | --- | --- |
-| Danh tính sale, Agent ID, mã nhân viên, trạng thái tài khoản | Profile/CMS | Khóa nguồn và bản đọc phục vụ báo cáo; không tạo tài khoản hoặc mật khẩu |
-| Nhóm Đại lý/O2O/Tự doanh, tổ chức, role, phạm vi quản lý | Profile/CMS hoặc nguồn hồ sơ được chỉ định | Nhóm áp dụng, tổ chức phục vụ lọc; quyền người gọi phải lấy từ identity/scope tin cậy |
+| Danh tính sale, Agent ID, mã nhân viên, trạng thái tài khoản | profile-mw | Khóa nguồn và bản đọc phục vụ báo cáo; không tạo tài khoản hoặc mật khẩu |
+| Nhóm Đại lý/O2O/Tự doanh, tổ chức, role, phạm vi quản lý | profile-mw hoặc nguồn hồ sơ được chỉ định | Nhóm áp dụng, tổ chức phục vụ lọc; quyền người gọi phải lấy từ identity/scope tin cậy |
 | Ngày bán nguồn; mốc lần đầu hoàn thành xác thực đại lý | Hệ thống sở hữu hồ sơ/xác thực | Ngày nguồn, ngày áp dụng và nguồn/version; không tự suy ra từ ngày tạo user |
 | GD hợp lệ, sửa/thu hồi, ngày nghiệp vụ và sale hưởng GD | vhm-sale-pipeline | Ledger GD nhận qua Kafka để tính và replay |
 | Chính sách, ngày nhập/sửa được phép, kỳ và kết quả | vhm-sale-cycle | Dữ liệu nghiệp vụ chính trong DB riêng |
 | Room, đăng ký dự án, phân bổ/giữ/bán căn | Hệ thống quản lý room | Chỉ xuất kết quả `room_excluded`; không nhận toàn bộ các bảng căn/room |
 | Phân phối thông báo tới web/app | Dịch vụ thông báo | Service mới sở hữu lịch gửi và lịch sử delivery |
 
-Schema [vhm-profile](BDSKD-9533-theo-doi-chu-ky-ban-hang-schema-vhm-profile.md) có `user`, `team`, `user_roles`, `role`. Chưa xác minh nguồn này đã cung cấp đủ sale đại lý, Agent ID, mốc xác thực và API cần dùng. Nếu chưa đủ, phải chốt/bổ sung hợp đồng với nguồn sở hữu dữ liệu trước rollout nhóm đó; không đặt core-broker thành đường dự phòng trong thiết kế này.
+Schema [vhm-profile](BDSKD-9533-theo-doi-chu-ky-ban-hang-schema-vhm-profile.md) là nguồn hồ sơ đã chọn: `user` cho sale, `user_roles`/`role` cho vai trò, `team` cho tổ chức. Các field ngày bán, nhóm và ID sale cần mapping đúng nghĩa theo SRS. Đây là chi tiết adapter của nguồn đã chọn; không đặt core-broker thành nguồn bổ sung.
 
 Nhóm áp dụng theo SRS: Đại lý role 21; O2O/Tự doanh role 21/20/23/60, phân nhóm theo cây tổ chức. Mã role và root nguồn phải được adapter kiểm chứng theo hợp đồng; không suy ra đủ membership từ metadata schema.
 
 ### 2.1. Khóa nhận diện
 
-Mỗi Agent ID là một đối tượng theo dõi, với UNIQUE `(tenant_id, agent_profile_id)`. ID user của profile/CMS có thể khác Agent ID: cần hợp đồng mapping rõ; không dùng tên, CCCD, ID đại lý hoặc `cobroker_profile_id` thay khóa sale. ID nguồn là tham chiếu ngoài service, không có FK xuyên DB.
+Mỗi Agent ID là một đối tượng theo dõi, với UNIQUE `(tenant_id, agent_profile_id)`. ID user của profile-mw có thể khác Agent ID: cần hợp đồng mapping rõ; không dùng tên, CCCD, ID đại lý hoặc `cobroker_profile_id` thay khóa sale. ID nguồn là tham chiếu ngoài service, không có FK xuyên DB.
 
 Chuyển đại lý có thể làm đổi Agent ID. Việc nối lịch sử giữa hai tài khoản cần PO chốt; không tự gộp hai sale vì cùng hồ sơ người.
 
 ### 2.2. Bản đọc cục bộ để báo cáo hoạt động độc lập
 
-Service lưu snapshot tối thiểu tên/mã nhân viên/mã định danh được phép dùng, trạng thái tài khoản, tổ chức và đại lý trong `sale_cycle_profiles`; cây tổ chức trong `sale_cycle_organizations`. Đây là bản đọc từ nguồn, chỉ adapter được cập nhật, có source revision và thời điểm đồng bộ. Không có API sửa hồ sơ cá nhân tại service này.
+Service lưu snapshot tối thiểu tên/mã nhân viên/mã định danh được phép dùng, trạng thái tài khoản, tổ chức và đại lý trong `sale_cycle_profiles`; cây tổ chức trong `sale_cycle_organizations`. Đây là bản đọc từ nguồn, chỉ adapter được cập nhật, có phiên bản đồng bộ cục bộ và thời điểm đồng bộ; lưu mốc cập nhật nguồn nếu có. Không có API sửa hồ sơ cá nhân tại service này.
 
 Cách này cho phép search/filter/sort cùng kết quả chu kỳ trước khi phân trang và xuất Excel từ một DB. Không gọi profile cho từng dòng, không ghép hai trang phân trang độc lập. Chỉ lưu những field cần báo cáo/scope; không sao chép password, token, toàn bộ properties hoặc schema user/role/session.
 
@@ -117,15 +119,15 @@ FK chỉ tham chiếu các bảng trong DB riêng; profile nguồn/username/ID t
 ### 4.1. Tạo đối tượng theo dõi sale
 
 ```text
-API snapshot / event profile-CMS
+Đọc batch các bảng profile-mw
     → resolve Agent ID và nhóm đối tượng
     → upsert sale_cycle_profiles
     → có ngày + policy thì giao việc tính kỳ
 ```
 
-Adapter nhận tập sale Đại lý/O2O/Tự doanh theo role và tổ chức SRS qua hợp đồng nguồn. Adapter chỉ truy cập hợp đồng API/event được nguồn cung cấp. Nguồn phải mô tả role sale đại lý tương ứng, kể cả người kiêm quản lý.
+Adapter đọc user + user_roles/role và resolve team theo SRS để lấy tập sale Đại lý/O2O/Tự doanh. Mapping được viết rõ ở adapter, không suy diễn mọi giá trị user.team thành team.id khi kiểu nguồn khác nhau.
 
-Bootstrap đọc snapshot có cursor/watermark; xử lý cập nhật theo revision. Nguồn phải bảo đảm snapshot + delta không mất sự kiện, hoặc cung cấp đối soát định kỳ. Không xóa sale vì thiếu trong một trang/đợt sync lỗi; inactive vẫn được theo dõi. Mỗi batch commit snapshot + task; nguồn lỗi giữ dữ liệu đã nhận, đánh dấu độ trễ và retry. Khi org/source thay đổi, cập nhật bản đọc nhưng không tự reset kỳ.
+Bootstrap đọc batch có thứ tự khóa ổn định, rồi đồng bộ định kỳ. Dùng updated_time nếu đã xác nhận đơn vị/ý nghĩa, kèm quét đối soát toàn bộ để xử lý cập nhật role/team hoặc dữ liệu thay đổi không làm đổi user.updated_time. Mỗi lượt sync không chạy chồng nhau; snapshot hash phát hiện field thay đổi và tăng input_revision cục bộ khi đầu vào tính đổi. Không coi updated_time là revision event bảo đảm thứ tự. Không xóa sale vì thiếu trong một trang/đợt sync lỗi; inactive vẫn được theo dõi. Nguồn lỗi giữ bản đọc cũ và đánh dấu độ trễ. Thay tên/tổ chức không tự reset kỳ.
 
 Chưa có ngày bắt đầu hoặc policy phù hợp thì ghi lý do chưa tính, chưa mở kỳ và chưa gán Không đạt. Sale inactive vẫn tiếp tục theo dõi chu kỳ. Sync hồ sơ không tạo hồ sơ chu kỳ mới cho mỗi lần cập nhật.
 
@@ -321,7 +323,7 @@ Chống xử lý lặp ngay tại dữ liệu nghiệp vụ, không cần bảng
 | 9 | Notification — US-05 | Đúng receiver/mốc/nội dung; SENT giữ ledger; không flood backfill |
 | 10 | Đối soát toàn scope và rollout | Đại lý/O2O/Tự doanh đủ dữ liệu; source backfill đủ; engine/room/noti được xác nhận |
 
-Adapter profile/CMS là phần nền để cả ba nhóm có dữ liệu; cả ba nhóm dùng cùng engine. Mỗi bước tách PR có migration/service/API/test cần thiết; không bật room/noti trước khi engine và nguồn dữ liệu được đối soát.
+Adapter profile-mw là phần nền để cả ba nhóm có dữ liệu; cả ba nhóm dùng cùng engine. Mỗi bước tách PR có migration/service/API/test cần thiết; không bật room/noti trước khi engine và nguồn dữ liệu được đối soát.
 
 Migration chỉ tạo cấu trúc trong DB riêng; deployment không chạy migration hoặc truy cập DB core-broker. Nhập ngày/policy/GD cũ chạy job có audit/dry-run; test dùng DB riêng. Giữ feature flags engine/ingest/eligibility-publish/noti; rollback kết quả cần phát phiên bản điều chỉnh và đối soát bên room, không chỉ tắt flag. Tách cờ phát event và gửi thông báo khỏi engine.
 
@@ -329,16 +331,16 @@ Migration chỉ tạo cấu trúc trong DB riêng; deployment không chạy migr
 
 - API và worker có thể scale riêng từ cùng artifact; claim task/delivery/outbox bằng row lock/CAS + lease; khóa theo profile khi tính để tránh hai worker publish đồng thời.
 - Scheduler dùng timezone `Asia/Ho_Chi_Minh`; lưu timestamp UTC, ngày nghiệp vụ kiểu date. Job hằng ngày phát evaluate cho sale đến mốc; không dựa vào event GD để chuyển ngày.
-- Health phân biệt DB/Kafka/nguồn quyền; theo dõi consumer lag, source watermark, tuổi task/outbox, số GD chưa resolve, lỗi notification và rebuild. Log có correlationId, Agent ID được bảo vệ theo chính sách dữ liệu.
+- Health phân biệt DB nghiệp vụ/DB profile-mw/Kafka/nguồn quyền; theo dõi consumer lag, source watermark, tuổi task/outbox, số GD chưa resolve, lỗi notification và rebuild. Log có correlationId, Agent ID được bảo vệ theo chính sách dữ liệu.
 - Backup/restore DB và object storage, sau restore đối soát nguồn + replay theo watermark. Không restore bằng copy bảng core-broker.
-- Test hợp đồng profile/pipeline với stub; integration test dùng PostgreSQL/Kafka riêng; kiểm tra chạy API/engine khi core-broker không có kết nối. Test duplicate/out-of-order/revoke/move-sale, ngày cuối tháng, boundary chính thức/thử thách, rebuild concurrent, ACL và import retry.
+- Test adapter profile-mw và hợp đồng pipeline với dữ liệu mẫu; integration test dùng PostgreSQL/Kafka riêng; kiểm tra chạy API/engine khi core-broker không có kết nối. Test duplicate/out-of-order/revoke/move-sale, ngày cuối tháng, boundary chính thức/thử thách, rebuild concurrent, ACL và import retry.
 - Rollout: shadow tính và đối soát dữ liệu đầy đủ → mở báo cáo → mở event room đã có consumer → mở thông báo. Khi profile/pipeline chưa hoàn tất backfill, không phát thất bại hoặc thông báo chấm dứt từ count=0.
 
 ## 8. Những điểm cần chốt
 
 | Điểm | Ảnh hưởng |
 | --- | --- |
-| API/event profile cho cả ba nhóm, mapping Agent ID, mốc xác thực, snapshot/delta và org/scope | Adapter, bootstrap và quyền |
+| Mapping field/Agent ID/nhóm/ngày bán và org/scope từ các bảng profile-mw | Adapter và quyền; nguồn đã chốt, cần đặc tả cách đọc |
 | Topic/payload pipeline, per-GD hay tổng count, ID sale/GD, attribution, ngày, revision/hủy/replay | Consumer và GD |
 | Ngày xác thực lần đầu; nguồn ngày O2O/Tự doanh; ngày 29/30/31 | StartDate và lịch kỳ |
 | SRS còn ghi chú đạt official reset hay giữ hạn; trial có GD nhưng chưa đủ | State machine; TDD đang theo baseline giữ official đến hạn và fail khi count < target |
