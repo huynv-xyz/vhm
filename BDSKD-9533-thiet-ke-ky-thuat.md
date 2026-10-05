@@ -12,11 +12,11 @@ Các bảng `sale_cycle_*` bên dưới là đề xuất mới. Bảng hiện c�
 
 ```mermaid
 flowchart TD
-  Profile[Hồ sơ đại lý / CMS] --> Subject[1. Lưu sale và ngày bắt đầu]
+  Profile[Hồ sơ đại lý / CMS] --> CycleProfile[1. Lưu sale và ngày bắt đầu]
   Config[Admin cấu hình] --> Policy[2. Lưu chính sách]
   Pipeline[vhm-sale-pipeline] --> Kafka[Kafka]
   Kafka --> Fact[3. Lưu GD của sale]
-  Subject --> Engine[4. Tính chu kỳ]
+  CycleProfile --> Engine[4. Tính chu kỳ]
   Policy --> Engine
   Fact --> Engine
   Engine --> Period[5. Lưu kỳ và kết quả hiện tại]
@@ -60,10 +60,10 @@ Chia thành dữ liệu đầu vào, kết quả và bảng hỗ trợ. Core kh�
 
 | Bảng mới | Một row đại diện cho | Field chính |
 | --- | --- | --- |
-| `sale_cycle_subject` | Một tài khoản sale được theo dõi | `id`, `agent_profile_id`, `audience`, liên kết hồ sơ/đại lý, thông tin tổ chức, `activity_status`, `start_date`, `start_date_source`, `start_date_override` |
+| `sale_cycle_profiles` | Một tài khoản sale được theo dõi | `id`, `agent_profile_id`, `audience`, liên kết hồ sơ/đại lý, thông tin tổ chức, `activity_status`, `start_date`, `start_date_source`, `start_date_override` |
 | `sale_cycle_policy` | Một phiên bản cấu hình | `id`, `version_no`, `effective_date`, `application_mode`, lịch nhắc, người/thời gian tạo |
 | `sale_cycle_policy_rule` | Quy tắc của một nhóm trong policy | `id`, `policy_id`, `audience`, tháng/chỉ tiêu chính thức, tháng/chỉ tiêu thử thách |
-| `sale_cycle_transaction_fact` | Một GD pipeline ghi nhận cho sale | `id`, `business_transaction_id`, `agent_profile_id`, `subject_id`, ngày GD, trạng thái ghi nhận/hủy, revision nguồn, event reference |
+| `sale_cycle_transactions` | Một GD của sale nhận từ pipeline qua Kafka, dùng đếm số GD hợp lệ trong kỳ | `id`, `business_transaction_id`, `agent_profile_id`, `sale_cycle_profile_id`, ngày GD, trạng thái ghi nhận/hủy, revision nguồn, event reference |
 
 `audience`: Đại lý, O2O hoặc Tự doanh. Một box cấu hình chọn hai nhóm tạo hai rule. Policy đã lưu giữ nguyên để truy lại cấu hình áp dụng trong quá khứ.
 
@@ -72,9 +72,9 @@ Chia thành dữ liệu đầu vào, kết quả và bảng hỗ trợ. Core kh�
 | Bảng | Lưu gì? |
 | --- | --- |
 | `sale_cycle_period` | Một kỳ của sale: chính thức/thử thách, rule áp dụng, ngày đầu/cuối, chỉ tiêu, số GD, ngày đạt, trạng thái đang chạy/đã đóng và kết quả |
-| Phần kết quả trên `sale_cycle_subject` | Phân loại hiện tại, con trỏ kỳ hiện tại/chính thức gần nhất/thử thách gần nhất, điều kiện loại khỏi room, thời điểm tính |
+| Phần kết quả trên `sale_cycle_profiles` | Phân loại hiện tại, con trỏ kỳ hiện tại/chính thức gần nhất/thử thách gần nhất, điều kiện loại khỏi room, thời điểm tính |
 
-Ngày/tổ chức của subject do service hồ sơ/ngày bắt đầu ghi. Kỳ, số GD và phân loại do engine ghi. Không để API hồ sơ sửa trực tiếp kết quả engine.
+Ngày/tổ chức của hồ sơ chu kỳ do service hồ sơ/ngày bắt đầu ghi. Kỳ, số GD và phân loại do engine ghi. Không để API hồ sơ sửa trực tiếp kết quả engine.
 
 ### 3.3. Bảng hỗ trợ
 
@@ -88,11 +88,11 @@ Ngày/tổ chức của subject do service hồ sơ/ngày bắt đầu ghi. Kỳ
 
 ### 3.4. Ràng buộc DB tối thiểu
 
-- Một subject duy nhất theo Agent ID.
+- Một hồ sơ chu kỳ duy nhất theo Agent ID.
 - Một fact duy nhất theo nguồn + ID GD nghiệp vụ; eventId/Kafka offset không thay ID GD.
 - Một rule cho mỗi audience trong policy; đề xuất không trùng audience/ngày hiệu lực giữa các policy.
-- Mỗi subject tối đa một kỳ đang chạy; kỳ cũ phải đóng trước khi mở kỳ mới.
-- GD countable phải có subject, ngày nghiệp vụ và trạng thái hợp lệ.
+- Mỗi hồ sơ chu kỳ tối đa một kỳ đang chạy; kỳ cũ phải đóng trước khi mở kỳ mới.
+- GD countable phải có hồ sơ chu kỳ, ngày nghiệp vụ và trạng thái hợp lệ.
 - Ngày nghiệp vụ lưu `date`; thời điểm nhận/gửi/audit lưu `timestamptz`; ID bảng mới dùng UUID.
 
 Quan hệ bảng và giải thích chi tiết xem [phân tích DB](BDSKD-9533-db-va-lo-trinh.md#3-cần-thêm-những-bảng-nào).
@@ -104,13 +104,13 @@ Quan hệ bảng và giải thích chi tiết xem [phân tích DB](BDSKD-9533-db
 ```text
 Hồ sơ đại lý / snapshot CMS
     → resolve Agent ID và nhóm đối tượng
-    → upsert sale_cycle_subject
+    → upsert sale_cycle_profiles
     → có ngày + policy thì giao việc tính kỳ
 ```
 
 Đại lý lấy từ link có role SALE_MEMBER, kể cả link kiêm SALE_ADMIN. O2O/Tự doanh lấy từ CMS/profile theo role và tổ chức SRS.
 
-Chưa có ngày bắt đầu hoặc policy phù hợp thì ghi lý do chưa tính, chưa mở kỳ và chưa gán Không đạt. Sale inactive vẫn tiếp tục theo dõi chu kỳ. Sync hồ sơ không tạo subject mới cho mỗi lần cập nhật.
+Chưa có ngày bắt đầu hoặc policy phù hợp thì ghi lý do chưa tính, chưa mở kỳ và chưa gán Không đạt. Sale inactive vẫn tiếp tục theo dõi chu kỳ. Sync hồ sơ không tạo hồ sơ chu kỳ mới cho mỗi lần cập nhật.
 
 ### 4.2. Ghi hoặc sửa ngày bắt đầu bán — US-06
 
@@ -121,7 +121,7 @@ Chưa có ngày bắt đầu hoặc policy phù hợp thì ghi lý do chưa tín
 | Tài khoản cũ | Import file Chính sách cung cấp |
 | Admin sửa đại lý | Role 11/100; lưu ngày mới, lý do và manual override |
 
-**Cùng một DB transaction:** khóa subject → ghi ngày/nguồn → ghi audit → tạo task tính lại → commit.
+**Cùng một DB transaction:** khóa hồ sơ chu kỳ → ghi ngày/nguồn → ghi audit → tạo task tính lại → commit.
 
 Khi sửa ngày, đầu vào đã mới nhưng kỳ cũ chưa tự đúng theo. API trả **Đang tính lại**; worker tính xong mới thay kỳ/phân loại/room. Trong lúc chờ, báo cáo ghi rõ kết quả cũ đang chờ cập nhật.
 
@@ -157,19 +157,19 @@ sequenceDiagram
   C->>D: Lưu fact + audit + task trong một transaction
   D-->>C: Commit thành công
   C->>K: Acknowledge
-  E->>D: Đọc subject + policy + facts
+  E->>D: Đọc hồ sơ chu kỳ + policy + facts
   E->>D: Lưu kỳ và kết quả hiện tại
 ```
 
 Consumer xử lý theo thứ tự:
 
 1. Kiểm tra payload có ID GD, ID sale, ngày nghiệp vụ và thông tin ghi nhận hợp lệ.
-2. Resolve sale nguồn sang `subject_id` bằng Agent ID hoặc mapping đã thống nhất.
+2. Resolve sale nguồn sang `sale_cycle_profile_id` bằng Agent ID hoặc mapping đã thống nhất.
 3. Upsert fact theo ID GD. Gửi lại cùng GD không tạo thêm GD.
 4. Ghi audit và task evaluate/rebuild cho sale bị ảnh hưởng trong cùng transaction.
 5. Commit DB xong mới acknowledge Kafka.
 
-Nếu DB lỗi thì retry, chưa ack. Nếu subject chưa có thì lưu fact **chưa resolve**, ack sau commit và gắn lại khi hồ sơ tới. Payload sai đưa vào đường lỗi có lưu bền vững, không bỏ âm thầm.
+Nếu DB lỗi thì retry, chưa ack. Nếu hồ sơ chu kỳ chưa có thì lưu fact **chưa resolve**, ack sau commit và gắn lại khi hồ sơ tới. Payload sai đưa vào đường lỗi có lưu bền vững, không bỏ âm thầm.
 
 **Không làm:** mỗi message Kafka tăng count lên 1. Kafka có thể gửi lại; count phải được tính từ những fact hợp lệ đã lưu.
 
@@ -178,7 +178,7 @@ Nếu DB lỗi thì retry, chưa ack. Nếu subject chưa có thì lưu fact **c
 | Thông tin | Dùng để |
 | --- | --- |
 | ID GD ổn định | Chống đếm trùng khi resend/cập nhật |
-| ID sale | Gắn đúng subject; xác nhận có phải Agent ID không |
+| ID sale | Gắn đúng hồ sơ chu kỳ; xác nhận có phải Agent ID không |
 | Ngày/thời điểm GD được tính | Xác định GD thuộc kỳ nào |
 | Ghi nhận hay thu hồi GD | Cộng hoặc loại GD khỏi dữ liệu tính |
 | Revision/version cập nhật | Không để event cũ ghi đè bản mới khi replay |
@@ -188,11 +188,11 @@ Topic, consumer group và tên field chưa có; đây là danh sách thông tin 
 
 ### 4.5. Tính kỳ và ghi kết quả — US-01
 
-Worker đọc ba nguồn: **subject + policy/rule + facts**.
+Worker đọc ba nguồn: **hồ sơ chu kỳ + policy/rule + facts**.
 
-Trong một transaction: khóa subject → tính theo ngày xét → đóng/mở/cập nhật period → cập nhật kết quả subject → ghi audit/task room/lịch thông báo → commit. Worker không gọi provider HTTP trong transaction này.
+Trong một transaction: khóa hồ sơ chu kỳ → tính theo ngày xét → đóng/mở/cập nhật period → cập nhật kết quả hồ sơ chu kỳ → ghi audit/task room/lịch thông báo → commit. Worker không gọi provider HTTP trong transaction này.
 
-| Điều kiện | Thay đổi period | Kết quả subject |
+| Điều kiện | Thay đổi period | Kết quả hồ sơ chu kỳ |
 | --- | --- | --- |
 | Chính thức chưa đủ GD, chưa hết hạn | Cập nhật count, giữ kỳ | Chính thức — Chưa đạt |
 | Chính thức đủ GD giữa kỳ | Cập nhật count, giữ hạn | Chính thức — Đạt |
@@ -208,7 +208,7 @@ Job ngày mới chuyển kỳ dù không có event. Nếu job trễ, tính qua t
 
 ### 4.6. Hủy GD, sửa ngày và tính lại
 
-Pipeline cập nhật/thu hồi GD → core cập nhật fact theo revision → giao task cho subject bị ảnh hưởng. Chuyển GD từ A sang B thì tính lại cả hai.
+Pipeline cập nhật/thu hồi GD → core cập nhật fact theo revision → giao task cho hồ sơ chu kỳ bị ảnh hưởng. Chuyển GD từ A sang B thì tính lại cả hai.
 
 Rebuild đọc lại ngày bắt đầu, policy lịch sử và facts để dựng chuỗi kỳ mới. Giữ chuỗi cũ phục vụ báo cáo trong lúc dựng. Khi xong, **một transaction** thay con trỏ/phân loại, lưu audit, hủy lịch thông báo cũ chưa gửi và giao việc room nếu điều kiện đổi.
 
@@ -218,7 +218,7 @@ Nếu đầu vào thay đổi trong lúc dựng thì tính lại, không publish
 
 Sale A bắt đầu 01/01/2026; chính thức 4 tháng/1 GD, thử thách 6 tháng/1 GD. P1/P2/P3 là tên minh họa các row kỳ.
 
-| Mốc | Fact | Period | Subject |
+| Mốc | Fact | Period | Hồ sơ chu kỳ |
 | --- | --- | --- | --- |
 | 01/01 | Chưa GD, nguồn đã đối soát | P1 chính thức 01/01–30/04, count=0 | Chính thức — Chưa đạt |
 | 01/05 | Chưa GD | P1 đóng không đạt; P2 thử thách 01/05–31/10 | Thử thách, excluded=true |
@@ -231,7 +231,7 @@ Nếu G1 bị thu hồi sau đó, lưu bản thu hồi rồi dựng lại chuỗ
 
 | Tính năng | Đọc | Ghi / hành động |
 | --- | --- | --- |
-| List/filter US-01/02 | Subject và period qua con trỏ, trong scope user | Trả trang tối đa 20; GET không tự tính kỳ |
+| List/filter US-01/02 | Hồ sơ chu kỳ và period qua con trỏ, trong scope user | Trả trang tối đa 20; GET không tự tính kỳ |
 | Export US-03 | Cùng scope/filter/sort của list | Tạo XLSX tối đa 50.000 dòng; ghi export log |
 | History US-04 | Policy + rules + lịch nhắc của đúng phiên bản | Chỉ đọc bản đã lưu |
 | Room | Điều kiện sale hợp lệ hiện tại + exclusion đã tính | Worker tính lại room theo số tuyệt đối |
@@ -266,18 +266,18 @@ Base path internal đề xuất: `/internal/v1/sale-cycles`. BFF xác thực use
 | POST `/exports/preview`, `/exports` | Xác nhận số dòng và xuất XLSX | Cùng scope list; role export cần chốt |
 | POST `/policies` | Lưu cấu hình | 11/100 theo baseline |
 | GET `/policies`, `/policies/{id}` | Lịch sử/chi tiết | 11/100 |
-| PATCH `/subjects/{id}/start-date` | Sửa ngày sale đại lý | 11/100; 64 chỉ xem qua profile |
+| PATCH `/profiles/{id}/start-date` | Sửa ngày sale đại lý | 11/100; 64 chỉ xem qua profile |
 | Import preview/commit | Nhập ngày cũ | Operator/service riêng |
 
 Search tên/Agent ID/mã nhân viên/mã định danh; sort whitelist, mặc định tên A–Z và ID tie-break. Export kiểm tra quyền lại, không tin preview trước đó là quyền xuất.
 
-Trả `ServiceResponse`/`PageDto` theo repo; page 1-based, tối đa 20. File trả XLSX trực tiếp. Các mutation có requestId chống thực hiện lại và expectedVersion khi sửa subject. Lỗi role/org không resolve thì từ chối, không mở global.
+Trả `ServiceResponse`/`PageDto` theo repo; page 1-based, tối đa 20. File trả XLSX trực tiếp. Các mutation có requestId chống thực hiện lại và expectedVersion khi sửa hồ sơ chu kỳ. Lỗi role/org không resolve thì từ chối, không mở global.
 
 ## 7. Implement từng bước
 
 | Bước | Làm gì? | Kiểm chứng trước bước tiếp |
 | --- | --- | --- |
-| 1 | Subject, mapping sale và audit/task nền | Agent ID không trùng; inactive không mất; thiếu dữ liệu có lý do |
+| 1 | Hồ sơ chu kỳ, mapping sale và audit/task nền | Agent ID không trùng; inactive không mất; thiếu dữ liệu có lý do |
 | 2 | Ngày bắt đầu — US-06 | Nguồn ngày đúng, ACL/override/import retry; không dùng ngày tạo profile |
 | 3 | Policy/history — US-04 | Version/ngày/audience đúng; có policy lịch sử cho sale cũ |
 | 4 | Kafka consumer pipeline + fact | Lưu trước ack; resend không đếm đôi; ID sale/GD/ngày đúng; lỗi/mapping thiếu có đường xử lý |
@@ -301,7 +301,7 @@ Migration chỉ tạo cấu trúc. Nhập ngày/policy/GD cũ chạy job có aud
 | SRS còn ghi chú đạt official reset hay giữ hạn; trial có GD nhưng chưa đủ | State machine; TDD đang theo baseline giữ official đến hạn và fail khi count < target |
 | Policy tức thì reset ai/GD nào; trial mới theo rule nào | Policy resolver |
 | Hủy GD/sửa ngày có hồi tố terminal và room không | Rebuild và side effects |
-| Chuyển đại lý/tái gia nhập có nối lịch sử không | Subject theo Agent ID |
+| Chuyển đại lý/tái gia nhập có nối lịch sử không | Hồ sơ chu kỳ theo Agent ID |
 | Role vùng/role export; lịch nhắc và nhắc sale đã đạt | ACL/notification |
 | Room đã cấp/manual room, owner room O2O/Tự doanh | Room rollout |
 
