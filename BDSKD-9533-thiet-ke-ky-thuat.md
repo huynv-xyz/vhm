@@ -76,35 +76,19 @@ Chia thành dữ liệu đầu vào, kết quả và bảng hỗ trợ. Core kh�
 
 Ngày/tổ chức của hồ sơ chu kỳ do service hồ sơ/ngày bắt đầu ghi. Kỳ, số GD và phân loại do engine ghi. Không để API hồ sơ sửa trực tiếp kết quả engine.
 
-### 3.3. Review bảng hiện có: đủ mới reuse
+### 3.3. Bảng xử lý nền, import và thông báo
 
-Reuse được đánh giá theo dữ liệu, ràng buộc và xử lý nghiệp vụ; không chỉ theo tên bảng. Kết quả kiểm tra entity, migration, repository và handler hiện tại:
+| Bảng mới | Dữ liệu chính |
+| --- | --- |
+| `sale_cycle_task` | Loại việc tính/tính lại/room, profile hoặc agency cần xử lý, payload, trạng thái, số lần thử, giờ chạy lại, lỗi, khóa chống trùng và thời hạn giữ việc |
+| `sale_cycle_start_date_import_items` | Dòng import: import_job_id, số dòng, Agent ID/profile ID, ngày nhập, version hồ sơ lúc kiểm tra, trạng thái VALID/FAILED/APPLIED, lỗi và applied_at |
+| `sale_cycle_notification_delivery` | Kỳ, loại/mốc thông báo, lịch gửi, khóa chống trùng, trạng thái PENDING/SENT/CANCELED và thời điểm đã gửi |
 
-| Bảng hiện có | Đã đáp ứng | Thiếu gì? | Quyết định |
-| --- | --- | --- | --- |
-| `audit_logs` | Actor, entity/type/action, before–after kiểu TEXT, timestamp; agency nullable; ghi cùng transaction | Chưa có action/type/query của 9533 | **Reuse cấu trúc** cho audit và log xuất; thêm service/query nghiệp vụ |
-| `async_job` | Type/ref/payload/result/error, attempts, CAS claim, optimistic version, recovery PENDING/PROCESSING | FAILED chưa tự retry; chưa có ngày chạy lại; không có handler chu kỳ | **Reuse sau bổ sung nhỏ**: next_attempt_at, retry có giới hạn và handler; chưa đủ nếu dùng nguyên trạng |
-| `import_job`, `import_job_item` | File, stage/confirm, parsed/raw data, lỗi từng dòng, counters | Row chỉ PENDING/VALID/FAILED, chưa đánh dấu đã áp dụng; confirm hiện lấy lại mọi VALID | **Reuse sau bổ sung** APPLIED/applied_at và handler ngày bán; chưa đủ để bảo đảm retry dòng import |
-| `notification_outbox` | Hẹn giờ, payload, enum handler và xử lý gửi | SENT/SKIP bị xóa; không giữ bằng chứng gửi từng mốc | **Reuse để vận chuyển**, nhưng thêm bảng `sale_cycle_notification_delivery` để lưu lịch/SENT/CANCELED |
-| `process_sync_outbox` | Retry/backoff cho đồng bộ team-process | Op/worker gắn nghiệp vụ team-process, không xử lý tính kỳ | **Không dùng** cho job chu kỳ; dùng async_job |
+Dùng `audit_logs` hiện có để lưu before–after và log xuất theo entity/action của chu kỳ. organization_id lấy từ tenant tin cậy; snapshot chứa actor/filter/số dòng khi xuất.
 
-**Bằng chứng code:** `AuditLog` + changelog-0002/0051/0069; `AsyncJobRepository`/`AsyncJobProcessor`/`AsyncJobScheduler` + changelog-0035; `ImportItemStatus`/`ImportConfirmJobHandler`; `NotificationOutboxScheduler`.
+Dùng `import_job` hiện có để lưu file, người tạo và tiến độ lần import; các dòng nằm ở bảng mới sale_cycle_start_date_import_items. Luồng import ngày bán có service/worker riêng đọc bảng dòng này.
 
-#### Audit và log xuất: dùng cấu trúc hiện có
-
-Audit dùng entity_id là UUID profile/policy/GD; entity_type phân biệt loại. Before/after serialize JSON vào TEXT hiện có. organization_id bắt buộc resolve từ tenant tin cậy, không mặc định 1; agency_profile_id được null cho policy chung/O2O/Tự doanh. GD chưa resolve phải giữ trace Kafka trên transaction; nếu chưa xác định được tenant thì ghi quarantine/đối soát, không tạo audit giả tenant.
-
-Export chỉ yêu cầu lưu lần xuất: dùng entity_type=SALE_CYCLE_EXPORT, UUID lần xuất và action STARTED/GENERATED/FAILED; snapshot chứa filter/số dòng/truncated/lỗi. Bổ sung query theo tenant/entity type/actor; không dùng nguyên historyByAgency để trả log xuất toàn hệ thống. Nếu sau này có yêu cầu quản lý file export/job/download riêng thì review thêm bảng domain khi đó.
-
-#### Async job: phải hoàn thành phần còn thiếu
-
-Thêm next_attempt_at nullable; cả query scheduler và CAS claim chỉ nhận job đến hạn, kể cả đường trigger sau commit. Job hiện hữu giữ hành vi cũ khi field null. FAILED của type chu kỳ được requeue có backoff/max attempts, đồng thời tăng version; vượt ngưỡng giữ FAILED để vận hành xử lý. Thêm type/handler, submit-if-absent an toàn và test recovery/concurrency. Không tạo thêm task table chứa lại cùng payload/status/attempts.
-
-#### Import: không coi dòng VALID là đã áp dụng
-
-Thêm APPLIED và applied_at. Handler 9533 khóa từng row còn VALID, kiểm tra version hồ sơ rồi ghi ngày + audit + async job + APPLIED **trong cùng transaction**. Confirm lại bỏ qua APPLIED; dữ liệu profile đổi sau preview phải validate lại, không ghi đè ngày đã sửa chỉ vì retry file cũ. Generic stage/confirm/counters và deserialize enum phải kiểm thử cùng trạng thái mới.
-
-Đây là reuse có phần mở rộng bắt buộc. Nếu không thể mở rộng bảng/worker chung theo các điều kiện trên thì không tuyên bố đủ nghiệp vụ; thay bằng bảng riêng cho phần thiếu và cập nhật quyết định thiết kế trước implement.
+Dùng `notification_outbox` hiện có để giao việc gửi; objectId trỏ tới delivery. Delivery giữ lịch sử SENT sau khi outbox xóa row.
 
 ### 3.4. Ràng buộc DB tối thiểu
 
@@ -116,16 +100,6 @@ Thêm APPLIED và applied_at. Handler 9533 khóa từng row còn VALID, kiểm t
 - Ngày nghiệp vụ lưu `date`; thời điểm nhận/gửi/audit lưu `timestamptz`; ID bảng mới dùng UUID.
 
 Quan hệ bảng và giải thích chi tiết xem [phân tích DB](BDSKD-9533-db-va-lo-trinh.md#3-cần-thêm-những-bảng-nào).
-
-### 3.5. Kết luận review số lượng bảng
-
-**Thiết kế hiện tại cần sáu bảng mới:** profiles, policy, policy_rule, transactions, period và notification_delivery; kèm phần mở rộng bảng chung ở mục 3.3.
-
-- Giữ policy/rule: một lần lưu có nhiều nhóm với thông số khác nhau; tách header/detail giúp history và liên kết kỳ rõ ràng.
-- Giữ profiles/period: một hồ sơ hiện trạng có nhiều kỳ lịch sử; không gom lịch sử vào một row bị ghi đè.
-- Giữ transactions: Kafka replay/hủy phải truy được từng GD; count hiện tại không thay ledger GD.
-- Giữ notification_delivery: lịch đã gửi cần tồn tại sau khi outbox bị xóa.
-- Bỏ các bảng request/task/audit/export-log riêng; dùng cơ chế chống trùng tại nghiệp vụ và bảng chung có sẵn.
 
 ## 4. Luồng dữ liệu chi tiết
 
@@ -244,13 +218,11 @@ Rebuild đọc lại ngày bắt đầu, policy lịch sử và facts để dự
 
 Nếu đầu vào thay đổi trong lúc dựng thì tính lại, không publish kết quả cũ. Giữ lịch sử kỳ và thông báo đã gửi; không tự gửi lại mọi thông báo quá khứ. Quyền hồi tố terminal/room cần PO chốt.
 
-### 4.7. Chạy nền bằng `async_job` hiện có
+### 4.7. Xử lý nền và import
 
-Đề xuất job types SALE_CYCLE_EVALUATE, SALE_CYCLE_REBUILD, SALE_CYCLE_ROOM_RECALC. Payload chứa profile/agency ID, revision đầu vào và ngày xét; ref_id là khóa công việc ổn định. Submit job cùng transaction thay đổi dữ liệu. Worker/scheduler hiện có thực hiện claim và recovery sau restart.
+**Task:** ghi sale_cycle_task cùng transaction thay đổi dữ liệu. Worker lấy task đến hạn, đánh đang chạy, xử lý rồi hoàn tất; lỗi thì tăng attempts và hẹn lại, quá ngưỡng giữ FAILED để vận hành xử lý. Task đang chạy bị kẹt được lấy lại khi hết thời hạn giữ việc. Khóa chống trùng evaluate/rebuild gồm profile + revision + ngày xét; room tính lại theo số tuyệt đối.
 
-`async_job` chỉ UNIQUE `(type,ref_id)` khi job đang PENDING/PROCESSING. Khóa evaluate/rebuild cần gồm profile + revision + ngày xét để không bỏ mất cập nhật mới hoặc ngày mới; handler khóa profile và kiểm tra inputs trước publish. Thêm helper submit-if-absent an toàn thay vì bắt lỗi UNIQUE trong transaction đã bị rollback.
-
-Recovery hiện có xử lý PENDING và PROCESSING bị kẹt; FAILED chưa tự retry. Bổ sung next_attempt_at/requeue có giới hạn/backoff như mục 3.3; đây là điều kiện reuse, không phải chức năng đã có. Room handler phải nhận được lỗi recalc từng batch, không đánh DONE nếu service chỉ log rồi bỏ lỗi.
+**Import:** preview lưu file/job và từng dòng đã kiểm tra. Confirm chỉ lấy dòng VALID, khóa row và kiểm tra lại version hồ sơ. Ghi ngày + audit + task + APPLIED/applied_at trong cùng transaction. Retry bỏ qua APPLIED; hồ sơ đã thay đổi sau preview thì báo lỗi dòng để kiểm tra lại, không ghi đè ngày mới bằng file cũ.
 
 ### 4.8. Ví dụ dữ liệu trước–sau
 
@@ -315,14 +287,14 @@ Chống xử lý lặp ngay tại dữ liệu nghiệp vụ, không cần bảng
 
 - **Tạo policy:** `request_id` UNIQUE và `request_hash` trên policy. Gửi lại cùng ID/nội dung trả policy đã tạo; khác nội dung trả conflict. Kiểm tra quyền trước trả kết quả.
 - **Sửa ngày:** kiểm tra `expectedVersion`; ngày/override không đổi thì không ghi thêm thay đổi hoặc giao task mới. Request dùng version cũ có thể trả conflict để FE đọc lại, không cần lưu response riêng.
-- **Import:** dùng job ID và trạng thái APPLIED bổ sung trên import_job_item như mục 3.3; retry chỉ ghi dòng chưa áp dụng. Hiện trạng VALID/FAILED chưa tự bảo đảm điều này.
-- **Job:** dùng khóa công việc/type/ref_id trên `async_job` như mục 4.7; không cần bảng task riêng.
+- **Import:** dùng job ID và trạng thái APPLIED trên sale_cycle_start_date_import_items; retry bỏ qua dòng đã áp dụng.
+- **Task:** dùng dedupe key trên sale_cycle_task như mục 4.7; giao lại cùng công việc không tạo task trùng.
 
 ## 7. Implement từng bước
 
 | Bước | Làm gì? | Kiểm chứng trước bước tiếp |
 | --- | --- | --- |
-| 1 | Hồ sơ chu kỳ, mapping sale; mở rộng audit/job theo mục 3.3 | Agent ID không trùng; inactive không mất; thiếu dữ liệu có lý do |
+| 1 | Hồ sơ chu kỳ, mapping sale và task nền | Agent ID không trùng; inactive không mất; thiếu dữ liệu có lý do |
 | 2 | Ngày bắt đầu — US-06 | Nguồn ngày đúng, ACL/override/import retry; không dùng ngày tạo profile |
 | 3 | Policy/history — US-04 | Version/ngày/audience đúng; có policy lịch sử cho sale cũ |
 | 4 | Kafka consumer pipeline + fact | Lưu trước ack; resend không đếm đôi; ID sale/GD/ngày đúng; lỗi/mapping thiếu có đường xử lý |
