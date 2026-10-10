@@ -3,8 +3,6 @@
 ## 1. Topic và cách nhận dữ liệu
 
 - **Topic:** `vap.historical.dossier`.
-- **Cấu hình producer/GitOps:** `OUTBOX_DATA_CHANGE_TOPIC: "vap.historical.dossier"`
-  (property `outbox.kafka.data-change-topic`).
 - **Value:** JSON UTF-8; chung một topic cho 4 bảng, phân loại bằng `aggregateType`.
 - **Kafka key:** `aggregateId` — ID bản ghi dạng chuỗi; khóa ghép là JSON string.
 - **NOXH:** lọc hồ sơ `payload.productCode = "SOCIAL_HOUSING"`, join các bảng con theo dossier ID.
