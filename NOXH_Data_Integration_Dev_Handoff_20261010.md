@@ -5,61 +5,71 @@
 - **Topic:** `dossier.data_changed.v1`.
 - **Value:** JSON UTF-8; chung một topic cho 4 bảng, phân loại bằng `aggregateType`.
 - **Kafka key:** `aggregateId` — ID bản ghi dạng chuỗi; khóa ghép là JSON string.
-- **NOXH:** lọc hồ sơ `data.productCode = "SOCIAL_HOUSING"`, join các bảng con theo dossier ID.
+- **NOXH:** lọc hồ sơ `payload.productCode = "SOCIAL_HOUSING"`, join các bảng con theo dossier ID.
 
-| aggregateType | key | Field join hồ sơ trong data |
+| aggregateType | aggregateId (string) | Field join hồ sơ trong payload |
 | --- | --- | --- |
-| dossier | `{ "id": "UUID" }` | `id` |
-| dossier_note | `{ "id": "UUID" }` | `dossierId` |
-| dossier_status_history | `{ "id": 123 }` (BIGINT) | `dossierId` |
+| dossier | `UUID` | `id` |
+| dossier_note | `UUID` | `dossierId` |
+| dossier_status_history | `"123"` (ID BIGINT dạng chuỗi) | `dossierId` |
 | dossier_stage_reviewer | `{ "dossierId": "UUID", "stageCode": "SALES" }` | `id.dossierId`; stage tại `id.stageCode` |
 
 ## 2. Payload
 
 | Field | Kiểu / ý nghĩa |
 | --- | --- |
-| eventId | UUID string, dùng dedup khi retry |
-| schemaVersion | integer, hiện tại `1` |
-| sourceSystem | string, `vhm-dossier-core` |
-| aggregateType | string, tên một trong bốn bảng trên |
-| operation | `INSERT` / `UPDATE` / `DELETE` |
+| id | integer (BIGINT), ID outbox; dùng dedup khi retry |
+| aggregateType | string, tên bảng |
 | aggregateId | string, ID bản ghi; khóa ghép là JSON string |
-| key | object chứa khóa chính |
-| occurredAt | string ISO-8601, thời điểm tạo event |
-| data | Snapshot entity khi INSERT/UPDATE; `null` khi DELETE |
+| eventType | INSERT / UPDATE / DELETE |
+| eventVersion | string, v1 |
+| createdAt | string ISO-8601, thời điểm tạo event |
+| traceId | string hoặc null |
+| publishedAt | null tại thời điểm gửi |
+| payload | Dữ liệu entity; DELETE chứa snapshot trước khi xóa |
+| payload.sourceSystem | string, vhm-dossier-core |
 
 Ví dụ UPDATE reviewer (dữ liệu minh họa):
 
 ```json
 {
-  "eventId": "00000000-0000-4000-8000-000000000002",
-  "schemaVersion": 1,
-  "sourceSystem": "vhm-dossier-core",
-  "aggregateType": "dossier_stage_reviewer",
-  "operation": "UPDATE",
+  "id": 123,
   "aggregateId": "{\"dossierId\":\"00000000-0000-4000-8000-000000000001\",\"stageCode\":\"SALES\"}",
-  "key": {"dossierId": "00000000-0000-4000-8000-000000000001", "stageCode": "SALES"},
-  "occurredAt": "2026-10-10T03:00:00Z",
-  "data": {
-    "id": {"dossierId": "00000000-0000-4000-8000-000000000001", "stageCode": "SALES"},
-    "reviewerId": "reviewer-demo", "reviewerName": "Reviewer Demo",
-    "reviewerEmail": null, "reviewerRole": null,
-    "claimedAt": null, "assignedBy": "assigner-demo",
-    "assignedAt": "2026-10-10T02:00:00Z", "reviewedAt": "2026-10-10T03:00:00Z",
-    "decision": "APPROVED", "comment": null
-  }
+  "aggregateType": "dossier_stage_reviewer",
+  "eventType": "UPDATE",
+  "eventVersion": "v1",
+  "payload": {
+    "id": {
+      "dossierId": "00000000-0000-4000-8000-000000000001",
+      "stageCode": "SALES"
+    },
+    "reviewerId": "reviewer-demo",
+    "reviewerName": "Reviewer Demo",
+    "reviewerEmail": null,
+    "reviewerRole": null,
+    "claimedAt": null,
+    "assignedBy": "assigner-demo",
+    "assignedAt": "2026-10-10T02:00:00Z",
+    "reviewedAt": "2026-10-10T03:00:00Z",
+    "decision": "APPROVED",
+    "comment": null,
+    "sourceSystem": "vhm-dossier-core"
+  },
+  "traceId": null,
+  "createdAt": "2026-10-10T03:00:00Z",
+  "publishedAt": null
 }
 ```
 
-## 3. Mapping 58 metric
+## 3. Mapping metric
 
-Database/schema nguồn: `vhmmarket_db.dossier_db`. Field Kafka trong bảng dưới tính từ **`data`**. Ghi chú “cần chốt” nghĩa là chưa thể coi mapping nghiệp vụ đã được xác nhận.
+Database/schema nguồn: `vhmmarket_db.dossier_db`. Field Kafka trong bảng dưới tính từ **`payload`**. Ghi chú “cần chốt” nghĩa là chưa thể coi mapping nghiệp vụ đã được xác nhận.
 
 ### Hồ sơ
 
-| Metric | Bảng | Cột / JSON path DB | Field trong data | Ghi chú |
+| Metric | Bảng | Cột / JSON path DB | Field trong payload | Ghi chú |
 | --- | --- | --- | --- | --- |
-| NOXH_profile_id | dossier | id | id; mã BO: formData.code | UUID hồ sơ; mã BO là formData.code. |
+| NOXH_profile_id | dossier | id | id | UUID hồ sơ. |
 | NOXH_customer_name | dossier | form_data #>> '{applicant,fullName}' | formData.applicant.fullName | — |
 | NOXH_project_name | dossier | form_data #>> '{projectRegistration,projectId}' | formData.projectRegistration.projectId | Chỉ có ID; tên lấy từ Market. |
 | NOXH_agency_name | dossier | form_data #>> '{projectRegistration,agencyId}' | formData.projectRegistration.agencyId | Chỉ có ID; tên lấy từ AgentProfile. |
@@ -70,14 +80,14 @@ Database/schema nguồn: `vhmmarket_db.dossier_db`. Field Kafka trong bảng dư
 | NOXH_customer_eligible_group | dossier | form_data ->> 'subjectGroup' | formData.subjectGroup | — |
 | NOXH_spouse_eligible_group | dossier | form_data #>> '{spouse,subjectCoApplicant}' | formData.spouse.subjectCoApplicant | Cần TUHS xác nhận nghĩa nhóm đối tượng. |
 | NOXH_created_date | dossier | created_at | createdAt | — |
-| NOXH_updated_date | dossier | updated_at | updatedAt (BO report: lastEventAt) | Cần chốt updatedAt hay lastEventAt. |
+| NOXH_updated_date | dossier | updated_at | updatedAt | Cần chốt updatedAt hay lastEventAt. |
 | NOXH_approver_sales_dept | dossier_stage_reviewer | reviewer_id; reviewer_name; decision; reviewed_at | reviewerId / reviewerName / decision / reviewedAt; id.stageCode=SALES | stage=SALES; người duyệt phải xét decision/reviewedAt. |
 | NOXH_approver_procedure_dept | dossier_stage_reviewer | reviewer_id; reviewer_name; decision; reviewed_at | reviewerId / reviewerName / decision / reviewedAt; id.stageCode=PROCEDURE | stage=PROCEDURE; người duyệt phải xét decision/reviewedAt. |
-| NOXH_profile_status | dossier | status; current_stage_code | status + currentStageCode | Label trạng thái map theo BO. |
+| NOXH_profile_status | dossier | status; current_stage_code | status + currentStageCode | — |
 | NOXH_created_source | dossier | source | source | — |
 | NOXH_profile_progress | dossier | form_data -> 'documents'; current_stage_code | formData.documents + currentStageCode; phải tính theo nghiệp vụ | Cần chốt tiến độ pipeline hay % giấy tờ. |
 | NOXH_sale_owner | dossier | owner | owner | Username; tên lấy từ master người dùng. |
-| NOXH_reject_supplement_reason | dossier_status_history | reason; at; to_status | history: reason / at / toStatus; reviewer: comment / decision / id.stageCode | Bổ sung: history mới nhất. Reject BO: comment reviewer REJECTED. |
+| NOXH_reject_supplement_reason | dossier_status_history | reason; at; to_status | history: reason / at / toStatus; reviewer: comment / decision / id.stageCode | Bổ sung: history mới nhất. Từ chối: comment reviewer có decision=REJECTED. |
 | NOXH_first_deadline_date | dossier | entered_stage_at; pipeline_code; pipeline_version; current_stage_code | enteredStageAt, pipelineCode, pipelineVersion, currentStageCode + cấu hình SLA | Derived từ pipeline/rule/lịch nghỉ; cần chốt với TUHS. |
 | NOXH_first_overdue_days | dossier | entered_stage_at; pipeline_code; pipeline_version; current_stage_code | enteredStageAt, pipelineCode, pipelineVersion, currentStageCode + cấu hình SLA | Derived từ pipeline/rule/lịch nghỉ; cần chốt với TUHS. |
 | NOXH_second_deadline_date | dossier | entered_stage_at; pipeline_code; pipeline_version; current_stage_code | enteredStageAt, pipelineCode, pipelineVersion, currentStageCode + cấu hình SLA | Derived từ pipeline/rule/lịch nghỉ; cần chốt với TUHS. |
@@ -98,18 +108,18 @@ Database/schema nguồn: `vhmmarket_db.dossier_db`. Field Kafka trong bảng dư
 
 ### Báo cáo
 
-| Metric | Bảng | Cột / JSON path DB | Field trong data | Ghi chú |
+| Metric | Bảng | Cột / JSON path DB | Field trong payload | Ghi chú |
 | --- | --- | --- | --- | --- |
 | NOXH_report_proposed_unit_info | dossier | form_data #>> '{projectRegistration,proposedUnitCode}' | formData.projectRegistration.proposedUnitCode | Có mã căn; thông tin khác cần master căn. |
 | NOXH_report_assigned_unit_code | dossier | form_data #>> '{projectRegistration,assignedUnitCode}' | formData.projectRegistration.assignedUnitCode | — |
 | NOXH_report_agency_name | dossier | form_data #>> '{projectRegistration,agencyId}' | formData.projectRegistration.agencyId | Chỉ có ID; tên lấy từ AgentProfile. |
 | NOXH_report_customer_name | dossier | form_data #>> '{applicant,fullName}' | formData.applicant.fullName | — |
 | NOXH_report_created_date | dossier | created_at | createdAt | — |
-| NOXH_report_updated_date | dossier | last_event_at | lastEventAt | BO report dùng lastEventAt. |
+| NOXH_report_updated_date | dossier | last_event_at | lastEventAt | — |
 | NOXH_report_sxd_approved_date | dossier_stage_reviewer | reviewed_at | reviewedAt; id.stageCode=SXD; cần chốt decision | stage=SXD; cần chốt lọc decision=APPROVED. |
 | NOXH_report_arrival_date | dossier | submitted_at; dossier_note.occurred_at | dossier: submittedAt; note: occurredAt / kind (chưa chốt) | Cần chốt nộp online/gửi bản cứng/nhận bản cứng. |
 | NOXH_report_due_date_1 | dossier | entered_stage_at; pipeline_code; pipeline_version; current_stage_code | enteredStageAt, pipelineCode, pipelineVersion, currentStageCode + cấu hình SLA | Derived từ pipeline/rule/lịch nghỉ; cần chốt với TUHS. |
 | NOXH_report_overdue_days_1 | dossier | entered_stage_at; pipeline_code; pipeline_version; current_stage_code | enteredStageAt, pipelineCode, pipelineVersion, currentStageCode + cấu hình SLA | Derived từ pipeline/rule/lịch nghỉ; cần chốt với TUHS. |
 | NOXH_report_due_date_2 | dossier | entered_stage_at; pipeline_code; pipeline_version; current_stage_code | enteredStageAt, pipelineCode, pipelineVersion, currentStageCode + cấu hình SLA | Derived từ pipeline/rule/lịch nghỉ; cần chốt với TUHS. |
 | NOXH_report_overdue_days_2 | dossier | entered_stage_at; pipeline_code; pipeline_version; current_stage_code | enteredStageAt, pipelineCode, pipelineVersion, currentStageCode + cấu hình SLA | Derived từ pipeline/rule/lịch nghỉ; cần chốt với TUHS. |
-| NOXH_report_status | dossier | status; current_stage_code | status + currentStageCode | Label trạng thái map theo BO. |
+| NOXH_report_status | dossier | status; current_stage_code | status + currentStageCode | — |
