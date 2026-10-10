@@ -3,11 +3,11 @@
 ## 1. Topic và cách nhận dữ liệu
 
 - **Topic:** `dossier.data_changed.v1`.
-- **Value:** JSON UTF-8; chung một topic cho 4 bảng, phân loại bằng `sourceTable`.
+- **Value:** JSON UTF-8; chung một topic cho 4 bảng, phân loại bằng `aggregateType`.
 - **Kafka key:** `aggregateId` — ID bản ghi dạng chuỗi; khóa ghép là JSON string.
 - **NOXH:** lọc hồ sơ `data.productCode = "SOCIAL_HOUSING"`, join các bảng con theo dossier ID.
 
-| sourceTable | key | Field join hồ sơ trong data |
+| aggregateType | key | Field join hồ sơ trong data |
 | --- | --- | --- |
 | dossier | `{ "id": "UUID" }` | `id` |
 | dossier_note | `{ "id": "UUID" }` | `dossierId` |
@@ -21,7 +21,7 @@
 | eventId | UUID string, dùng dedup khi retry |
 | schemaVersion | integer, hiện tại `1` |
 | sourceSystem | string, `vhm-dossier-core` |
-| sourceTable | string, tên một trong bốn bảng trên |
+| aggregateType | string, tên một trong bốn bảng trên |
 | operation | `INSERT` / `UPDATE` / `DELETE` |
 | aggregateId | string, ID bản ghi; khóa ghép là JSON string |
 | key | object chứa khóa chính |
@@ -35,7 +35,7 @@ Ví dụ UPDATE reviewer (dữ liệu minh họa):
   "eventId": "00000000-0000-4000-8000-000000000002",
   "schemaVersion": 1,
   "sourceSystem": "vhm-dossier-core",
-  "sourceTable": "dossier_stage_reviewer",
+  "aggregateType": "dossier_stage_reviewer",
   "operation": "UPDATE",
   "aggregateId": "{\"dossierId\":\"00000000-0000-4000-8000-000000000001\",\"stageCode\":\"SALES\"}",
   "key": {"dossierId": "00000000-0000-4000-8000-000000000001", "stageCode": "SALES"},
