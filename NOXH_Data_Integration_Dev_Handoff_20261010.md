@@ -2,11 +2,10 @@
 
 ## 1. Topic và cách nhận dữ liệu
 
-- **Topic mặc định:** `dossier.data_changed.v1` (có thể override theo môi trường).
+- **Topic:** `dossier.data_changed.v1`.
 - **Value:** JSON UTF-8; chung một topic cho 4 bảng, phân loại bằng `sourceTable`.
 - **Kafka key:** `aggregateId` — ID bản ghi dạng chuỗi; khóa ghép là JSON string.
 - **NOXH:** lọc hồ sơ `data.productCode = "SOCIAL_HOUSING"`, join các bảng con theo dossier ID.
-- Broker, quyền truy cập và thời điểm mở luồng cần xác nhận khi bàn giao môi trường; **chưa xác nhận traffic staging/prod**.
 
 | sourceTable | key | Field join hồ sơ trong data |
 | --- | --- | --- |
@@ -28,8 +27,6 @@
 | key | object chứa khóa chính |
 | occurredAt | string ISO-8601, thời điểm tạo event |
 | data | Snapshot entity khi INSERT/UPDATE; `null` khi DELETE |
-
-Field trong `data` dùng **camelCase**; tên cột DB dùng **snake_case**. JSON bên trong `formData` giữ nguyên cấu trúc nguồn. Field có thể null/thiếu dữ liệu theo hồ sơ. Timestamp dùng ISO-8601.
 
 Ví dụ UPDATE reviewer (dữ liệu minh họa):
 
@@ -116,14 +113,3 @@ Database/schema nguồn: `vhmmarket_db.dossier_db`. Field Kafka trong bảng dư
 | NOXH_report_due_date_2 | dossier | entered_stage_at; pipeline_code; pipeline_version; current_stage_code | enteredStageAt, pipelineCode, pipelineVersion, currentStageCode + cấu hình SLA | Derived từ pipeline/rule/lịch nghỉ; cần chốt với TUHS. |
 | NOXH_report_overdue_days_2 | dossier | entered_stage_at; pipeline_code; pipeline_version; current_stage_code | enteredStageAt, pipelineCode, pipelineVersion, currentStageCode + cấu hình SLA | Derived từ pipeline/rule/lịch nghỉ; cần chốt với TUHS. |
 | NOXH_report_status | dossier | status; current_stage_code | status + currentStageCode | Label trạng thái map theo BO. |
-
-
-## 4. Quy tắc xử lý
-
-- Dedup bằng `eventId`; upsert theo `(sourceTable, key)` cho INSERT/UPDATE. Event con có thể đến trước event hồ sơ.
-- DELETE: xóa theo key, `data=null` (Kafka value vẫn là JSON). Note soft-delete là UPDATE có `data.deletedAt`; loại khỏi view active.
-- Không đảm bảo thứ tự giữa các event; `occurredAt` không phải thứ tự commit. Chốt cách đối soát latest state và snapshot ban đầu trước khi chạy chính thức; luồng chưa tự backfill dữ liệu cũ.
-- Reviewer là trạng thái hiện tại theo hồ sơ × stage, không phải lịch sử mọi lần phân công. Chọn/aggregate bảng con trước khi join để tránh nhân số hồ sơ.
-- SLA/overdue phải tính lại theo thời gian; tên dự án/đại lý/người dùng và master template/checklist cần nguồn bổ sung như ghi chú mapping.
-
-Cập nhật 10/10/2026; mapping dựa trên `NOXH_Datamart_Mapping_20261009.md`, payload đối chiếu source hiện tại của dossier-core.
